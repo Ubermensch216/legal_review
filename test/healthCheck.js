@@ -2,10 +2,10 @@
 import app, { serverInstance } from '../server/index.js';
 
 async function testServer() {
-  console.log('[Test] 서버 구동 및 API 헬스체크 시작...');
-  await new Promise(resolve => setTimeout(resolve, 800));
+  console.log('[Test] 서버 구동 및 API 헬스체크 대기 중...');
+  await new Promise(resolve => setTimeout(resolve, 1200));
 
-  const port = serverInstance.address()?.port || 3000;
+  const port = 3001; // 포트 3000 사용 중으로 3001로 시도
   console.log(`[Test] 타겟 서버 포트: ${port}`);
 
   // 1. /health 검증
@@ -41,12 +41,10 @@ async function testServer() {
   console.log('[Test] 4. /api/law/workbench 응답 (쟁점 수):', wbData.review?.coreIssues?.length, '조문 수:', wbData.officialEvidence?.articles?.length);
 
   console.log('\n✅ 모든 서버 통합 엔드포인트 검증 완료!');
-  serverInstance.close();
   process.exit(0);
 }
 
 testServer().catch(err => {
   console.error('[Test Error]', err);
-  if (serverInstance) serverInstance.close();
   process.exit(1);
 });
