@@ -31,6 +31,11 @@
       </div>
 
       <div class="header-right">
+        <button id="btn-open-history" class="btn btn-secondary btn-sm" title="과거 검토 이력 조회 및 복원">
+          <span class="material-symbols-outlined icon-sm">history</span>
+          <span>검토 이력</span>
+          <span class="badge" id="badge-history-count" style="background:#E2E8F0; color:#334155; font-size:10px; padding:1px 5px;">0</span>
+        </button>
         <button id="btn-open-tools" class="btn btn-secondary btn-sm">
           <span class="material-symbols-outlined icon-sm">build</span>
           <span>19대 법령 도구</span>
@@ -148,10 +153,11 @@
           </button>
         </div>
 
-        <!-- 탭 1: 검토 초안 -->
+        <!-- 탭 1: 검토 초안 (구조화된 테이블 및 공문서 서식) -->
         <div class="tab-pane active" id="tab-draft">
           <div class="draft-grid">
-            <!-- 핵심 요약 카드 -->
+            
+            <!-- 1. 핵심 요약 하이라이트 -->
             <div class="panel summary-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
@@ -168,59 +174,77 @@
               </div>
             </div>
 
-            <!-- 쟁점 및 리스크 매트릭스 -->
+            <!-- 2. 적용 법령 및 조문 근거 테이블 -->
+            <div class="panel basis-panel">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">account_balance</span>
+                  <h3>관련 법령 및 적용 조문 근거표</h3>
+                </div>
+              </div>
+              <div class="panel-body" id="draft-basis-content">
+                <p class="placeholder-text">적용 법령 근거가 여기에 테이블로 정돈되어 표시됩니다.</p>
+              </div>
+            </div>
+
+            <!-- 3. 핵심 쟁점 및 법적 리스크 분석 테이블 -->
             <div class="panel risk-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
                   <span class="material-symbols-outlined icon-sm">warning</span>
-                  <h3>핵심 쟁점 및 법적 리스크 분석</h3>
+                  <h3>핵심 쟁점 및 법적 리스크 분석표</h3>
                 </div>
               </div>
               <div class="panel-body" id="draft-risk-content">
-                <div class="risk-matrix" id="risk-matrix"></div>
+                <p class="placeholder-text">법적 리스크 및 제재 위험도가 테이블로 분석되어 표시됩니다.</p>
               </div>
             </div>
 
-            <!-- 법률 검토 의견 본문 -->
+            <!-- 4. 심층 법률 검토의견 본문 -->
             <div class="panel opinion-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
                   <span class="material-symbols-outlined icon-sm">balance</span>
-                  <h3>법률 검토의견 (본론)</h3>
+                  <h3>심층 법률 검토의견 (본론)</h3>
                 </div>
               </div>
-              <div class="panel-body" id="draft-opinion-content"></div>
+              <div class="panel-body" id="draft-opinion-content">
+                <p class="placeholder-text">법리 검토의견이 여기에 구조화되어 표시됩니다.</p>
+              </div>
             </div>
 
-            <!-- 보완 권고사항 -->
+            <!-- 5. 보완 권고사항 및 조치 계획 체크리스트 -->
             <div class="panel rec-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">lightbulb</span>
+                  <span class="material-symbols-outlined icon-sm">checklist</span>
                   <h3>보완 권고사항 및 조치 가이드</h3>
                 </div>
               </div>
-              <div class="panel-body" id="draft-rec-content"></div>
+              <div class="panel-body" id="draft-rec-content">
+                <p class="placeholder-text">보완 권고사항 체크리스트가 여기에 표시됩니다.</p>
+              </div>
             </div>
 
-            <!-- 검토의견서 전문 초안 (공문서 형태) -->
+            <!-- 6. 공식 법률검토의견서 (공문서 표준 서식 뷰) -->
             <div class="panel full-draft-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
                   <span class="material-symbols-outlined icon-sm">article</span>
-                  <h3>완성형 검토의견서 초안 (Markdown)</h3>
+                  <h3>공식 법률검토의견서 (공문서 표준 서식)</h3>
                 </div>
                 <div class="panel-actions">
-                  <button class="btn btn-sm btn-outline" id="btn-send-to-studio">
-                    <span>스튜디오에서 편집</span>
-                    <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span>
+                  <button class="btn btn-sm btn-primary" id="btn-send-to-studio">
+                    <span class="material-symbols-outlined icon-sm">edit_document</span>
+                    <span>스튜디오에서 편집 및 내보내기</span>
                   </button>
                 </div>
               </div>
               <div class="panel-body">
-                <div class="markdown-preview" id="draft-full-markdown"></div>
+                <div id="draft-official-report-view"></div>
               </div>
             </div>
+
           </div>
         </div>
 
@@ -270,12 +294,34 @@
 
     </main>
 
+    <!-- 검토 이력 관리 드로어 (우측 슬라이드) -->
+    <aside class="history-drawer" id="history-drawer">
+      <div class="drawer-header">
+        <div class="panel-title-group">
+          <span class="material-symbols-outlined icon-sm">history</span>
+          <h3>법령 검토 이력 관리</h3>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button class="btn btn-xs btn-outline" id="btn-clear-all-history" style="color:#DC2626; border-color:#FECACA;">전체 삭제</button>
+          <button class="btn-close-drawer" id="btn-close-history" title="닫기">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="history-drawer-body" id="history-drawer-body">
+        <div class="history-list" id="history-list">
+          <p class="placeholder-text">저장된 검토 이력이 없습니다.</p>
+        </div>
+      </div>
+    </aside>
+
     <!-- 보고서 스튜디오 드로어 (우측 슬라이드) -->
     <aside class="studio-drawer" id="studio-drawer">
       <div class="studio-header">
         <div class="panel-title-group">
           <span class="material-symbols-outlined icon-sm">edit_document</span>
-          <h3>보고서 스튜디오</h3>
+          <h3>보고서 스튜디오 (공문서 에디터)</h3>
         </div>
         <button class="btn-close-drawer" id="btn-close-studio" title="닫기">
           <span class="material-symbols-outlined">close</span>
@@ -283,15 +329,28 @@
       </div>
 
       <div class="studio-toolbar">
-        <input type="text" id="report-title-input" class="report-title-input" value="법률검토의견서">
+        <div class="studio-toolbar-top">
+          <input type="text" id="report-title-input" class="report-title-input" value="법률검토의견서" placeholder="보고서 제목 입력">
+          <div class="studio-mode-toggle">
+            <button class="btn-mode active" id="btn-mode-visual" title="비주얼 공문서 양식으로 보고 직접 편집">
+              <span class="material-symbols-outlined icon-sm">visibility</span>
+              <span>비주얼 공문서</span>
+            </button>
+            <button class="btn-mode" id="btn-mode-source" title="마크다운 소스 편집">
+              <span class="material-symbols-outlined icon-sm">code</span>
+              <span>소스</span>
+            </button>
+          </div>
+        </div>
+
         <div class="export-btn-group">
           <button class="btn btn-export btn-hwpx" data-format="hwpx" title="한글 2014 호환 HWPX 다운로드">
             <span class="material-symbols-outlined icon-sm">download</span>
-            <span>HWPX</span>
+            <span>HWPX 다운로드</span>
           </button>
           <button class="btn btn-export btn-pdf" data-format="pdf" title="인쇄용 PDF 다운로드">
             <span class="material-symbols-outlined icon-sm">download</span>
-            <span>PDF</span>
+            <span>PDF 다운로드</span>
           </button>
           <button class="btn btn-export btn-docx" data-format="docx" title="MS Word DOCX 다운로드">
             <span class="material-symbols-outlined icon-sm">download</span>
@@ -305,7 +364,13 @@
       </div>
 
       <div class="studio-editor-container">
-        <textarea id="studio-editor" class="studio-textarea" placeholder="보고서 내용을 마크다운으로 직접 수정하거나 편집할 수 있습니다..."></textarea>
+        <!-- 1. 비주얼 공문서 실시간 에디터 (클릭하여 직접 수정 가능) -->
+        <div id="studio-visual-editor" class="studio-visual-editor" contenteditable="true" spellcheck="false">
+          <!-- 구조화된 공문서 HTML이 여기에 렌더링됩니다 -->
+        </div>
+
+        <!-- 2. 마크다운 소스 에디터 (기본 숨김) -->
+        <textarea id="studio-source-editor" class="studio-textarea hidden" placeholder="보고서 소스를 직접 입력하세요..."></textarea>
       </div>
     </aside>
 

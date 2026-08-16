@@ -3,12 +3,14 @@ import { state, saveSettings } from './state.js';
 import { initWorkbenchTabs, renderWorkbench } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio } from './documentStudio.js';
+import { initHistoryDrawer, refreshHistoryList } from './history.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 모듈 초기화
   initWorkbenchTabs();
   initDocumentViewer();
   initDocumentStudio();
+  initHistoryDrawer();
   initPresetChips();
   initFileDropzone();
   initReviewForm();
@@ -150,6 +152,7 @@ function initReviewForm() {
 
       const data = await res.json();
       renderWorkbench(data);
+      refreshHistoryList();
 
       // 워크벤치 섹션으로 부드럽게 스크롤
       document.getElementById('workbench-section').scrollIntoView({ behavior: 'smooth' });

@@ -7,6 +7,7 @@ import { generateLegalReview } from './lawWorkbenchReview.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
 import { generateHwpx, generateDocx, generatePdf } from '../export/exportFiles.js';
+import { saveHistoryItem, getHistoryList, getHistoryById, deleteHistoryItem, clearAllHistory } from './lawHistoryDb.js';
 import { formatErrorResponse } from './lawErrors.js';
 import { LAW_CONFIG } from './lawConfig.js';
 import { ENV } from '../env.js';
@@ -60,7 +61,7 @@ router.post('/parse-document', upload.single('file'), async (req, res) => {
 });
 
 /**
- * POST /api/law/workbench - 종합 워크벤치 분석 및 법령 검토 실행
+ * POST /api/law/workbench - 종합 워크벤치 분석 및 법령 검토 실행 (이력 자동 저장)
  */
 router.post('/workbench', upload.single('file'), async (req, res) => {
   try {
@@ -68,9 +69,11 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const preset = req.body.preset || 'compliance';
     const targetLaw = req.body.targetLaw || '';
     let documentText = req.body.documentText || '';
+    let documentName = '';
 
     // 파일이 직접 업로드된 경우 파싱
     if (req.file) {
+      documentName = req.file.originalname;
       const parsedDoc = await parseDocument(req.file.buffer, req.file.originalname);
       documentText = `${documentText}\n\n[첨부문서: ${req.file.originalname}]\n${parsedDoc.text}`.trim();
     }
@@ -105,15 +108,85 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       llmConfig
     });
 
-    res.json({
+    const responsePayload = {
       ok: true,
       meta: workbenchContext.meta,
       review: reviewResult,                     // Tab 1: 검토 초안
       officialEvidence: workbenchContext.officialEvidence, // Tab 2: 공식 근거
       impactAndRevisions: workbenchContext.impactAndRevisions // Tab 3: 개정/영향
+    };
+
+    // 3. 검토 이력 DB 자동 저장
+    const historyId = saveHistoryItem({
+      query,
+      preset,
+      targetLaw: workbenchContext.meta?.primaryLawName || targetLaw,
+      documentName,
+      reviewData: responsePayload
     });
+
+    responsePayload.historyId = historyId;
+
+    res.json(responsePayload);
   } catch (err) {
     console.error('[LawApi] workbench 에러:', err);
+    res.status(500).json(formatErrorResponse(err));
+  }
+});
+
+/**
+ * GET /api/law/history - 검토 이력 목록 조회
+ */
+router.get('/history', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit || '50', 10);
+    const offset = parseInt(req.query.offset || '0', 10);
+    const historyList = getHistoryList(limit, offset);
+    res.json({
+      ok: true,
+      total: historyList.length,
+      items: historyList
+    });
+  } catch (err) {
+    res.status(500).json(formatErrorResponse(err));
+  }
+});
+
+/**
+ * GET /api/law/history/:id - 특정 검토 이력 상세 조회 및 복원
+ */
+router.get('/history/:id', (req, res) => {
+  try {
+    const item = getHistoryById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ ok: false, error: '해당 이력을 찾을 수 없습니다.' });
+    }
+    res.json({ ok: true, item });
+  } catch (err) {
+    res.status(500).json(formatErrorResponse(err));
+  }
+});
+
+/**
+ * DELETE /api/law/history/:id - 특정 이력 삭제
+ */
+router.delete('/history/:id', (req, res) => {
+  try {
+    const success = deleteHistoryItem(req.params.id);
+    res.json({ ok: success });
+  } catch (err) {
+    res.status(500).json(formatErrorResponse(err));
+  }
+});
+
+/**
+ * DELETE /api/law/history - 전체 이력 초기화
+ */
+router.delete('/history', (req, res) => {
+  try {
+    const success = clearAllHistory();
+    res.json({ ok: success });
+  } catch (err) {
     res.status(500).json(formatErrorResponse(err));
   }
 });
