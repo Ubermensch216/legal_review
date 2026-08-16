@@ -54,7 +54,16 @@ export function saveHistoryItem({ query = '', preset = 'compliance', targetLaw =
 
   const id = `rev_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = Date.now();
-  const summary = reviewData?.review?.summary || query.slice(0, 150) || '검토 완료';
+  
+  // 요약 텍스트 정제
+  let summary = '';
+  if (reviewData?.review?.summary) {
+    summary = String(reviewData.review.summary).replace(/^#+\s+/gm, '').replace(/[*_`]/g, '').trim();
+    if (summary.length > 200) summary = summary.slice(0, 200) + '...';
+  } else {
+    summary = (query || documentName || '법령 검토 완료').slice(0, 150);
+  }
+
   const riskCount = reviewData?.review?.risks?.length || 0;
   const fullDataStr = JSON.stringify(reviewData);
 

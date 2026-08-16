@@ -152,7 +152,7 @@ function initReviewForm() {
 
       const data = await res.json();
       renderWorkbench(data);
-      refreshHistoryList();
+      await refreshHistoryList(true);
 
       // 워크벤치 섹션으로 부드럽게 스크롤
       document.getElementById('workbench-section').scrollIntoView({ behavior: 'smooth' });
@@ -161,7 +161,7 @@ function initReviewForm() {
     } finally {
       btnRun.disabled = false;
       spinner.classList.add('hidden');
-      btnText.textContent = '⚡ 종합 법령검토 실행';
+      btnText.textContent = '종합 법령검토 실행';
     }
   });
 }

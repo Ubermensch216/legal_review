@@ -117,8 +117,9 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     };
 
     // 3. 검토 이력 DB 자동 저장
+    const historyTitle = query || (documentName ? `[문서검토] ${documentName}` : '법령 검토');
     const historyId = saveHistoryItem({
-      query,
+      query: historyTitle,
       preset,
       targetLaw: workbenchContext.meta?.primaryLawName || targetLaw,
       documentName,

@@ -45,8 +45,9 @@ export function closeHistoryDrawer() {
 
 /**
  * 서버에서 이력 목록 가져와서 렌더링
+ * @param {boolean} highlight - 카운트 배지 하이라이트 여부
  */
-export async function refreshHistoryList() {
+export async function refreshHistoryList(highlight = false) {
   try {
     const res = await fetch('/api/law/history');
     if (!res.ok) return;
@@ -56,6 +57,21 @@ export async function refreshHistoryList() {
 
     if (countBadge) {
       countBadge.textContent = items.length;
+      if (items.length > 0) {
+        countBadge.style.backgroundColor = '#1E3A8A';
+        countBadge.style.color = '#FFFFFF';
+      } else {
+        countBadge.style.backgroundColor = '#E2E8F0';
+        countBadge.style.color = '#334155';
+      }
+
+      if (highlight) {
+        countBadge.style.transform = 'scale(1.3)';
+        countBadge.style.transition = 'transform 0.2s ease';
+        setTimeout(() => {
+          countBadge.style.transform = 'scale(1)';
+        }, 300);
+      }
     }
 
     if (!historyListEl) return;
@@ -67,7 +83,7 @@ export async function refreshHistoryList() {
 
     let html = '';
     items.forEach(item => {
-      const dateStr = new Date(item.created_at || item.createdAt).toLocaleString('ko-KR', {
+      const dateStr = new Date(item.created_at || item.createdAt || item.timestamp).toLocaleString('ko-KR', {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -75,7 +91,7 @@ export async function refreshHistoryList() {
       });
 
       const presetName = getPresetName(item.preset);
-      const title = item.documentName ? `[문서] ${item.documentName}` : item.query;
+      const title = item.query || (item.documentName ? `[문서] ${item.documentName}` : '법령 검토');
 
       html += `
         <div class="history-card" data-id="${item.id}">
@@ -88,12 +104,12 @@ export async function refreshHistoryList() {
           <div class="history-meta-row">
             <span class="history-law-tag">${escapeHtml(item.targetLaw || '일반 법령')}</span>
             <div class="history-card-actions">
-              <button class="btn btn-xs btn-outline btn-restore-history" data-id="${item.id}" title="검토 결과 화면에 복원">
-                <span class="material-symbols-outlined" style="font-size:13px;">restore</span>
+              <button class="btn btn-xs btn-primary btn-restore-history" data-id="${item.id}" title="검토 결과 화면에 복원" style="display:inline-flex; align-items:center; gap:4px; padding:4px 8px;">
+                <span class="material-symbols-outlined" style="font-size:14px;">restore</span>
                 <span>불러오기</span>
               </button>
-              <button class="btn btn-xs btn-remove-history" data-id="${item.id}" title="이력 삭제" style="color:#DC2626; background:transparent; border:none; padding:3px 6px;">
-                <span class="material-symbols-outlined" style="font-size:15px;">delete</span>
+              <button class="btn btn-xs btn-remove-history" data-id="${item.id}" title="이력 삭제" style="color:#DC2626; background:transparent; border:none; padding:3px 6px; cursor:pointer;">
+                <span class="material-symbols-outlined" style="font-size:16px;">delete</span>
               </button>
             </div>
           </div>
