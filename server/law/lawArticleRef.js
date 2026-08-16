@@ -1,7 +1,8 @@
 // server/law/lawArticleRef.js - 조문 인용(조·항·호·목) 정규식 파서 및 구조화 유틸리티
 
-// 예: "개인정보 보호법 제15조 제1항 제2호 가목", "제30조의2", "동법 제4조"
-const ARTICLE_REF_REGEX = /(?:([가-힣\s\d]+법(?:률)?|[가-힣\s]+령|[가-힣\s]+규칙|[가-힣\s]+조례|[가-힣\s]+정관)?\s*)?제\s*(\d+)(?:의\s*(\d+))?\s*조(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+)\s*호)?(?:\s*([가-힣])\s*목)?/g;
+// 법령명 패턴: 2~20글자의 법/법률/령/규칙/조례/정관 또는 "동법"
+// 조문 패턴: 제\d+조 (의\d+), 제\d+항, 제\d+호, [가-힣]목
+const ARTICLE_REF_REGEX = /(?:([가-힣0-9]{2,20}(?:법률|법|시행령|시행규칙|조례|정관)|동법|본법)\s+)?제\s*(\d+)(?:의\s*(\d+))?\s*조(?:\s*제\s*(\d+)\s*항)?(?:\s*제\s*(\d+)\s*호)?(?:\s*([가-힣])\s*목)?/g;
 
 /**
  * 텍스트 내에서 언급된 모든 조문 인용 추출
@@ -16,12 +17,11 @@ export function extractArticleReferences(text, defaultLawName = '') {
   const seen = new Set();
   let match;
 
-  // 정규식 매칭
   const regex = new RegExp(ARTICLE_REF_REGEX.source, 'g');
   while ((match = regex.exec(text)) !== null) {
     const rawLawName = (match[1] || '').trim();
     let lawName = rawLawName;
-    if (!lawName || lawName === '동법' || lawName === '본 법') {
+    if (!lawName || lawName === '동법' || lawName === '본법') {
       lawName = defaultLawName;
     }
 
