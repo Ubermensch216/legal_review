@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 법령검토 솔루션 - Legal Review Standalone</title>
+  <meta name="description" content="공식 법제처 API 연동 기반 AI 법률 검토 및 HWPX 공공서식 보고서 생성 워크벤치">
+  <!-- Google Fonts: Pretendard 대체 / Noto Sans KR & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/workbench.css">
+  <link rel="stylesheet" href="/css/studio.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- 상단 헤더 -->
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo-group">
+          <div class="logo-icon">⚖️</div>
+          <div class="logo-text">
+            <span class="logo-title">Legal Reviewer</span>
+            <span class="logo-subtitle">AI 법령검토 & 보고서 워크벤치</span>
+          </div>
+        </div>
+        <span class="badge badge-gov">국가법령정보 DRF 공식 연동</span>
+      </div>
+
+      <div class="header-right">
+        <button id="btn-open-tools" class="btn btn-secondary btn-sm">
+          <span>🛠 19대 법령 도구</span>
+        </button>
+        <button id="btn-open-studio" class="btn btn-secondary btn-sm">
+          <span>📝 보고서 스튜디오</span>
+        </button>
+        <button id="btn-open-settings" class="btn btn-icon btn-sm" title="환경 및 모델 설정">
+          ⚙️
+        </button>
+      </div>
+    </header>
+
+    <!-- 메인 컨테이너 -->
+    <main class="main-container">
+      
+      <!-- 1. HERO 입력 섹션 -->
+      <section class="hero-section card">
+        <div class="preset-selector">
+          <label class="section-label">6대 검토 유형 프리셋:</label>
+          <div class="preset-chips" id="preset-chips">
+            <button class="chip active" data-preset="compliance">🛡 적법성/규제 준수</button>
+            <button class="chip" data-preset="contract_risk">📑 계약서 리스크</button>
+            <button class="chip" data-preset="ordinance_conflict">🏛 조례/내규 충돌</button>
+            <button class="chip" data-preset="admin_dispute">⚖️ 행정처분/민원</button>
+            <button class="chip" data-preset="privacy_security">🔒 개인정보/보안</button>
+            <button class="chip" data-preset="labor_hr">👥 인사/노무/근로</button>
+          </div>
+        </div>
+
+        <form id="form-review" class="review-input-form">
+          <div class="input-row">
+            <div class="input-group flex-2">
+              <label for="input-query">검토 질의 / 쟁점 사안 <span class="required">*</span></label>
+              <textarea id="input-query" placeholder="검토가 필요한 법적 질문이나 사안을 입력하세요. (예: 공공기관 웹사이트에서 본인인증 시 수집하는 최소 정보의 법적 요건 및 동의 절차 적법성 검토)" rows="3"></textarea>
+            </div>
+            <div class="input-group flex-1">
+              <label for="input-target-law">기준 대상 법령 (선택)</label>
+              <input type="text" id="input-target-law" placeholder="예: 개인정보 보호법, 근로기준법">
+              <span class="input-hint">미입력 시 질문 및 문서를 분석하여 자동 판별</span>
+            </div>
+          </div>
+
+          <!-- 첨부문서 업로드 드롭존 -->
+          <div class="file-dropzone" id="file-dropzone">
+            <input type="file" id="file-input" accept=".hwpx,.pdf,.docx,.xlsx,.xls,.csv,.txt" style="display:none;">
+            <div class="dropzone-content" id="dropzone-content">
+              <span class="dropzone-icon">📎</span>
+              <div class="dropzone-text">
+                <strong>검토 대상 문서 첨부 (HWPX, PDF, DOCX, XLSX)</strong>
+                <p>파일을 드래그하거나 클릭하여 업로드하세요 (내부 지침, 계약서, 조례안, 민원서류 등)</p>
+              </div>
+            </div>
+            <div class="attached-file-info hidden" id="attached-file-info">
+              <span class="file-badge" id="file-badge">HWPX</span>
+              <span class="file-name" id="file-name"></span>
+              <span class="file-size" id="file-size"></span>
+              <button type="button" class="btn-remove-file" id="btn-remove-file">✕</button>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <div class="llm-indicator">
+              <span class="indicator-dot online"></span>
+              <span id="current-llm-display">AI 엔진: Ollama (qwen2.5:14b)</span>
+            </div>
+            <button type="submit" class="btn btn-primary btn-lg" id="btn-run-review">
+              <span class="btn-text">⚡ 종합 법령검토 실행</span>
+              <span class="spinner hidden" id="review-spinner"></span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- 2. 워크벤치 결과 3단계 탭 섹션 -->
+      <section class="workbench-section card" id="workbench-section">
+        <!-- 탭 네비게이션 -->
+        <div class="workbench-tabs">
+          <button class="wb-tab active" data-tab="tab-draft">
+            <span class="tab-num">1</span>
+            <span class="tab-title">검토 초안 (Review Draft)</span>
+            <span class="tab-badge" id="badge-draft-status">완료</span>
+          </button>
+          <button class="wb-tab" data-tab="tab-evidence">
+            <span class="tab-num">2</span>
+            <span class="tab-title">공식 법령 & 근거 (Official Evidences)</span>
+            <span class="tab-count" id="count-evidence">0건</span>
+          </button>
+          <button class="wb-tab" data-tab="tab-revisions">
+            <span class="tab-num">3</span>
+            <span class="tab-title">개정 & 영향 분석 (Revisions & Impacts)</span>
+            <span class="tab-status-dot" id="dot-impact"></span>
+          </button>
+        </div>
+
+        <!-- 탭 1: 검토 초안 -->
+        <div class="tab-pane active" id="tab-draft">
+          <div class="draft-grid">
+            <!-- 핵심 요약 카드 -->
+            <div class="panel summary-panel">
+              <div class="panel-header">
+                <h3>📌 핵심 검토 결론 요약</h3>
+                <button class="btn btn-xs btn-outline" id="btn-copy-summary">요약 복사</button>
+              </div>
+              <div class="panel-body" id="draft-summary-content">
+                <p class="placeholder-text">검토를 실행하면 핵심 요약이 여기에 표시됩니다.</p>
+              </div>
+            </div>
+
+            <!-- 쟁점 및 리스크 매트릭스 -->
+            <div class="panel risk-panel">
+              <div class="panel-header">
+                <h3>⚠️ 핵심 쟁점 및 법적 리스크 분석</h3>
+              </div>
+              <div class="panel-body" id="draft-risk-content">
+                <div class="risk-matrix" id="risk-matrix"></div>
+              </div>
+            </div>
+
+            <!-- 법률 검토 의견 본문 -->
+            <div class="panel opinion-panel">
+              <div class="panel-header">
+                <h3>⚖️ 법률 검토의견 (본론)</h3>
+              </div>
+              <div class="panel-body" id="draft-opinion-content"></div>
+            </div>
+
+            <!-- 보완 권고사항 -->
+            <div class="panel rec-panel">
+              <div class="panel-header">
+                <h3>💡 보완 권고사항 및 조치 가이드</h3>
+              </div>
+              <div class="panel-body" id="draft-rec-content"></div>
+            </div>
+
+            <!-- 검토의견서 전문 초안 (공문서 형태) -->
+            <div class="panel full-draft-panel">
+              <div class="panel-header">
+                <h3>📄 완성형 검토의견서 초안 (Markdown)</h3>
+                <div class="panel-actions">
+                  <button class="btn btn-sm btn-outline" id="btn-send-to-studio">스튜디오에서 편집 ➔</button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="markdown-preview" id="draft-full-markdown"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 탭 2: 공식 근거 -->
+        <div class="tab-pane" id="tab-evidence">
+          <div class="evidence-layout">
+            <div class="evidence-section">
+              <h4>🏛 공식 법령 조문 본문</h4>
+              <div class="article-cards" id="evidence-articles"></div>
+            </div>
+
+            <div class="evidence-section">
+              <h4>⚖️ 대법원 판례 및 법제처 유권해석례</h4>
+              <div class="precedent-cards" id="evidence-precedents"></div>
+            </div>
+
+            <div class="evidence-section">
+              <h4>📋 행정규칙, 자치법규(조례) 및 별표/서식</h4>
+              <div class="rules-cards" id="evidence-rules"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 탭 3: 개정 및 영향 분석 -->
+        <div class="tab-pane" id="tab-revisions">
+          <div class="impact-layout">
+            <div class="impact-header-card">
+              <h4>🔍 내부 문서 조문 인용 충돌 및 적합성 분석</h4>
+              <div id="impact-summary-badge"></div>
+            </div>
+            <div class="impact-list" id="impact-items-container"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- 보고서 스튜디오 드로어 (우측 슬라이드) -->
+    <aside class="studio-drawer" id="studio-drawer">
+      <div class="studio-header">
+        <h3>📝 보고서 스튜디오</h3>
+        <button class="btn-close-drawer" id="btn-close-studio">✕</button>
+      </div>
+
+      <div class="studio-toolbar">
+        <input type="text" id="report-title-input" class="report-title-input" value="법률검토의견서">
+        <div class="export-btn-group">
+          <button class="btn btn-export btn-hwpx" data-format="hwpx" title="한글 2014 호환 HWPX 다운로드">
+            <span>📥 HWPX</span>
+          </button>
+          <button class="btn btn-export btn-pdf" data-format="pdf" title="인쇄용 PDF 다운로드">
+            <span>📥 PDF</span>
+          </button>
+          <button class="btn btn-export btn-docx" data-format="docx" title="MS Word DOCX 다운로드">
+            <span>📥 DOCX</span>
+          </button>
+          <button class="btn btn-export btn-md" data-format="md" title="마크다운 다운로드">
+            <span>📥 MD</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="studio-editor-container">
+        <textarea id="studio-editor" class="studio-textarea" placeholder="보고서 내용을 마크다운으로 직접 수정하거나 편집할 수 있습니다..."></textarea>
+      </div>
+    </aside>
+
+    <!-- 모달 1: 조문/판례 딥뷰어 모달 -->
+    <div class="modal-overlay hidden" id="viewer-modal">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <h3 id="modal-viewer-title">조문 상세 조회</h3>
+          <button class="btn-close-modal" id="btn-close-viewer">✕</button>
+        </div>
+        <div class="modal-body" id="modal-viewer-body"></div>
+      </div>
+    </div>
+
+    <!-- 모달 2: 19대 도구 빠른 실행 모달 -->
+    <div class="modal-overlay hidden" id="tools-modal">
+      <div class="modal-card modal-lg">
+        <div class="modal-header">
+          <h3>🛠 19대 법령 도구 개별 실행</h3>
+          <button class="btn-close-modal" id="btn-close-tools">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="tools-layout">
+            <div class="tools-sidebar" id="tools-list"></div>
+            <div class="tools-runner-area">
+              <h4 id="selected-tool-title">도구를 선택하세요</h4>
+              <p id="selected-tool-desc" class="tool-desc-text"></p>
+              <div id="tool-params-form" class="tool-params-form"></div>
+              <button id="btn-exec-tool" class="btn btn-primary btn-sm">실행</button>
+              <div class="tool-result-box" id="tool-result-box">
+                <pre><code id="tool-result-json">실행 결과가 여기에 표시됩니다.</code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 모달 3: 설정 모달 -->
+    <div class="modal-overlay hidden" id="settings-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>⚙️ 환경 및 AI 모델 설정</h3>
+          <button class="btn-close-modal" id="btn-close-settings">✕</button>
+        </div>
+        <div class="modal-body">
+          <form id="form-settings">
+            <div class="form-group">
+              <label>AI 프로바이더</label>
+              <select id="setting-provider" class="form-select">
+                <option value="ollama">Ollama (로컬 LLM)</option>
+                <option value="openai">OpenAI (GPT-4o)</option>
+                <option value="anthropic">Anthropic (Claude 3.5 Sonnet)</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+            <div class="form-group" id="group-ollama-url">
+              <label>Ollama URL</label>
+              <input type="text" id="setting-ollama-url" value="http://localhost:11434">
+            </div>
+            <div class="form-group">
+              <label>모델명</label>
+              <input type="text" id="setting-model-name" value="qwen2.5:14b">
+            </div>
+            <div class="form-group">
+              <label>API Key (클라우드 모델 사용 시)</label>
+              <input type="password" id="setting-api-key" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+              <label>법제처 인증키 (LAW_OC)</label>
+              <input type="text" id="setting-law-oc" placeholder="발급받은 오픈API 계정 ID">
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" id="btn-reset-cache">캐시 초기화</button>
+              <button type="submit" class="btn btn-primary">설정 저장</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
