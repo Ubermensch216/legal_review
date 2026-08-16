@@ -35,6 +35,9 @@
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chip:hover {
@@ -47,6 +50,10 @@
   color: #FFFFFF;
   border-color: var(--brand-primary);
   box-shadow: 0 2px 4px rgba(30, 58, 138, 0.2);
+}
+
+.chip.active .chip-icon {
+  color: #FFFFFF;
 }
 
 .review-input-form {
@@ -90,10 +97,6 @@
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.dropzone-icon {
-  font-size: 26px;
 }
 
 .dropzone-text strong {
@@ -149,6 +152,9 @@
   color: var(--text-muted);
   cursor: pointer;
   padding: 2px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .btn-remove-file:hover {
@@ -258,6 +264,21 @@
   border-radius: 10px;
 }
 
+.tab-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--text-muted);
+}
+
+.tab-status-dot.warning {
+  background-color: #EF4444;
+}
+
+.tab-status-dot.clear {
+  background-color: #10B981;
+}
+
 /* Tab Panes */
 .tab-pane {
   display: none;
@@ -289,12 +310,6 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.panel-header h3 {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-primary);
 }
 
 .panel-body {
@@ -395,11 +410,18 @@
   gap: 24px;
 }
 
-.evidence-section h4 {
+.evidence-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--brand-primary);
+  margin-bottom: 12px;
+}
+
+.evidence-section-header h4 {
   font-size: 15px;
   font-weight: 700;
   color: var(--brand-primary);
-  margin-bottom: 12px;
 }
 
 .article-cards,

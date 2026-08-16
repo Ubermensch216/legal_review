@@ -1,6 +1,8 @@
 // server/export/exportFiles.js - HWPX, DOCX, PDF, Markdown 보고서 파일 생성 엔진
 import JSZip from 'jszip';
 import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 import { EXPORT_STYLES } from './exportStyles.js';
 
 /**
@@ -136,16 +138,24 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
 }
 
 /**
- * PDF 문서 생성 (PDFKit 기반)
+ * PDF 문서 생성 (PDFKit 기반, 한글 TTF 폰트 지원)
  */
 export async function generatePdf({ title = '법률검토의견서', contentMarkdown = '' }) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 40 });
+      const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
       const buffers = [];
 
       doc.on('data', b => buffers.push(b));
       doc.on('end', () => resolve(Buffer.concat(buffers)));
+
+      // 한글 TTF 폰트 등록 (Windows malgun.ttf 또는 나눔폰트)
+      const fontPath = 'C:\\Windows\\Fonts\\malgun.ttf';
+      const hasFont = fs.existsSync(fontPath);
+
+      if (hasFont) {
+        doc.font(fontPath);
+      }
 
       // 제목
       doc.fontSize(18).text(title, { align: 'center' });
@@ -154,6 +164,12 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       // 본문 텍스트
       const lines = contentMarkdown.split('\n');
       for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          doc.moveDown(0.3);
+          continue;
+        }
+
         if (line.startsWith('# ')) {
           doc.moveDown(0.5);
           doc.fontSize(15).text(line.replace('# ', ''), { underline: true });
@@ -165,7 +181,7 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
         } else if (line.startsWith('### ')) {
           doc.fontSize(10.5).text(line.replace('### ', ''));
         } else if (line.startsWith('- ') || line.startsWith('* ')) {
-          doc.fontSize(9.5).text(`  • ${line.substring(2)}`);
+          doc.fontSize(9.5).text(`  - ${line.substring(2)}`);
         } else if (line.startsWith('> ')) {
           doc.fontSize(9).fillColor('#475569').text(`   ${line.substring(2)}`);
           doc.fillColor('#000000');

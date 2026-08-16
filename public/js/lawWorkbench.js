@@ -126,7 +126,10 @@ function renderEvidenceTab(evidence, meta) {
         <div class="art-card">
           <div class="art-card-header">
             <div class="art-title">${lawName} 제${art.fullArticleNo || art.articleNo}조 (${escapeHtml(art.title || '')})</div>
-            <button class="btn btn-xs btn-outline btn-view-art" data-art="${escapeHtml(JSON.stringify(art))}">전문 팝업 ↗</button>
+            <button class="btn btn-xs btn-outline btn-view-art" data-art="${escapeHtml(JSON.stringify(art))}">
+              <span>전문 팝업</span>
+              <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span>
+            </button>
           </div>
           <div class="art-content">${escapeHtml(art.content)}</div>
         </div>
@@ -158,7 +161,10 @@ function renderEvidenceTab(evidence, meta) {
         <div class="prec-card">
           <div class="prec-card-header">
             <div class="prec-title">[판례] ${p.courtName || ''} ${p.caseNo} ${escapeHtml(p.caseName)}</div>
-            <button class="btn btn-xs btn-outline btn-view-prec" data-prec="${escapeHtml(JSON.stringify(p))}">판결요지 전문 ↗</button>
+            <button class="btn btn-xs btn-outline btn-view-prec" data-prec="${escapeHtml(JSON.stringify(p))}">
+              <span>판결요지 전문</span>
+              <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span>
+            </button>
           </div>
           <div class="prec-content">
             <strong>판시사항:</strong> ${escapeHtml(p.holding || '내용 없음')}<br>
@@ -202,19 +208,31 @@ function renderEvidenceTab(evidence, meta) {
 
   if (adminRules.length > 0 || ordinances.length > 0 || annexes.length > 0) {
     if (annexes.length > 0) {
-      rulesHtml += `<div style="margin-bottom: 8px;"><strong>📌 관련 별표 및 서식:</strong></div>`;
+      rulesHtml += `
+        <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 6px; color: var(--brand-primary);">
+          <span class="material-symbols-outlined icon-sm">attachment</span>
+          <strong>관련 별표 및 서식:</strong>
+        </div>`;
       annexes.forEach(a => {
         rulesHtml += `
           <div class="rule-card" style="margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
             <span>[별표 ${a.annexNo}] ${escapeHtml(a.title)}</span>
-            ${a.fileUrl ? `<a href="${a.fileUrl}" target="_blank" class="btn btn-xs btn-outline">서식 다운로드 ↗</a>` : ''}
+            ${a.fileUrl ? `
+              <a href="${a.fileUrl}" target="_blank" class="btn btn-xs btn-outline" style="display:inline-flex; align-items:center; gap:4px;">
+                <span class="material-symbols-outlined" style="font-size:14px;">download</span>
+                <span>서식 다운로드</span>
+              </a>` : ''}
           </div>
         `;
       });
     }
 
     if (ordinances.length > 0) {
-      rulesHtml += `<div style="margin-top: 12px; margin-bottom: 8px;"><strong>🏛 지자체 자치법규(조례):</strong></div>`;
+      rulesHtml += `
+        <div style="margin-top: 14px; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; color: var(--brand-primary);">
+          <span class="material-symbols-outlined icon-sm">location_city</span>
+          <strong>지자체 자치법규(조례):</strong>
+        </div>`;
       ordinances.slice(0, 3).forEach(o => {
         rulesHtml += `
           <div class="rule-card" style="margin-bottom: 6px;">

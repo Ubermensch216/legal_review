@@ -5,10 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI 법령검토 솔루션 - Legal Review Standalone</title>
   <meta name="description" content="공식 법제처 API 연동 기반 AI 법률 검토 및 HWPX 공공서식 보고서 생성 워크벤치">
-  <!-- Google Fonts: Pretendard 대체 / Noto Sans KR & JetBrains Mono -->
+  <!-- Google Fonts: Noto Sans KR & JetBrains Mono & Material Symbols Outlined -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
   
   <link rel="stylesheet" href="/css/main.css">
   <link rel="stylesheet" href="/css/workbench.css">
@@ -20,7 +21,7 @@
     <header class="app-header">
       <div class="header-left">
         <div class="logo-group">
-          <div class="logo-icon">⚖️</div>
+          <span class="material-symbols-outlined logo-icon">gavel</span>
           <div class="logo-text">
             <span class="logo-title">Legal Reviewer</span>
             <span class="logo-subtitle">AI 법령검토 & 보고서 워크벤치</span>
@@ -31,13 +32,15 @@
 
       <div class="header-right">
         <button id="btn-open-tools" class="btn btn-secondary btn-sm">
-          <span>🛠 19대 법령 도구</span>
+          <span class="material-symbols-outlined icon-sm">build</span>
+          <span>19대 법령 도구</span>
         </button>
         <button id="btn-open-studio" class="btn btn-secondary btn-sm">
-          <span>📝 보고서 스튜디오</span>
+          <span class="material-symbols-outlined icon-sm">edit_document</span>
+          <span>보고서 스튜디오</span>
         </button>
         <button id="btn-open-settings" class="btn btn-icon btn-sm" title="환경 및 모델 설정">
-          ⚙️
+          <span class="material-symbols-outlined icon-sm">settings</span>
         </button>
       </div>
     </header>
@@ -50,12 +53,30 @@
         <div class="preset-selector">
           <label class="section-label">6대 검토 유형 프리셋:</label>
           <div class="preset-chips" id="preset-chips">
-            <button class="chip active" data-preset="compliance">🛡 적법성/규제 준수</button>
-            <button class="chip" data-preset="contract_risk">📑 계약서 리스크</button>
-            <button class="chip" data-preset="ordinance_conflict">🏛 조례/내규 충돌</button>
-            <button class="chip" data-preset="admin_dispute">⚖️ 행정처분/민원</button>
-            <button class="chip" data-preset="privacy_security">🔒 개인정보/보안</button>
-            <button class="chip" data-preset="labor_hr">👥 인사/노무/근로</button>
+            <button class="chip active" data-preset="compliance">
+              <span class="material-symbols-outlined chip-icon">verified_user</span>
+              <span>적법성/규제 준수</span>
+            </button>
+            <button class="chip" data-preset="contract_risk">
+              <span class="material-symbols-outlined chip-icon">description</span>
+              <span>계약서 리스크</span>
+            </button>
+            <button class="chip" data-preset="ordinance_conflict">
+              <span class="material-symbols-outlined chip-icon">account_balance</span>
+              <span>조례/내규 충돌</span>
+            </button>
+            <button class="chip" data-preset="admin_dispute">
+              <span class="material-symbols-outlined chip-icon">policy</span>
+              <span>행정처분/민원</span>
+            </button>
+            <button class="chip" data-preset="privacy_security">
+              <span class="material-symbols-outlined chip-icon">lock</span>
+              <span>개인정보/보안</span>
+            </button>
+            <button class="chip" data-preset="labor_hr">
+              <span class="material-symbols-outlined chip-icon">group</span>
+              <span>인사/노무/근로</span>
+            </button>
           </div>
         </div>
 
@@ -76,7 +97,7 @@
           <div class="file-dropzone" id="file-dropzone">
             <input type="file" id="file-input" accept=".hwpx,.pdf,.docx,.xlsx,.xls,.csv,.txt" style="display:none;">
             <div class="dropzone-content" id="dropzone-content">
-              <span class="dropzone-icon">📎</span>
+              <span class="material-symbols-outlined dropzone-icon">attach_file</span>
               <div class="dropzone-text">
                 <strong>검토 대상 문서 첨부 (HWPX, PDF, DOCX, XLSX)</strong>
                 <p>파일을 드래그하거나 클릭하여 업로드하세요 (내부 지침, 계약서, 조례안, 민원서류 등)</p>
@@ -86,17 +107,20 @@
               <span class="file-badge" id="file-badge">HWPX</span>
               <span class="file-name" id="file-name"></span>
               <span class="file-size" id="file-size"></span>
-              <button type="button" class="btn-remove-file" id="btn-remove-file">✕</button>
+              <button type="button" class="btn-remove-file" id="btn-remove-file" title="파일 제거">
+                <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+              </button>
             </div>
           </div>
 
           <div class="form-actions">
             <div class="llm-indicator">
               <span class="indicator-dot online"></span>
-              <span id="current-llm-display">AI 엔진: Ollama (qwen2.5:14b)</span>
+              <span id="current-llm-display">AI 엔진: Ollama (gemma4:e2b)</span>
             </div>
             <button type="submit" class="btn btn-primary btn-lg" id="btn-run-review">
-              <span class="btn-text">⚡ 종합 법령검토 실행</span>
+              <span class="material-symbols-outlined icon-md">search_insights</span>
+              <span class="btn-text">종합 법령검토 실행</span>
               <span class="spinner hidden" id="review-spinner"></span>
             </button>
           </div>
@@ -130,8 +154,14 @@
             <!-- 핵심 요약 카드 -->
             <div class="panel summary-panel">
               <div class="panel-header">
-                <h3>📌 핵심 검토 결론 요약</h3>
-                <button class="btn btn-xs btn-outline" id="btn-copy-summary">요약 복사</button>
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">summarize</span>
+                  <h3>핵심 검토 결론 요약</h3>
+                </div>
+                <button class="btn btn-xs btn-outline" id="btn-copy-summary">
+                  <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span>
+                  <span>요약 복사</span>
+                </button>
               </div>
               <div class="panel-body" id="draft-summary-content">
                 <p class="placeholder-text">검토를 실행하면 핵심 요약이 여기에 표시됩니다.</p>
@@ -141,7 +171,10 @@
             <!-- 쟁점 및 리스크 매트릭스 -->
             <div class="panel risk-panel">
               <div class="panel-header">
-                <h3>⚠️ 핵심 쟁점 및 법적 리스크 분석</h3>
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">warning</span>
+                  <h3>핵심 쟁점 및 법적 리스크 분석</h3>
+                </div>
               </div>
               <div class="panel-body" id="draft-risk-content">
                 <div class="risk-matrix" id="risk-matrix"></div>
@@ -151,7 +184,10 @@
             <!-- 법률 검토 의견 본문 -->
             <div class="panel opinion-panel">
               <div class="panel-header">
-                <h3>⚖️ 법률 검토의견 (본론)</h3>
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">balance</span>
+                  <h3>법률 검토의견 (본론)</h3>
+                </div>
               </div>
               <div class="panel-body" id="draft-opinion-content"></div>
             </div>
@@ -159,7 +195,10 @@
             <!-- 보완 권고사항 -->
             <div class="panel rec-panel">
               <div class="panel-header">
-                <h3>💡 보완 권고사항 및 조치 가이드</h3>
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">lightbulb</span>
+                  <h3>보완 권고사항 및 조치 가이드</h3>
+                </div>
               </div>
               <div class="panel-body" id="draft-rec-content"></div>
             </div>
@@ -167,9 +206,15 @@
             <!-- 검토의견서 전문 초안 (공문서 형태) -->
             <div class="panel full-draft-panel">
               <div class="panel-header">
-                <h3>📄 완성형 검토의견서 초안 (Markdown)</h3>
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm">article</span>
+                  <h3>완성형 검토의견서 초안 (Markdown)</h3>
+                </div>
                 <div class="panel-actions">
-                  <button class="btn btn-sm btn-outline" id="btn-send-to-studio">스튜디오에서 편집 ➔</button>
+                  <button class="btn btn-sm btn-outline" id="btn-send-to-studio">
+                    <span>스튜디오에서 편집</span>
+                    <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span>
+                  </button>
                 </div>
               </div>
               <div class="panel-body">
@@ -183,17 +228,26 @@
         <div class="tab-pane" id="tab-evidence">
           <div class="evidence-layout">
             <div class="evidence-section">
-              <h4>🏛 공식 법령 조문 본문</h4>
+              <div class="evidence-section-header">
+                <span class="material-symbols-outlined icon-sm">account_balance</span>
+                <h4>공식 법령 조문 본문</h4>
+              </div>
               <div class="article-cards" id="evidence-articles"></div>
             </div>
 
             <div class="evidence-section">
-              <h4>⚖️ 대법원 판례 및 법제처 유권해석례</h4>
+              <div class="evidence-section-header">
+                <span class="material-symbols-outlined icon-sm">gavel</span>
+                <h4>대법원 판례 및 법제처 유권해석례</h4>
+              </div>
               <div class="precedent-cards" id="evidence-precedents"></div>
             </div>
 
             <div class="evidence-section">
-              <h4>📋 행정규칙, 자치법규(조례) 및 별표/서식</h4>
+              <div class="evidence-section-header">
+                <span class="material-symbols-outlined icon-sm">menu_book</span>
+                <h4>행정규칙, 자치법규(조례) 및 별표/서식</h4>
+              </div>
               <div class="rules-cards" id="evidence-rules"></div>
             </div>
           </div>
@@ -203,7 +257,10 @@
         <div class="tab-pane" id="tab-revisions">
           <div class="impact-layout">
             <div class="impact-header-card">
-              <h4>🔍 내부 문서 조문 인용 충돌 및 적합성 분석</h4>
+              <div class="panel-title-group">
+                <span class="material-symbols-outlined icon-sm">rule</span>
+                <h4>내부 문서 조문 인용 충돌 및 적합성 분석</h4>
+              </div>
               <div id="impact-summary-badge"></div>
             </div>
             <div class="impact-list" id="impact-items-container"></div>
@@ -216,24 +273,33 @@
     <!-- 보고서 스튜디오 드로어 (우측 슬라이드) -->
     <aside class="studio-drawer" id="studio-drawer">
       <div class="studio-header">
-        <h3>📝 보고서 스튜디오</h3>
-        <button class="btn-close-drawer" id="btn-close-studio">✕</button>
+        <div class="panel-title-group">
+          <span class="material-symbols-outlined icon-sm">edit_document</span>
+          <h3>보고서 스튜디오</h3>
+        </div>
+        <button class="btn-close-drawer" id="btn-close-studio" title="닫기">
+          <span class="material-symbols-outlined">close</span>
+        </button>
       </div>
 
       <div class="studio-toolbar">
         <input type="text" id="report-title-input" class="report-title-input" value="법률검토의견서">
         <div class="export-btn-group">
           <button class="btn btn-export btn-hwpx" data-format="hwpx" title="한글 2014 호환 HWPX 다운로드">
-            <span>📥 HWPX</span>
+            <span class="material-symbols-outlined icon-sm">download</span>
+            <span>HWPX</span>
           </button>
           <button class="btn btn-export btn-pdf" data-format="pdf" title="인쇄용 PDF 다운로드">
-            <span>📥 PDF</span>
+            <span class="material-symbols-outlined icon-sm">download</span>
+            <span>PDF</span>
           </button>
           <button class="btn btn-export btn-docx" data-format="docx" title="MS Word DOCX 다운로드">
-            <span>📥 DOCX</span>
+            <span class="material-symbols-outlined icon-sm">download</span>
+            <span>DOCX</span>
           </button>
           <button class="btn btn-export btn-md" data-format="md" title="마크다운 다운로드">
-            <span>📥 MD</span>
+            <span class="material-symbols-outlined icon-sm">download</span>
+            <span>MD</span>
           </button>
         </div>
       </div>
@@ -248,7 +314,9 @@
       <div class="modal-card modal-lg">
         <div class="modal-header">
           <h3 id="modal-viewer-title">조문 상세 조회</h3>
-          <button class="btn-close-modal" id="btn-close-viewer">✕</button>
+          <button class="btn-close-modal" id="btn-close-viewer" title="닫기">
+            <span class="material-symbols-outlined">close</span>
+          </button>
         </div>
         <div class="modal-body" id="modal-viewer-body"></div>
       </div>
@@ -258,8 +326,13 @@
     <div class="modal-overlay hidden" id="tools-modal">
       <div class="modal-card modal-lg">
         <div class="modal-header">
-          <h3>🛠 19대 법령 도구 개별 실행</h3>
-          <button class="btn-close-modal" id="btn-close-tools">✕</button>
+          <div class="panel-title-group">
+            <span class="material-symbols-outlined icon-sm">build</span>
+            <h3>19대 법령 도구 개별 실행</h3>
+          </div>
+          <button class="btn-close-modal" id="btn-close-tools" title="닫기">
+            <span class="material-symbols-outlined">close</span>
+          </button>
         </div>
         <div class="modal-body">
           <div class="tools-layout">
@@ -268,7 +341,10 @@
               <h4 id="selected-tool-title">도구를 선택하세요</h4>
               <p id="selected-tool-desc" class="tool-desc-text"></p>
               <div id="tool-params-form" class="tool-params-form"></div>
-              <button id="btn-exec-tool" class="btn btn-primary btn-sm">실행</button>
+              <button id="btn-exec-tool" class="btn btn-primary btn-sm">
+                <span class="material-symbols-outlined icon-sm">play_arrow</span>
+                <span>실행</span>
+              </button>
               <div class="tool-result-box" id="tool-result-box">
                 <pre><code id="tool-result-json">실행 결과가 여기에 표시됩니다.</code></pre>
               </div>
@@ -282,8 +358,13 @@
     <div class="modal-overlay hidden" id="settings-modal">
       <div class="modal-card">
         <div class="modal-header">
-          <h3>⚙️ 환경 및 AI 모델 설정</h3>
-          <button class="btn-close-modal" id="btn-close-settings">✕</button>
+          <div class="panel-title-group">
+            <span class="material-symbols-outlined icon-sm">settings</span>
+            <h3>환경 및 AI 모델 설정</h3>
+          </div>
+          <button class="btn-close-modal" id="btn-close-settings" title="닫기">
+            <span class="material-symbols-outlined">close</span>
+          </button>
         </div>
         <div class="modal-body">
           <form id="form-settings">
@@ -302,7 +383,7 @@
             </div>
             <div class="form-group">
               <label>모델명</label>
-              <input type="text" id="setting-model-name" value="qwen2.5:14b">
+              <input type="text" id="setting-model-name" value="gemma4:e2b">
             </div>
             <div class="form-group">
               <label>API Key (클라우드 모델 사용 시)</label>

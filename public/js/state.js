@@ -9,7 +9,7 @@ export const state = {
   settings: {
     provider: localStorage.getItem('lr_provider') || 'ollama',
     ollamaUrl: localStorage.getItem('lr_ollamaUrl') || 'http://localhost:11434',
-    modelName: localStorage.getItem('lr_modelName') || 'qwen2.5:14b',
+    modelName: localStorage.getItem('lr_modelName') || 'gemma4:e2b',
     apiKey: localStorage.getItem('lr_apiKey') || '',
     lawOc: localStorage.getItem('lr_lawOc') || ''
   }

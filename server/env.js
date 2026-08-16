@@ -28,7 +28,7 @@ export const ENV = {
   // LLM Config
   LLM_PROVIDER: (process.env.LLM_PROVIDER || 'ollama').toLowerCase(),
   OLLAMA_URL: process.env.OLLAMA_URL || 'http://localhost:11434',
-  OLLAMA_MODEL: process.env.OLLAMA_MODEL || 'qwen2.5:14b',
+  OLLAMA_MODEL: process.env.OLLAMA_MODEL || 'gemma4:e2b',
 
   OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
   OPENAI_MODEL: process.env.OPENAI_MODEL || 'gpt-4o',
