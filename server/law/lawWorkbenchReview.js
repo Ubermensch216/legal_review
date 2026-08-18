@@ -153,6 +153,14 @@ ${interpretationsText || '(해석례 정보 없음)'}
     }
 
     const parsed = parseReviewJson(rawContent);
+    if (!parsed) {
+      // 파싱 실패 시 normalizeReviewResult가 조용히 룰베이스 결과를 돌려주므로,
+      // LLM 검토가 실제로 반영되지 않았다는 사실을 로그로 드러낸다.
+      console.warn(
+        `[LawWorkbenchReview] LLM 응답을 JSON으로 파싱하지 못해 룰베이스 결과로 대체합니다. ` +
+        `(응답 길이: ${rawContent.length}자, 앞부분: ${rawContent.slice(0, 200).replace(/\s+/g, ' ')})`
+      );
+    }
     const normalized = normalizeReviewResult(parsed, workbenchContext, query, preset);
     
     // 조문 실존성 검증 및 오인용 자동 교정 (Anti-Hallucination)
@@ -181,32 +189,81 @@ ${interpretationsText || '(해석례 정보 없음)'}
 async function callOllama(systemPrompt, userPrompt, config = {}) {
   const url = config.url || ENV.OLLAMA_URL;
   const model = config.model || ENV.OLLAMA_MODEL;
-  const timeoutMs = parseInt(process.env.LLM_TIMEOUT || '4000', 10); // 로컬 미기동 시 4초 내 빠른 전환
 
-  const response = await fetch(`${url}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(timeoutMs),
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      stream: false,
-      format: 'json',
-      options: {
-        temperature: 0.1,
-        num_predict: 2500
-      }
-    })
-  });
+  // 1단계: 짧은 헬스체크로 "Ollama 미기동" 상황만 빠르게 걸러낸다.
+  //   생성 자체는 수 분이 걸릴 수 있으므로, 미기동 감지용 타임아웃을 생성 타임아웃으로
+  //   그대로 쓰면 정상 동작 중인 모델까지 매번 중단되어 룰베이스로 떨어진다.
+  const probeTimeoutMs = parseInt(process.env.LLM_PROBE_TIMEOUT || '2000', 10);
+  let installedModels = [];
+  try {
+    const probe = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(probeTimeoutMs) });
+    if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
+    ({ models: installedModels = [] } = await probe.json());
+  } catch (err) {
+    throw new Error(`Ollama 서버에 연결할 수 없습니다 (${url}): ${err.message}`);
+  }
+
+  if (installedModels.length > 0 && !installedModels.some(m => m.name === model || m.model === model)) {
+    throw new Error(
+      `Ollama에 모델 '${model}'이(가) 설치되어 있지 않습니다. ` +
+      `설치된 모델: ${installedModels.map(m => m.name).join(', ')} (해결: ollama pull ${model})`
+    );
+  }
+
+  // 2단계: 실제 생성 호출. 로컬 모델은 프롬프트 처리 + 2,500 토큰 생성에
+  //   수 분이 소요될 수 있으므로 넉넉한 타임아웃을 적용한다.
+  const timeoutMs = parseInt(process.env.LLM_TIMEOUT || '600000', 10);
+
+  let response;
+  try {
+    response = await fetch(`${url}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        stream: false,
+        format: 'json',
+        keep_alive: process.env.OLLAMA_KEEP_ALIVE || '30m', // 매 호출마다 모델을 다시 적재하지 않도록 유지
+        options: {
+          temperature: 0.1,
+          // num_ctx는 프롬프트와 생성 토큰이 함께 쓰는 예산이다. Ollama 기본값(4096)은
+          // 법령·판례가 포함된 긴 프롬프트에서 출력 여유를 거의 남기지 않아 응답이 잘린다.
+          num_ctx: parseInt(process.env.OLLAMA_NUM_CTX || '16384', 10),
+          num_predict: parseInt(process.env.OLLAMA_NUM_PREDICT || '8192', 10)
+        }
+      })
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || /aborted due to timeout/i.test(err.message || '')) {
+      throw new Error(
+        `Ollama 응답이 ${Math.round(timeoutMs / 1000)}초 내에 완료되지 않았습니다. ` +
+        `더 작은 모델을 쓰거나 LLM_TIMEOUT 환경변수를 늘리십시오.`
+      );
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     throw new Error(`Ollama Error HTTP ${response.status}`);
   }
 
   const data = await response.json();
+
+  // num_predict 한도에 걸려 응답이 잘리면 JSON 파싱이 실패하고 조용히 룰베이스로 대체된다.
+  // 원인을 알 수 있도록 절단 사실을 명시적으로 남긴다.
+  if (data.done_reason === 'length') {
+    console.warn(
+      `[LawWorkbenchReview] Ollama 응답이 토큰 한도에 도달해 잘렸습니다 ` +
+      `(프롬프트 ${data.prompt_eval_count ?? '?'} + 생성 ${data.eval_count ?? '?'} 토큰). ` +
+      `OLLAMA_NUM_PREDICT 또는 OLLAMA_NUM_CTX를 늘리십시오.`
+    );
+  }
+
   return data.message?.content || '';
 }
 
@@ -326,15 +383,77 @@ function parseReviewJson(text) {
   try {
     return JSON.parse(cleaned);
   } catch {
+    // 1차 보정: 앞뒤 잡음을 제거하고 최외곽 중괄호 구간만 다시 시도
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1) {
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
       try {
         return JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
       } catch {
-        return null;
+        /* 아래의 절단 복구로 진행 */
       }
     }
+
+    // 2차 보정: 토큰 한도로 잘린 JSON을 닫아서 부분 결과라도 살린다.
+    if (firstBrace !== -1) {
+      return repairTruncatedJson(cleaned.slice(firstBrace));
+    }
+    return null;
+  }
+}
+
+/**
+ * 토큰 한도로 중간에 끊긴 JSON 문자열을 유효한 JSON으로 복구한다.
+ * 열린 문자열을 닫고, 미완성 토큰을 잘라낸 뒤, 남은 배열/객체를 역순으로 닫는다.
+ * 로컬 LLM은 출력이 잘리는 경우가 잦아 전량 폐기하는 대신 부분 결과를 확보한다.
+ */
+function repairTruncatedJson(text) {
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  let lastSafe = -1; // 문자열 밖에서 값이 온전히 끝난 마지막 위치
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') {
+        inString = false;
+        lastSafe = i;
+      }
+      continue;
+    }
+
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') {
+      stack.pop();
+      lastSafe = i;
+    } else if (ch === ',' || /[\dA-Za-z]/.test(ch)) lastSafe = i;
+  }
+
+  let repaired = text;
+
+  if (inString) {
+    // 문자열 중간에서 끊긴 경우: 열린 문자열을 닫는다.
+    repaired += '"';
+  } else if (lastSafe >= 0) {
+    // 값 중간(숫자/리터럴)에서 끊긴 경우: 마지막 안전 지점까지만 취한다.
+    repaired = repaired.slice(0, lastSafe + 1);
+  }
+
+  // 미완성 꼬리(후행 쉼표, 값 없는 키)를 정리한다.
+  repaired = repaired.replace(/,\s*$/, '');
+  if (/:\s*$/.test(repaired)) repaired += 'null';
+  if (/,\s*"[^"]*"\s*$/.test(repaired)) repaired = repaired.replace(/,\s*"[^"]*"\s*$/, '');
+
+  while (stack.length > 0) repaired += stack.pop();
+
+  try {
+    return JSON.parse(repaired);
+  } catch {
     return null;
   }
 }

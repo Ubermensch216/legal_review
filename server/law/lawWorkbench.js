@@ -89,17 +89,19 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
 
   const targetArticleList = Array.from(targetArticleNos);
 
-  // 6. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단계 연쇄 체계, 영향 분석
+  // 6. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단계 연쇄 체계, 영향 분석, 개정 이력
   const compactKeyword = kbResult.matchedKeywords.length > 0 ? kbResult.matchedKeywords[0] : '';
   const searchQuery = primaryLawName ? (compactKeyword ? `${primaryLawName} ${compactKeyword}` : primaryLawName) : (query || '').slice(0, 20);
+  const textToAnalyze = `${documentText}\n${query}`.trim();
 
-  const [precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes] = await Promise.allSettled([
+  const [precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes, historyRes] = await Promise.allSettled([
     searchPrecedents(searchQuery, 1, 10),
     searchInterpretations(searchQuery, 1, 8),
     searchAdminRules(primaryLawName || query, 1, 5),
     searchOrdinances(primaryLawName || query, 1, 5),
     primaryLawName ? retrieveCascadingHierarchy({ lawName: primaryLawName, articleNos: targetArticleList }) : Promise.resolve(null),
-    documentText ? runTool('impactMap', { documentText, targetLaw: primaryLawName }) : Promise.resolve(null)
+    runTool('impactMap', { documentText: textToAnalyze, targetLaw: primaryLawName }),
+    primaryLawName ? runTool('lawHistory', { lawName: primaryLawName }) : Promise.resolve(null)
   ]);
 
   const rawPrecedents = precRes.status === 'fulfilled' ? precRes.value : [];
@@ -108,6 +110,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const ordinances = ordinRes.status === 'fulfilled' ? ordinRes.value : [];
   const cascadingHierarchy = cascadingRes.status === 'fulfilled' ? cascadingRes.value : null;
   const impactMap = impactRes.status === 'fulfilled' && impactRes.value ? impactRes.value.result : null;
+  const lawHistory = historyRes.status === 'fulfilled' && historyRes.value ? historyRes.value.result : null;
 
   // 7. 시맨틱 Re-ranking 적용 (Top 3 판례, Top 2 해석례 엄선)
   const rankedPrecedents = reRankPrecedents({
@@ -156,12 +159,15 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       adminRules,
       ordinances
     },
-    // Tab 3: 개정 및 영향 분석 데이터
+    // Tab 3: 개정 및 영향 분석 데이터 (위험 조항 및 법령 이력 완비)
     impactAndRevisions: {
+      primaryLawDetail: mainLawDetail,
       impactMap,
+      lawHistory,
       extractedReferences: explicitRefs,
       expandedKeywords: kbResult.expandedTerms,
-      documentChunks: optimizedDoc.selectedChunks
+      documentChunks: optimizedDoc.selectedChunks,
+      riskClauses: (optimizedDoc.selectedChunks || []).filter(c => c.isRiskClause)
     }
   };
 }

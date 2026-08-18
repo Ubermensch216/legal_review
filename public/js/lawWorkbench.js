@@ -641,49 +641,168 @@ function renderEvidenceTab(evidence, meta) {
 }
 
 /**
- * Tab 3: 개정 및 영향 분석 렌더링
+ * Tab 3: 개정 및 영향 분석 렌더링 (위험 조항 영향도, 조문 적합성 대조표 및 법령 개정 연혁)
  */
 function renderRevisionsTab(impactData, meta) {
-  if (!impactData) return;
-
-  const container = document.getElementById('impact-items-container');
   const badgeContainer = document.getElementById('impact-summary-badge');
-  const impactMap = impactData.impactMap;
+  const riskContainer = document.getElementById('impact-risk-container');
+  const itemsContainer = document.getElementById('impact-items-container');
+  const historyContainer = document.getElementById('impact-history-container');
 
-  if (impactMap) {
-    const totalCount = impactMap.totalChecked || 0;
-    const invalidCount = impactMap.conflictCount || 0;
+  const lawName = meta?.primaryLawName || impactData?.primaryLawDetail?.lawName || '관련 법령';
+  const lawDetail = impactData?.primaryLawDetail || null;
+  const impactMap = impactData?.impactMap || null;
+  const riskClauses = impactData?.riskClauses || [];
+  const lawHistory = impactData?.lawHistory || null;
+
+  // 1. 상단 종합 진단 뱃지 렌더링
+  if (badgeContainer) {
+    const summary = impactMap?.impactSummary || {};
+    const highRiskCount = summary.highRiskCount || 0;
+    const cautionCount = summary.cautionCount || 0;
+    const totalCitations = summary.total || impactMap?.analyzedReferencesCount || 0;
+
+    let statusBadge = `<span class="badge badge-gov"><span class="material-symbols-outlined" style="font-size:13px; color:#16A34A;">check_circle</span>현행 법령 적합</span>`;
+    if (highRiskCount > 0) {
+      statusBadge = `<span class="badge badge-risk HIGH"><span class="material-symbols-outlined" style="font-size:13px;">error</span>개정/폐지 조문 ${highRiskCount}건</span>`;
+    } else if (cautionCount > 0) {
+      statusBadge = `<span class="badge badge-risk MEDIUM"><span class="material-symbols-outlined" style="font-size:13px;">warning</span>확인 필요 ${cautionCount}건</span>`;
+    }
 
     badgeContainer.innerHTML = `
-      <span class="badge ${invalidCount > 0 ? 'badge-risk HIGH' : 'badge-gov'}">
-        ${invalidCount > 0 ? `충돌/개정필요 ${invalidCount}건` : '상위법령 적합'}
-      </span>
+      <span class="badge" style="background:#EFF6FF; color:#1E40AF; font-weight:700;">기준: ${escapeHtml(lawName)}</span>
+      ${lawDetail?.enforceDate ? `<span class="badge" style="background:#F1F5F9; color:#475569;">시행일: ${escapeHtml(lawDetail.enforceDate)}</span>` : ''}
+      ${statusBadge}
+      <span class="badge badge-gov">조문 대조 ${totalCitations}건</span>
     `;
 
-    let listHtml = '';
-    const citations = impactMap.citations || [];
+    const dotEl = document.getElementById('dot-impact');
+    if (dotEl) {
+      if (highRiskCount > 0 || riskClauses.length > 0) {
+        dotEl.className = 'tab-count';
+        dotEl.style.background = '#FEE2E2';
+        dotEl.style.color = '#DC2626';
+        dotEl.textContent = `위험 ${highRiskCount + riskClauses.length}건`;
+      } else {
+        dotEl.className = 'tab-count';
+        dotEl.style.background = '#ECFDF5';
+        dotEl.style.color = '#059669';
+        dotEl.textContent = '정상';
+      }
+    }
+  }
 
-    if (citations.length > 0) {
-      citations.forEach(c => {
-        const isConflict = c.status === 'DELETED' || c.status === 'CONFLICT';
-        listHtml += `
-          <div class="impact-item-card ${isConflict ? 'has-conflict' : ''}">
+  // 2. 내부 문서 쟁점 및 위험 조항 영향도 분석 (1번 섹션)
+  if (riskContainer) {
+    if (riskClauses.length > 0) {
+      let riskHtml = '<div class="impact-risk-grid" style="display:flex; flex-direction:column; gap:10px;">';
+      riskClauses.forEach(chunk => {
+        const tags = chunk.riskTags || [];
+        const tagsHtml = tags.map(t => `<span class="badge-risk ${t.level}">${escapeHtml(t.label)}</span>`).join(' ');
+        
+        riskHtml += `
+          <div class="impact-item-card has-conflict" style="border-left: 4px solid #DC2626;">
             <div class="impact-item-header">
-              <span class="impact-citation-badge">${escapeHtml(c.citation)}</span>
-              <span class="badge ${isConflict ? 'badge-risk HIGH' : 'badge-gov'}">${escapeHtml(c.status)}</span>
+              <span class="badge-clause-no" style="background:#FEE2E2; color:#991B1B; border-color:#FECACA;">${escapeHtml(chunk.articleNo)} (${escapeHtml(chunk.title)})</span>
+              <div style="display:flex; gap:6px;">${tagsHtml}</div>
             </div>
-            <div class="impact-item-reason">${escapeHtml(c.reason || '')}</div>
+            <div class="impact-item-snippet" style="background:#FEF2F2; color:#7F1D1D; margin: 8px 0; padding: 10px; border-radius: 6px; font-size: 13px;">
+              ${escapeHtml(chunk.content)}
+            </div>
+            <div class="impact-item-reason" style="color:#B91C1C; font-size:12.5px; font-weight:600;">
+              • 파급 영향: 상위 법령(강행규정) 위배 소지로 인한 조항 무효화 및 주무관청 행정처분(과태료/시정명령) 대상 조항임
+            </div>
           </div>
         `;
       });
+      riskHtml += '</div>';
+      riskContainer.innerHTML = riskHtml;
     } else {
-      listHtml = '<p class="placeholder-text">추출된 인용 조문이 없습니다.</p>';
+      riskContainer.innerHTML = `
+        <div style="padding: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 13px; color: #475569; display: flex; align-items: center; gap: 8px;">
+          <span class="material-symbols-outlined" style="color: #16A34A; font-size: 20px;">verified</span>
+          <span>내부 문서/검토안에서 상위법령을 정면 위배하거나 즉각적인 행정제재를 초래하는 특이 독소조항이 감지되지 않았습니다.</span>
+        </div>
+      `;
     }
+  }
 
-    container.innerHTML = listHtml;
-  } else {
-    badgeContainer.innerHTML = '<span class="badge badge-gov">분석 대기</span>';
-    container.innerHTML = '<p class="placeholder-text">첨부문서가 업로드되면 조문 충돌 및 개정 영향 분석 결과가 여기에 표시됩니다.</p>';
+  // 3. 조문 인용 충돌 및 개정 적합성 대조표 (2번 섹션)
+  if (itemsContainer) {
+    const items = impactMap?.impactItems || [];
+    if (items.length > 0) {
+      const RISK_LABEL = { HIGH: '개정/폐지', CAUTION: '확인 필요', NORMAL: '현행 유효' };
+
+      itemsContainer.innerHTML = items.map(item => {
+        const risk = item.riskLevel || 'NORMAL';
+        const badgeClass = risk === 'HIGH' ? 'badge-risk HIGH' : risk === 'CAUTION' ? 'badge-risk MEDIUM' : 'badge-gov';
+        const title = item.articleTitle ? ` (${escapeHtml(item.articleTitle)})` : '';
+
+        return `
+          <div class="impact-item-card ${risk === 'HIGH' ? 'has-conflict' : ''}">
+            <div class="impact-item-header">
+              <span class="impact-citation-badge">${escapeHtml(item.citation || '')}${title}</span>
+              <span class="badge ${badgeClass}">${RISK_LABEL[risk] || escapeHtml(risk)}</span>
+            </div>
+            <div class="impact-item-reason">${escapeHtml(item.note || '')}</div>
+            ${item.currentTextSnippet
+              ? `<div class="impact-item-snippet">${escapeHtml(item.currentTextSnippet)}</div>`
+              : ''}
+          </div>
+        `;
+      }).join('');
+    } else {
+      itemsContainer.innerHTML = '<p class="placeholder-text">수집된 조문 적합성 대조 데이터가 없습니다.</p>';
+    }
+  }
+
+  // 4. 소관 법령 최근 개정 연혁 및 시행 타임라인 (3번 섹션)
+  if (historyContainer) {
+    const timeline = lawHistory?.timeline || [];
+    if (timeline.length > 0) {
+      let timelineHtml = `
+        <div class="table-responsive" style="margin-top: 10px;">
+          <table class="legal-table">
+            <thead>
+              <tr>
+                <th style="width: 25%;">법령명 및 구분</th>
+                <th style="width: 20%; text-align: center;">공포일자 (공포번호)</th>
+                <th style="width: 20%; text-align: center;">시행일자</th>
+                <th style="width: 20%;">소관 부처</th>
+                <th style="width: 15%; text-align: center;">개정 상태</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      timeline.slice(0, 5).forEach((h, idx) => {
+        const isLatest = idx === 0;
+        timelineHtml += `
+          <tr>
+            <td class="cell-bold">${escapeHtml(h.lawName)} <span class="badge" style="background:#F1F5F9; color:#475569; font-size:10px;">${escapeHtml(h.lawType || '법령')}</span></td>
+            <td class="cell-center">${escapeHtml(h.promulDate || '-')} ${h.promulNo ? `<small>(${h.promulNo}호)</small>` : ''}</td>
+            <td class="cell-center"><strong>${escapeHtml(h.enforceDate || '-')}</strong></td>
+            <td>${escapeHtml(h.ministry || '소관부처')}</td>
+            <td class="cell-center">
+              <span class="badge ${isLatest ? 'badge-gov' : 'badge-gray'}">${isLatest ? '현행 법령' : '종전 개정'}</span>
+            </td>
+          </tr>
+        `;
+      });
+
+      timelineHtml += `
+            </tbody>
+          </table>
+        </div>
+      `;
+      historyContainer.innerHTML = timelineHtml;
+    } else {
+      historyContainer.innerHTML = `
+        <div style="padding: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 13px; color: #64748B;">
+          ${lawName}의 최신 개정 연혁 정보를 국가법령정보센터에서 연동 중입니다.
+        </div>
+      `;
+    }
   }
 }
 

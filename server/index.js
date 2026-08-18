@@ -64,6 +64,10 @@ function startServer(port, maxAttempts = 5) {
     console.log(`======================================================\n`);
   });
 
+  // 로컬 LLM 종합 검토는 수 분이 걸릴 수 있으므로 Node 기본 요청 타임아웃(5분)을 넉넉히 늘린다.
+  server.requestTimeout = parseInt(process.env.SERVER_REQUEST_TIMEOUT || '900000', 10);
+  server.headersTimeout = server.requestTimeout + 10000;
+
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE' && maxAttempts > 0) {
       console.warn(`[Server] 포트 ${port} 사용 중, 포트 ${port + 1}로 재시도합니다...`);
