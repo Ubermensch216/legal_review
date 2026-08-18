@@ -1,8 +1,11 @@
-// server/law/lawWorkbench.js - 종합 법령 워크벤치 오케스트레이터
+// server/law/lawWorkbench.js - 종합 법령 워크벤치 오케스트레이터 (Re-ranking & Cascading 통합)
 import { expandQueryKeywords } from './lawTermKb.js';
 import { extractArticleReferences, normalizeArticleNo } from './lawArticleRef.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances } from './decisionsApiClient.js';
+import { reRankPrecedents, reRankInterpretations } from './reRanker.js';
+import { retrieveCascadingHierarchy } from './cascadingRetriever.js';
+import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { runTool } from './tools/toolRunner.js';
 
 /**
@@ -18,13 +21,19 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const startTime = Date.now();
   const fullContextText = `${query}\n${documentText}`.trim();
 
-  // 1. 키워드 및 도메인 지식베이스 확장
+  // 1. 대용량 첨부문서 컨텍스트 최적화
+  const optimizedDoc = optimizeDocumentContext({
+    documentText,
+    query,
+    maxChars: 4500
+  });
+
+  // 2. 키워드 및 도메인 지식베이스 다중 확장
   const kbResult = expandQueryKeywords(fullContextText);
   const explicitRefs = extractArticleReferences(fullContextText, targetLaw);
 
-  // 2. 검색 대상 주요 법령 결정
+  // 3. 검색 대상 주요 법령 결정
   let primaryLawName = targetLaw;
-  let primaryArticles = [];
 
   if (!primaryLawName) {
     if (explicitRefs.length > 0 && explicitRefs[0].lawName) {
@@ -34,7 +43,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     }
   }
 
-  // 3. 주요 법령 검색 및 상세 조문 조회
+  // 4. 주요 법령 검색 및 상세 조문 조회
   let mainLawDetail = null;
   if (primaryLawName) {
     const searchRes = await searchLaw(primaryLawName, 1, 3);
@@ -51,7 +60,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     }
   }
 
-  // 4. 관련 조문 핀포인트 추출
+  // 5. 관련 조문 핀포인트 추출
   const targetArticleNos = new Set();
   explicitRefs.forEach(r => targetArticleNos.add(r.fullArticleNo));
 
@@ -72,33 +81,51 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       });
     }
     
-    // 조문이 매칭되지 않았으면 앞부분 주요 조문 3~5개 제공
+    // 조문이 매칭되지 않았으면 앞부분 주요 조문 4~6개 제공
     if (collectedArticles.length === 0) {
-      collectedArticles.push(...mainLawDetail.articles.slice(0, 4));
+      collectedArticles.push(...mainLawDetail.articles.slice(0, 5));
     }
   }
 
-  // 5. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단체계, 별표
-  const searchQuery = primaryLawName ? `${primaryLawName} ${query}`.trim() : query;
+  const targetArticleList = Array.from(targetArticleNos);
 
-  const [precRes, expcRes, admrulRes, ordinRes, hierarchyRes, impactRes] = await Promise.allSettled([
-    searchPrecedents(searchQuery, 1, 5),
-    searchInterpretations(searchQuery, 1, 5),
+  // 6. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단계 연쇄 체계, 영향 분석
+  const compactKeyword = kbResult.matchedKeywords.length > 0 ? kbResult.matchedKeywords[0] : '';
+  const searchQuery = primaryLawName ? (compactKeyword ? `${primaryLawName} ${compactKeyword}` : primaryLawName) : (query || '').slice(0, 20);
+
+  const [precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes] = await Promise.allSettled([
+    searchPrecedents(searchQuery, 1, 10),
+    searchInterpretations(searchQuery, 1, 8),
     searchAdminRules(primaryLawName || query, 1, 5),
     searchOrdinances(primaryLawName || query, 1, 5),
-    primaryLawName ? runTool('delegatedLaws', { lawName: primaryLawName }) : Promise.resolve(null),
+    primaryLawName ? retrieveCascadingHierarchy({ lawName: primaryLawName, articleNos: targetArticleList }) : Promise.resolve(null),
     documentText ? runTool('impactMap', { documentText, targetLaw: primaryLawName }) : Promise.resolve(null)
   ]);
 
-  const precedents = precRes.status === 'fulfilled' ? precRes.value : [];
-  const interpretations = expcRes.status === 'fulfilled' ? expcRes.value : [];
+  const rawPrecedents = precRes.status === 'fulfilled' ? precRes.value : [];
+  const rawInterpretations = expcRes.status === 'fulfilled' ? expcRes.value : [];
   const adminRules = admrulRes.status === 'fulfilled' ? admrulRes.value : [];
   const ordinances = ordinRes.status === 'fulfilled' ? ordinRes.value : [];
-  const hierarchy = hierarchyRes.status === 'fulfilled' && hierarchyRes.value ? hierarchyRes.value.result : null;
+  const cascadingHierarchy = cascadingRes.status === 'fulfilled' ? cascadingRes.value : null;
   const impactMap = impactRes.status === 'fulfilled' && impactRes.value ? impactRes.value.result : null;
 
-  const annexes = (mainLawDetail && mainLawDetail.annexes) ? mainLawDetail.annexes : [];
+  // 7. 시맨틱 Re-ranking 적용 (Top 3 판례, Top 2 해석례 엄선)
+  const rankedPrecedents = reRankPrecedents({
+    precedents: rawPrecedents,
+    query: `${query} ${kbResult.matchedKeywords.join(' ')}`,
+    targetLaw: primaryLawName,
+    articleNos: targetArticleList,
+    expandedTerms: kbResult.expandedTerms
+  });
 
+  const rankedInterpretations = reRankInterpretations({
+    interpretations: rawInterpretations,
+    query,
+    targetLaw: primaryLawName,
+    expandedTerms: kbResult.expandedTerms
+  });
+
+  const annexes = (mainLawDetail && mainLawDetail.annexes) ? mainLawDetail.annexes : [];
   const durationMs = Date.now() - startTime;
 
   return {
@@ -107,10 +134,11 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       preset,
       primaryLawName,
       hasAttachedDocument: Boolean(documentText),
+      isOptimizedDoc: Boolean(optimizedDoc.omittedCount > 0),
       durationMs,
       timestamp: new Date().toISOString()
     },
-    // Tab 2: 공식 근거 데이터
+    // Tab 2: 공식 근거 데이터 (Re-ranking 및 Cascading 반영)
     officialEvidence: {
       lawDetail: mainLawDetail ? {
         lawId: mainLawDetail.lawId,
@@ -122,9 +150,9 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       } : null,
       articles: collectedArticles,
       annexes,
-      hierarchy,
-      precedents,
-      interpretations,
+      cascadingHierarchy,
+      precedents: rankedPrecedents,
+      interpretations: rankedInterpretations,
       adminRules,
       ordinances
     },
@@ -132,7 +160,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     impactAndRevisions: {
       impactMap,
       extractedReferences: explicitRefs,
-      expandedKeywords: kbResult.expandedTerms
+      expandedKeywords: kbResult.expandedTerms,
+      documentChunks: optimizedDoc.selectedChunks
     }
   };
 }

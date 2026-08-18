@@ -202,10 +202,13 @@
                   <span class="material-symbols-outlined icon-sm">summarize</span>
                   <h3>핵심 검토 결론 요약</h3>
                 </div>
-                <button class="btn btn-xs btn-outline" id="btn-copy-summary">
-                  <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span>
-                  <span>요약 복사</span>
-                </button>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div id="draft-factuality-badge"></div>
+                  <button class="btn btn-xs btn-outline" id="btn-copy-summary">
+                    <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span>
+                    <span>요약 복사</span>
+                  </button>
+                </div>
               </div>
               <div class="panel-body" id="draft-summary-content">
                 <p class="placeholder-text">검토를 실행하면 핵심 요약이 여기에 표시됩니다.</p>
@@ -225,12 +228,26 @@
               </div>
             </div>
 
-            <!-- 3. 심층 법률 검토의견 본문 -->
+            <!-- 3. 실무형 수정 조문 (Redline Diff) 신구 조문 대비표 -->
+            <div class="panel redline-panel" id="panel-redline">
+              <div class="panel-header">
+                <div class="panel-title-group">
+                  <span class="material-symbols-outlined icon-sm" style="color:#2563EB;">rate_review</span>
+                  <h3>실무형 조항 수정 권고안 (신·구 조문 대비표)</h3>
+                </div>
+                <span class="badge badge-gov" style="font-size:11px;">위법 조항 대체안</span>
+              </div>
+              <div class="panel-body" id="draft-redline-content">
+                <p class="placeholder-text">위법·불리한 독소조항에 대한 수정 권고안 대비표가 여기에 표시됩니다.</p>
+              </div>
+            </div>
+
+            <!-- 4. 심층 법률 검토의견 본문 (IRAC) -->
             <div class="panel opinion-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
                   <span class="material-symbols-outlined icon-sm">balance</span>
-                  <h3>심층 법률 검토의견 (본론)</h3>
+                  <h3>심층 법률 검토의견 (IRAC 다단계 분석)</h3>
                 </div>
               </div>
               <div class="panel-body" id="draft-opinion-content">
@@ -238,7 +255,7 @@
               </div>
             </div>
 
-            <!-- 4. 보완 권고사항 및 조치 계획 체크리스트 -->
+            <!-- 5. 보완 권고사항 및 조치 계획 체크리스트 -->
             <div class="panel rec-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
@@ -251,7 +268,7 @@
               </div>
             </div>
 
-            <!-- 5. 적용 법령 및 조문 근거 테이블 (하단 배치) -->
+            <!-- 6. 적용 법령 및 조문 근거 테이블 (하단 배치) -->
             <div class="panel basis-panel">
               <div class="panel-header">
                 <div class="panel-title-group">

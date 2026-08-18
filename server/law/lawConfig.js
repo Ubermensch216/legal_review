@@ -11,10 +11,10 @@ export const LAW_CONFIG = {
   ADMIN_RULE_BASE_URL: 'http://www.law.go.kr/DRF/lawSearch.do?target=admrul',
   ORDINANCE_BASE_URL: 'http://www.law.go.kr/DRF/lawSearch.do?target=ordin',
   
-  // API 타임아웃 및 재시도 설정
-  TIMEOUT_MS: 12000,
-  MAX_RETRIES: 2,
-  RETRY_DELAY_MS: 800,
+  // API 타임아웃 및 재시도 설정 (고속 응답 최적화)
+  TIMEOUT_MS: 3500,
+  MAX_RETRIES: 1,
+  RETRY_DELAY_MS: 200,
   
   // 캐시 TTL 설정 (밀리초)
   CACHE_TTL: {

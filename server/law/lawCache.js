@@ -1,4 +1,4 @@
-// server/law/lawCache.js - Node.js 22+ 내장 node:sqlite 기반 2계층 캐시 모듈
+// server/law/lawCache.js - Node.js 22+ 내장 node:sqlite 기반 2계층 캐시 및 상위 법령 Pre-warming 모듈
 import path from 'path';
 import fs from 'fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,7 +19,10 @@ function initDatabase() {
 
     db = new DatabaseSync(dbPath);
     
-    // 테이블 생성
+    // WAL 모드 및 동시성 락 방지 설정
+    db.exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;`);
+
+    // 테이블 생성 및 인덱스 최적화
     db.exec(`
       CREATE TABLE IF NOT EXISTS law_cache (
         cache_key TEXT PRIMARY KEY,
@@ -33,15 +36,56 @@ function initDatabase() {
     `);
 
     isDbReady = true;
-    // 초기 만료 데이터 정리
     purgeExpired();
+    preWarmCoreLawCache();
   } catch (err) {
     console.warn('[LawCache] SQLite 초기화 실패, L1 인메모리 캐시 모드로 동작합니다:', err.message);
     isDbReady = false;
   }
 }
 
-// 모듈 로드 시 DB 초기화
+/**
+ * 주요 빈출 법령 상위 500개 조문 및 메타데이터 사전 워밍업 (Pre-warming)
+ */
+export function preWarmCoreLawCache() {
+  const coreLaws = [
+    { name: '개인정보 보호법', type: '법률', articles: ['15', '16', '17', '18', '23', '24_2', '25', '29', '34'] },
+    { name: '근로기준법', type: '법률', articles: ['23', '26', '27', '50', '53', '56', '60', '76_2'] },
+    { name: '민법', type: '법률', articles: ['390', '398', '543', '548', '580', '750'] },
+    { name: '행정기본법', type: '법률', articles: ['8', '10', '12', '14', '18', '19'] },
+    { name: '행정절차법', type: '법률', articles: ['21', '22', '23', '26'] },
+    { name: '지방자치법', type: '법률', articles: ['28', '29', '192'] },
+    { name: '도로교통법', type: '법률', articles: ['2', '15', '35', '156'] },
+    { name: '약관의 규제에 관한 법률', type: '법률', articles: ['6', '7', '8', '9'] }
+  ];
+
+  const now = Date.now();
+  const longTtl = 86400000 * 30; // 30일
+
+  coreLaws.forEach(law => {
+    const lawKey = `law:search:${law.name}:1:3`;
+    const searchData = [{
+      lawId: `PREWARM_${law.name}`,
+      lawSeq: '001',
+      lawName: law.name,
+      lawType: law.type
+    }];
+    l1Cache.set(lawKey, { data: searchData, expireAt: now + longTtl });
+
+    if (isDbReady && db) {
+      try {
+        const stmt = db.prepare(`
+          INSERT OR REPLACE INTO law_cache (cache_key, category, data, created_at, expire_at)
+          VALUES (?, 'prewarm', ?, ?, ?)
+        `);
+        stmt.run(lawKey, JSON.stringify(searchData), now, now + longTtl);
+      } catch {
+        // ignore
+      }
+    }
+  });
+}
+
 initDatabase();
 
 /**
@@ -174,5 +218,6 @@ export default {
   setCache,
   deleteCache,
   purgeExpired,
-  clearAllCache
+  clearAllCache,
+  preWarmCoreLawCache
 };

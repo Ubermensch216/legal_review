@@ -108,134 +108,67 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   const recommendations = review.recommendations || [];
   const opinionText = review.legalOpinion || contentMarkdown || '';
 
+  // 공통 네임스페이스 선언 (한컴 정품 HWPX와 동일 세트 — 누락 시 손상 파일로 판정됨)
+  const HWPX_NS = 'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph" xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history" xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf/" xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart" xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"';
+
+  const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+
   // 1. mimetype (압축 없이 STORE, 첫 번째 파일)
   zip.file('mimetype', 'application/hwp+zip', { compression: 'STORE' });
 
-  // 2. version.xml (한컴 HWP-ML 표준 버전)
-  zip.file('version.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<hv:HWPVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" major="1" minor="0" micro="0" buildNumber="0" os="1" xmlVersion="1.0" application="HWP-ML"/>`);
+  // 2. version.xml (루트 엘리먼트는 반드시 HCFVersion)
+  zip.file('version.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" tagetApplication="WORDPROCESSOR" major="5" minor="1" micro="1" buildNumber="0" os="1" xmlVersion="1.5" application="Legal Reviewer Standalone" appVersion="1.0"/>`);
 
-  // 3. META-INF/container.xml
-  zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
-  <ocf:rootfiles>
-    <ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwp+zip"/>
-  </ocf:rootfiles>
-</ocf:container>`);
+  // 3. META-INF/container.xml (rootfile media-type은 application/hwpml-package+xml)
+  zip.file('META-INF/container.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf"><ocf:rootfiles><ocf:rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/><ocf:rootfile full-path="Preview/PrvText.txt" media-type="text/plain"/></ocf:rootfiles></ocf:container>`);
 
-  // 4. META-INF/manifest.xml
-  zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">
-  <manifest:file-entry manifest:media-type="application/hwp+zip" manifest:full-path="/"/>
-  <manifest:file-entry manifest:media-type="application/xml" manifest:full-path="version.xml"/>
-  <manifest:file-entry manifest:media-type="application/xml" manifest:full-path="Contents/content.hpf"/>
-  <manifest:file-entry manifest:media-type="application/xml" manifest:full-path="Contents/header.xml"/>
-  <manifest:file-entry manifest:media-type="application/xml" manifest:full-path="Contents/section0.xml"/>
-  <manifest:file-entry manifest:media-type="application/xml" manifest:full-path="settings.xml"/>
-</manifest:manifest>`);
+  // 4. META-INF/manifest.xml (한컴 정품과 동일하게 빈 매니페스트)
+  zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><odf:manifest xmlns:odf="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>`);
 
   // 5. settings.xml
-  zip.file('settings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" version="1.0">
-  <ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/>
-</ha:HWPApplicationSetting>`);
+  zip.file('settings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><ha:HWPApplicationSetting xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"><ha:CaretPosition listIDRef="0" paraIDRef="0" pos="0"/></ha:HWPApplicationSetting>`);
 
-  // 6. Contents/content.hpf (정규 opf:package 네임스페이스)
-  zip.file('Contents/content.hpf', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
-  <opf:metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>${escapeXml(docTitle)}</dc:title>
-    <dc:language>ko</dc:language>
-    <dc:creator>Legal Reviewer Standalone</dc:creator>
-    <dc:date>${new Date().toISOString()}</dc:date>
-  </opf:metadata>
-  <opf:manifest>
-    <opf:item id="header" href="header.xml" media-type="application/xml"/>
-    <opf:item id="section0" href="section0.xml" media-type="application/xml"/>
-    <opf:item id="settings" href="../settings.xml" media-type="application/xml"/>
-  </opf:manifest>
-  <opf:spine>
-    <opf:itemref idref="section0"/>
-  </opf:spine>
-</opf:package>`);
+  // 6. Preview/PrvText.txt (container.xml이 rootfile로 참조하므로 반드시 존재해야 함)
+  zip.file('Preview/PrvText.txt', cleanText(`${docTitle}\n${query}`).slice(0, 1000));
 
-  // 7. Contents/header.xml (한컴 공식 표준 10대 정의)
-  zip.file('Contents/header.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" version="1.0">
-  <hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/>
-  <hh:refList>
-    <hh:fontfaces itemCnt="7">
-      <hh:fontface lang="hangul" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="latin" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="hanja" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="japanese" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="other" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="symbol" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-      <hh:fontface lang="user" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="ttf" isEmbedded="0"/></hh:fontface>
-    </hh:fontfaces>
-    <hh:borderFills itemCnt="2">
-      <hh:borderFill id="1" backSlash="0" slash="0" flip="0" shadow="0">
-        <hh:leftBorder type="none" width="0.1mm" color="#000000"/><hh:rightBorder type="none" width="0.1mm" color="#000000"/><hh:topBorder type="none" width="0.1mm" color="#000000"/><hh:bottomBorder type="none" width="0.1mm" color="#000000"/>
-      </hh:borderFill>
-      <hh:borderFill id="2" backSlash="0" slash="0" flip="0" shadow="0">
-        <hh:leftBorder type="solid" width="0.12mm" color="#CBD5E1"/><hh:rightBorder type="solid" width="0.12mm" color="#CBD5E1"/><hh:topBorder type="solid" width="0.12mm" color="#CBD5E1"/><hh:bottomBorder type="solid" width="0.12mm" color="#CBD5E1"/>
-      </hh:borderFill>
-    </hh:borderFills>
-    <hh:charProperties itemCnt="5">
-      <!-- 0: 기본 본문 (10pt) -->
-      <hh:charPr id="0" height="1000" textColor="#1E293B" shadeColor="none" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="1">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-      </hh:charPr>
-      <!-- 1: 문서 대제목 (20pt, 굵게, 네이비) -->
-      <hh:charPr id="1" height="2000" textColor="#1E3A8A" shadeColor="none" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="1">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:bold/>
-      </hh:charPr>
-      <!-- 2: 섹션 대제목 H2 (13pt, 굵게, 네이비) -->
-      <hh:charPr id="2" height="1300" textColor="#1E3A8A" shadeColor="none" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="1">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:bold/>
-      </hh:charPr>
-      <!-- 3: 표 헤더/항목 중제목 H3 (10.5pt, 굵게) -->
-      <hh:charPr id="3" height="1050" textColor="#0F172A" shadeColor="none" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="1">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-        <hh:bold/>
-      </hh:charPr>
-      <!-- 4: 면책 고지 (9pt, 회색) -->
-      <hh:charPr id="4" height="900" textColor="#64748B" shadeColor="none" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="1">
-        <hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>
-      </hh:charPr>
-    </hh:charProperties>
-    <hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties>
-    <hh:numberings itemCnt="1"><hh:numbering id="1" start="1"><hh:paraHead level="1" numFormat="digit" charPrIDRef="0" checkable="0" text="%1."/></hh:numbering></hh:numberings>
-    <hh:bullets itemCnt="0"/>
-    <hh:paraProperties itemCnt="5">
-      <!-- 0: 기본 본문 문단 -->
-      <hh:paraPr id="0" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="justify" vertical="baseline"/><hh:heading type="none" idRef="0" level="0"/><hh:breakSetting breakLatinWord="keepWord" breakNonLatinWord="hyphen"/><hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="0"/><hh:next value="0"/></hh:margin><hh:lineSpacing type="percent" value="160"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-      <!-- 1: 타이틀 중앙 정렬 문단 -->
-      <hh:paraPr id="1" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="center" vertical="baseline"/><hh:heading type="none" idRef="0" level="0"/><hh:breakSetting breakLatinWord="keepWord" breakNonLatinWord="hyphen"/><hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="1000"/><hh:next value="1000"/></hh:margin><hh:lineSpacing type="percent" value="130"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-      <!-- 2: 대제목 H2 문단 -->
-      <hh:paraPr id="2" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="left" vertical="baseline"/><hh:heading type="none" idRef="0" level="0"/><hh:breakSetting breakLatinWord="keepWord" breakNonLatinWord="hyphen"/><hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="1400"/><hh:next value="400"/></hh:margin><hh:lineSpacing type="percent" value="150"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-      <!-- 3: 중제목 H3 문단 -->
-      <hh:paraPr id="3" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="left" vertical="baseline"/><hh:heading type="none" idRef="0" level="0"/><hh:breakSetting breakLatinWord="keepWord" breakNonLatinWord="hyphen"/><hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="800"/><hh:next value="200"/></hh:margin><hh:lineSpacing type="percent" value="150"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-      <!-- 4: 면책고지 중앙 정렬 -->
-      <hh:paraPr id="4" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0">
-        <hh:align horizontal="center" vertical="baseline"/><hh:heading type="none" idRef="0" level="0"/><hh:breakSetting breakLatinWord="keepWord" breakNonLatinWord="hyphen"/><hh:margin><hh:intent value="0"/><hh:left value="0"/><hh:right value="0"/><hh:prev value="1600"/><hh:next value="400"/></hh:margin><hh:lineSpacing type="percent" value="140"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/>
-      </hh:paraPr>
-    </hh:paraProperties>
-    <hh:styles itemCnt="1"><hh:style id="0" type="para" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0"/></hh:styles>
-    <hh:memoProperties itemCnt="0"/><hh:trackChanges itemCnt="0"/><hh:trackChangeAuthors itemCnt="0"/>
-  </hh:refList>
-  <hh:docInfo><hh:title>${escapeXml(docTitle)}</hh:title></hh:docInfo>
-</hh:head>`);
+  // 7. Contents/content.hpf (href는 패키지 루트 기준, spine에 header 포함)
+  zip.file('Contents/content.hpf', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><opf:package ${HWPX_NS} version="" unique-identifier="" id=""><opf:metadata><opf:title>${escapeXml(docTitle)}</opf:title><opf:language>ko</opf:language><opf:meta name="creator" content="text">Legal Reviewer Standalone</opf:meta><opf:meta name="subject" content="text"/><opf:meta name="description" content="text"/><opf:meta name="lastsaveby" content="text">Legal Reviewer Standalone</opf:meta><opf:meta name="CreatedDate" content="text">${nowIso}</opf:meta><opf:meta name="ModifiedDate" content="text">${nowIso}</opf:meta><opf:meta name="keyword" content="text"/></opf:metadata><opf:manifest><opf:item id="header" href="Contents/header.xml" media-type="application/xml"/><opf:item id="section0" href="Contents/section0.xml" media-type="application/xml"/><opf:item id="settings" href="settings.xml" media-type="application/xml"/></opf:manifest><opf:spine><opf:itemref idref="header" linear="yes"/><opf:itemref idref="section0" linear="yes"/></opf:spine></opf:package>`);
+
+  // 8. Contents/header.xml
+  // 주의: OWPML 스키마의 열거형 값은 모두 대문자다. 소문자로 쓰면 한글이 손상 파일로 판정한다.
+  const FONT_LANGS = ['HANGUL', 'LATIN', 'HANJA', 'JAPANESE', 'OTHER', 'SYMBOL', 'USER'];
+  const fontfacesXml = FONT_LANGS
+    .map(lang => `<hh:fontface lang="${lang}" fontCnt="1"><hh:font id="0" face="맑은 고딕" type="TTF" isEmbedded="0"><hh:typeInfo familyType="FCAT_GOTHIC" weight="5" proportion="3" contrast="2" strokeVariation="0" armStyle="0" letterform="2" midline="0" xHeight="4"/></hh:font></hh:fontface>`)
+    .join('');
+
+  const borderFillXml = (id, type, color) =>
+    `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0"><hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/><hh:leftBorder type="${type}" width="0.1 mm" color="${color}"/><hh:rightBorder type="${type}" width="0.1 mm" color="${color}"/><hh:topBorder type="${type}" width="0.1 mm" color="${color}"/><hh:bottomBorder type="${type}" width="0.1 mm" color="${color}"/><hh:diagonal type="SOLID" width="0.1 mm" color="${color}"/></hh:borderFill>`;
+
+  // charPr: 0 본문(10pt) / 1 대제목(20pt 굵게) / 2 섹션제목(13pt 굵게) / 3 중제목(10.5pt 굵게) / 4 면책(9pt 회색)
+  const charPrXml = (id, height, textColor, bold) =>
+    `<hh:charPr id="${id}" height="${height}" textColor="${textColor}" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="1"><hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>${bold ? '<hh:bold/>' : ''}<hh:underline type="NONE" shape="SOLID" color="#000000"/><hh:strikeout shape="NONE" color="#000000"/><hh:outline type="NONE"/><hh:shadow type="NONE" color="#C0C0C0" offsetX="10" offsetY="10"/></hh:charPr>`;
+
+  const charPropertiesXml = [
+    charPrXml(0, 1000, '#1E293B', false),
+    charPrXml(1, 2000, '#1E3A8A', true),
+    charPrXml(2, 1300, '#1E3A8A', true),
+    charPrXml(3, 1050, '#0F172A', true),
+    charPrXml(4, 900, '#64748B', false)
+  ].join('');
+
+  // paraPr: 0 본문 / 1 타이틀(중앙) / 2 섹션제목 / 3 중제목 / 4 면책(중앙)
+  const paraPrXml = (id, align, prev, next, lineSpacing) =>
+    `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0" textDir="AUTO"><hh:align horizontal="${align}" vertical="BASELINE"/><hh:heading type="NONE" idRef="0" level="0"/><hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/><hh:autoSpacing eAsianEng="0" eAsianNum="0"/><hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/><hc:right value="0" unit="HWPUNIT"/><hc:prev value="${prev}" unit="HWPUNIT"/><hc:next value="${next}" unit="HWPUNIT"/></hh:margin><hh:lineSpacing type="PERCENT" value="${lineSpacing}" unit="HWPUNIT"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/></hh:paraPr>`;
+
+  const paraPropertiesXml = [
+    paraPrXml(0, 'JUSTIFY', 0, 0, 160),
+    paraPrXml(1, 'CENTER', 1000, 1000, 130),
+    paraPrXml(2, 'LEFT', 1400, 400, 150),
+    paraPrXml(3, 'LEFT', 800, 200, 150),
+    paraPrXml(4, 'CENTER', 1600, 400, 140)
+  ].join('');
+
+  zip.file('Contents/header.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hh:head ${HWPX_NS} version="1.5" secCnt="1"><hh:beginNum page="1" footnote="1" endnote="1" pic="1" tbl="1" equation="1"/><hh:refList><hh:fontfaces itemCnt="7">${fontfacesXml}</hh:fontfaces><hh:borderFills itemCnt="2">${borderFillXml(1, 'NONE', '#000000')}${borderFillXml(2, 'SOLID', '#CBD5E1')}</hh:borderFills><hh:charProperties itemCnt="5">${charPropertiesXml}</hh:charProperties><hh:tabProperties itemCnt="1"><hh:tabPr id="0" autoTabLeft="0" autoTabRight="0"/></hh:tabProperties><hh:numberings itemCnt="1"><hh:numbering id="1" start="0"><hh:paraHead start="1" level="1" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead></hh:numbering></hh:numberings><hh:bullets itemCnt="0"/><hh:paraProperties itemCnt="5">${paraPropertiesXml}</hh:paraProperties><hh:styles itemCnt="1"><hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles></hh:refList><hh:compatibleDocument targetProgram="HWP201X"><hh:layoutCompatibility/></hh:compatibleDocument><hh:docOption><hh:linkinfo path="" pageInherit="0" footnoteInherit="0"/></hh:docOption><hh:trackchageConfig flags="0"/></hh:head>`);
 
   // 8. Contents/section0.xml
   const paragraphsXml = [];
@@ -245,12 +178,14 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="1" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">
     <hp:run charPrIDRef="1">
-      <hp:secPr id="0" textDirection="0" spaceColumns="1134" tabStop="8000" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0">
-        <hp:grid charGrid="0" lineGrid="0"/><hp:startNum pageStartsOn="both" page="1" pic="1" tbl="1" equation="1"/><hp:visibility hideHeader="0" hideFooter="0" hideMasterPage="0" border="none" fill="none" showLineNumber="0"/><hp:lineNumber restartType="0" countBy="0" distance="0" startNumber="0"/>
-        <hp:pagePr landscape="0" width="59528" height="84188" gutterType="leftOnly"><hp:margin left="5669" right="5669" top="4252" bottom="4252" header="4252" footer="4252" gutter="0"/></hp:pagePr>
-        <hp:footNotePr><hp:autoNumFormat type="digit"/><hp:noteLine length="-1" type="solid" width="0.12mm" color="#000000"/><hp:noteSpacing betweenNotes="0" belowMemo="0"/><hp:numbering type="continuous" newNum="1"/><hp:placement place="eachColumn"/></hp:footNotePr>
-        <hp:endNotePr><hp:autoNumFormat type="digit"/><hp:noteLine length="-1" type="solid" width="0.12mm" color="#000000"/><hp:noteSpacing betweenNotes="0" belowMemo="0"/><hp:numbering type="continuous" newNum="1"/><hp:placement place="endOfDocument"/></hp:endNotePr>
-        <hp:pageBorderFill type="both" borderFillIDRef="1"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>
+      <hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">
+        <hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/><hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/><hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/><hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>
+        <hp:pagePr landscape="WIDELY" width="59528" height="84188" gutterType="LEFT_ONLY"><hp:margin header="4252" footer="4252" gutter="0" left="5669" right="5669" top="4252" bottom="4252"/></hp:pagePr>
+        <hp:footNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/><hp:noteLine length="-1" type="SOLID" width="0.1 mm" color="#000000"/><hp:noteSpacing betweenNotes="850" belowLine="567" aboveLine="567"/><hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="EACH_COLUMN" beneathText="0"/></hp:footNotePr>
+        <hp:endNotePr><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/><hp:noteLine length="-1" type="SOLID" width="0.1 mm" color="#000000"/><hp:noteSpacing betweenNotes="850" belowLine="567" aboveLine="567"/><hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="END_OF_DOCUMENT" beneathText="0"/></hp:endNotePr>
+        <hp:pageBorderFill type="BOTH" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>
+        <hp:pageBorderFill type="EVEN" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>
+        <hp:pageBorderFill type="ODD" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>
       </hp:secPr>
       <hp:t>${escapeXml(docTitle)}</hp:t>
     </hp:run>
@@ -334,8 +269,8 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   <hp:p id="${pId++}" paraPrIDRef="4" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="4"><hp:t>${escapeXml(review.disclaimer || '※ 본 검토의견서는 AI 법령검토 시스템에 의해 작성된 참고자료이며, 최종 법적 분쟁 및 처분에 대해서는 법률전문가의 자문을 받으시기 바랍니다.')}</hp:t></hp:run></hp:p>
   `);
 
-  const sectionXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">
+  const sectionXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<hs:sec ${HWPX_NS}>
   ${paragraphsXml.join('\n')}
 </hs:sec>`;
 
