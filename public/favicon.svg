@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#1E3A8A" />
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E40AF" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+    <linearGradient id="sparkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#818CF8" />
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle App Background -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bgGrad)" stroke="#38BDF8" stroke-width="2" stroke-opacity="0.3" />
+
+  <!-- Scales Center Pillar & Top Beam -->
+  <!-- Top Finial -->
+  <circle cx="64" cy="22" r="3" fill="#F8FAFC" />
+  <line x1="64" y1="25" x2="64" y2="35" stroke="#F8FAFC" stroke-width="3" stroke-linecap="round" />
+
+  <!-- Curved Crossbar / Beam -->
+  <path d="M 28 42 Q 64 33 100 42" fill="none" stroke="#F8FAFC" stroke-width="3.5" stroke-linecap="round" />
+
+  <!-- Left Scale Pan & Cords -->
+  <circle cx="28" cy="42" r="2.5" fill="#38BDF8" />
+  <line x1="28" y1="42" x2="18" y2="72" stroke="#F8FAFC" stroke-width="2" />
+  <line x1="28" y1="42" x2="38" y2="72" stroke="#F8FAFC" stroke-width="2" />
+  <path d="M 14 72 L 42 72 Q 28 82 14 72 Z" fill="none" stroke="#F8FAFC" stroke-width="2.5" stroke-linejoin="round" />
+
+  <!-- Right Scale Pan & Cords -->
+  <circle cx="100" cy="42" r="2.5" fill="#38BDF8" />
+  <line x1="100" y1="42" x2="90" y2="72" stroke="#F8FAFC" stroke-width="2" />
+  <line x1="100" y1="42" x2="110" y2="72" stroke="#F8FAFC" stroke-width="2" />
+  <path d="M 86 72 L 114 72 Q 100 82 86 72 Z" fill="none" stroke="#F8FAFC" stroke-width="2.5" stroke-linejoin="round" />
+
+  <!-- Center Legal Shield -->
+  <path d="M 64 42 L 80 50 L 80 72 Q 80 88 64 96 Q 48 88 48 72 L 48 50 Z" 
+        fill="url(#shieldGrad)" stroke="#38BDF8" stroke-width="2.5" stroke-linejoin="round" />
+
+  <!-- Section Sign (§) & AI Spark -->
+  <path d="M 64 53 C 60 53 58 55 58 57 C 58 60 62 61 64 62 C 67 63 70 65 70 68 C 70 72 66 74 62 74 C 59 74 57 73 56 71" 
+        fill="none" stroke="#F8FAFC" stroke-width="2.8" stroke-linecap="round" />
+  <path d="M 64 74 C 68 74 70 72 70 70 C 70 67 66 66 64 65 C 61 64 58 62 58 59 C 58 55 62 53 66 53 C 69 53 71 54 72 56" 
+        fill="none" stroke="#F8FAFC" stroke-width="2.8" stroke-linecap="round" />
+
+  <!-- AI Intelligence Node Spark -->
+  <circle cx="73" cy="62" r="2" fill="url(#sparkGrad)" />
+  <line x1="68" y1="64" x2="73" y2="62" stroke="#38BDF8" stroke-width="1.2" />
+  <circle cx="76" cy="69" r="1.8" fill="url(#sparkGrad)" />
+  <line x1="68" y1="67" x2="76" y2="69" stroke="#38BDF8" stroke-width="1.2" />
+
+  <!-- Bottom Stand Base -->
+  <line x1="64" y1="96" x2="64" y2="108" stroke="#F8FAFC" stroke-width="3" stroke-linecap="round" />
+  <path d="M 50 108 L 78 108" stroke="#F8FAFC" stroke-width="3.5" stroke-linecap="round" />
+</svg>

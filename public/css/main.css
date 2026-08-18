@@ -119,6 +119,15 @@ body {
   gap: 10px;
 }
 
+.logo-app-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: contain;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.15);
+}
+
 .logo-icon {
   font-size: 28px;
   color: var(--brand-primary);
