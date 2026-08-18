@@ -283,6 +283,73 @@
   background-color: #10B981;
 }
 
+/* 4번째 탭 (공식 법률검토의견서) 최종 결론 핵심 강조 스타일 */
+.wb-tab-highlight {
+  background: linear-gradient(180deg, #F0F7FF 0%, #E0EDFD 100%);
+  border-left: 1px solid #BFDBFE;
+  border-right: 1px solid #BFDBFE;
+  color: #1E3A8A;
+  font-weight: 700;
+}
+
+.wb-tab-highlight:hover {
+  background: #DBEAFE;
+  color: #1E40AF;
+}
+
+.wb-tab-highlight.active {
+  background: #FFFFFF;
+  color: #1E3A8A;
+  border-bottom-color: #2563EB;
+  box-shadow: inset 0 2px 0 #2563EB;
+}
+
+.tab-num-highlight {
+  background: #1E3A8A !important;
+  color: #FFFFFF !important;
+}
+
+.tab-badge-core {
+  font-size: 11px;
+  font-weight: 700;
+  background: #1E3A8A;
+  color: #FFFFFF;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.3px;
+  box-shadow: 0 1px 3px rgba(30, 58, 138, 0.25);
+}
+
+.official-report-tab-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.official-report-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.official-report-top-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.official-report-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 /* Tab Panes */
 .tab-pane {
   display: none;

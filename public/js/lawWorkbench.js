@@ -29,15 +29,70 @@ export function initWorkbenchTabs() {
     });
   }
 
-  // 스튜디오로 전송 버튼
-  const btnSendStudio = document.getElementById('btn-send-to-studio');
-  if (btnSendStudio) {
-    btnSendStudio.addEventListener('click', () => {
+  // 4번째 탭: 스튜디오로 전송 버튼
+  const btnTabStudio = document.getElementById('btn-tab-send-to-studio') || document.getElementById('btn-send-to-studio');
+  if (btnTabStudio) {
+    btnTabStudio.addEventListener('click', () => {
       if (state.lastReviewResult && state.lastReviewResult.review) {
         const title = `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
         openStudio(state.lastReviewResult.review.draftOpinion, title, state.lastReviewResult);
       }
     });
+  }
+
+  // 4번째 탭: HWPX 빠른 다운로드
+  const btnTabHwpx = document.getElementById('btn-tab-export-hwpx');
+  if (btnTabHwpx) {
+    btnTabHwpx.addEventListener('click', () => downloadQuickReport('hwpx'));
+  }
+
+  // 4번째 탭: PDF 빠른 다운로드
+  const btnTabPdf = document.getElementById('btn-tab-export-pdf');
+  if (btnTabPdf) {
+    btnTabPdf.addEventListener('click', () => downloadQuickReport('pdf'));
+  }
+
+  // 4번째 탭: DOCX 빠른 다운로드
+  const btnTabDocx = document.getElementById('btn-tab-export-docx');
+  if (btnTabDocx) {
+    btnTabDocx.addEventListener('click', () => downloadQuickReport('docx'));
+  }
+}
+
+async function downloadQuickReport(format) {
+  if (!state.lastReviewResult || !state.lastReviewResult.review) {
+    alert('다운로드할 검토 결과가 없습니다. 먼저 검토를 실행해주세요.');
+    return;
+  }
+
+  const title = `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
+  const content = state.lastReviewResult.review.draftOpinion || state.lastReviewResult.review.legalOpinion || '';
+
+  try {
+    const res = await fetch('/api/law/report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        format,
+        title,
+        content,
+        reviewData: state.lastReviewResult
+      })
+    });
+
+    if (!res.ok) throw new Error(`다운로드 실패: HTTP ${res.status}`);
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  } catch (err) {
+    alert(`파일 다운로드 중 오류가 발생했습니다: ${err.message}`);
   }
 }
 

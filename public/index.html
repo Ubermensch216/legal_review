@@ -134,26 +134,31 @@
 
       <!-- 2. 워크벤치 결과 3단계 탭 섹션 -->
       <section class="workbench-section card" id="workbench-section">
-        <!-- 탭 네비게이션 -->
+        <!-- 탭 네비게이션 (4대 탭) -->
         <div class="workbench-tabs">
           <button class="wb-tab active" data-tab="tab-draft">
             <span class="tab-num">1</span>
-            <span class="tab-title">검토 초안 (Review Draft)</span>
+            <span class="tab-title">검토 초안</span>
             <span class="tab-badge" id="badge-draft-status">완료</span>
           </button>
           <button class="wb-tab" data-tab="tab-evidence">
             <span class="tab-num">2</span>
-            <span class="tab-title">공식 법령 & 근거 (Official Evidences)</span>
+            <span class="tab-title">공식 법령 & 근거</span>
             <span class="tab-count" id="count-evidence">0건</span>
           </button>
           <button class="wb-tab" data-tab="tab-revisions">
             <span class="tab-num">3</span>
-            <span class="tab-title">개정 & 영향 분석 (Revisions & Impacts)</span>
+            <span class="tab-title">개정 & 영향 분석</span>
             <span class="tab-status-dot" id="dot-impact"></span>
+          </button>
+          <button class="wb-tab wb-tab-highlight" data-tab="tab-official-report">
+            <span class="tab-num tab-num-highlight">4</span>
+            <span class="tab-title">공식 법률검토의견서</span>
+            <span class="tab-badge-core">최종 결론</span>
           </button>
         </div>
 
-        <!-- 탭 1: 검토 초안 (구조화된 테이블 및 공문서 서식) -->
+        <!-- 탭 1: 검토 초안 (구조화된 테이블 및 법리 분석) -->
         <div class="tab-pane active" id="tab-draft">
           <div class="draft-grid">
             
@@ -174,20 +179,7 @@
               </div>
             </div>
 
-            <!-- 2. 적용 법령 및 조문 근거 테이블 -->
-            <div class="panel basis-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">account_balance</span>
-                  <h3>관련 법령 및 적용 조문 근거표</h3>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-basis-content">
-                <p class="placeholder-text">적용 법령 근거가 여기에 테이블로 정돈되어 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 3. 핵심 쟁점 및 법적 리스크 분석 테이블 -->
+            <!-- 2. 핵심 쟁점 및 법적 리스크 분석 테이블 -->
             <div class="panel risk-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
@@ -200,7 +192,7 @@
               </div>
             </div>
 
-            <!-- 4. 심층 법률 검토의견 본문 -->
+            <!-- 3. 심층 법률 검토의견 본문 -->
             <div class="panel opinion-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
@@ -213,7 +205,7 @@
               </div>
             </div>
 
-            <!-- 5. 보완 권고사항 및 조치 계획 체크리스트 -->
+            <!-- 4. 보완 권고사항 및 조치 계획 체크리스트 -->
             <div class="panel rec-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
@@ -226,22 +218,16 @@
               </div>
             </div>
 
-            <!-- 6. 공식 법률검토의견서 (공문서 표준 서식 뷰) -->
-            <div class="panel full-draft-panel">
+            <!-- 5. 적용 법령 및 조문 근거 테이블 (하단 배치) -->
+            <div class="panel basis-panel">
               <div class="panel-header">
                 <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">article</span>
-                  <h3>공식 법률검토의견서 (공문서 표준 서식)</h3>
-                </div>
-                <div class="panel-actions">
-                  <button class="btn btn-sm btn-primary" id="btn-send-to-studio">
-                    <span class="material-symbols-outlined icon-sm">edit_document</span>
-                    <span>스튜디오에서 편집 및 내보내기</span>
-                  </button>
+                  <span class="material-symbols-outlined icon-sm">account_balance</span>
+                  <h3>관련 법령 및 적용 조문 근거표</h3>
                 </div>
               </div>
-              <div class="panel-body">
-                <div id="draft-official-report-view"></div>
+              <div class="panel-body" id="draft-basis-content">
+                <p class="placeholder-text">적용 법령 근거가 여기에 테이블로 정돈되어 표시됩니다.</p>
               </div>
             </div>
 
@@ -288,6 +274,45 @@
               <div id="impact-summary-badge"></div>
             </div>
             <div class="impact-list" id="impact-items-container"></div>
+          </div>
+        </div>
+
+        <!-- 탭 4: 공식 법률검토의견서 (최종 결론 및 공문서 표준 서식) -->
+        <div class="tab-pane" id="tab-official-report">
+          <div class="official-report-tab-container">
+            <div class="official-report-top-bar">
+              <div class="official-report-top-info">
+                <span class="material-symbols-outlined" style="color:#1E3A8A; font-size:24px;">verified</span>
+                <div>
+                  <h3 style="font-size:16px; font-weight:800; color:#1E3A8A; margin:0;">공식 법률검토의견서 (최종 결론)</h3>
+                  <p style="font-size:12.5px; color:#64748B; margin:2px 0 0 0;">실무 및 결재용으로 즉시 활용 가능한 공공 표준 서식 보고서입니다.</p>
+                </div>
+              </div>
+              <div class="official-report-top-actions">
+                <button class="btn btn-sm btn-outline" id="btn-tab-export-hwpx" style="font-weight:700;">
+                  <span class="material-symbols-outlined icon-sm">download</span>
+                  <span>HWPX</span>
+                </button>
+                <button class="btn btn-sm btn-outline" id="btn-tab-export-pdf" style="font-weight:700;">
+                  <span class="material-symbols-outlined icon-sm">picture_as_pdf</span>
+                  <span>PDF</span>
+                </button>
+                <button class="btn btn-sm btn-outline" id="btn-tab-export-docx" style="font-weight:700;">
+                  <span class="material-symbols-outlined icon-sm">description</span>
+                  <span>DOCX</span>
+                </button>
+                <button class="btn btn-sm btn-primary" id="btn-tab-send-to-studio" style="font-weight:700;">
+                  <span class="material-symbols-outlined icon-sm">edit_document</span>
+                  <span>스튜디오에서 편집</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="panel full-draft-panel" style="margin-top: 16px;">
+              <div class="panel-body">
+                <div id="draft-official-report-view"></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
