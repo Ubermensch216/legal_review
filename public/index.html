@@ -84,9 +84,8 @@
                   <span class="file-name" id="file-name"></span>
                   <span class="file-size" id="file-size"></span>
                 </div>
-                <button type="button" class="btn-remove-file" id="btn-remove-file" title="파일 제거">
-                  <span class="material-symbols-outlined" style="font-size:18px;">close</span>
-                  <span>첨부 취소</span>
+                <button type="button" class="btn-remove-file" id="btn-remove-file" title="첨부 파일 제거" aria-label="첨부 파일 제거">
+                  <span class="material-symbols-outlined">close</span>
                 </button>
               </div>
             </div>
@@ -172,7 +171,7 @@
           <button class="wb-tab active" data-tab="tab-draft">
             <span class="tab-num">1</span>
             <span class="tab-title">검토 초안</span>
-            <span class="tab-badge" id="badge-draft-status">완료</span>
+            <span class="tab-badge off" id="badge-draft-status">대기</span>
           </button>
           <button class="wb-tab" data-tab="tab-evidence">
             <span class="tab-num">2</span>
@@ -184,10 +183,10 @@
             <span class="tab-title">개정 & 영향 분석</span>
             <span class="tab-status-dot" id="dot-impact"></span>
           </button>
-          <button class="wb-tab wb-tab-highlight" data-tab="tab-official-report">
-            <span class="tab-num tab-num-highlight">4</span>
+          <button class="wb-tab" data-tab="tab-official-report">
+            <span class="tab-num">4</span>
             <span class="tab-title">공식 법률검토의견서</span>
-            <span class="tab-badge-core">최종 결론</span>
+            <span class="tab-badge off" id="badge-report-status">대기</span>
           </button>
         </div>
 

@@ -170,23 +170,29 @@
 }
 
 .btn-remove-file {
-  background: #FEE2E2;
-  border: 1px solid #FECACA;
-  color: #DC2626;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border-color, #E2E8F0);
+  color: var(--text-secondary, #64748B);
+  border-radius: var(--radius-sm, 6px);
+  width: 28px;
+  height: 28px;
+  padding: 0;
   cursor: pointer;
-  padding: 5px 10px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
 .btn-remove-file:hover {
-  background: #FCA5A5;
-  color: #991B1B;
+  background: var(--bg-hover, #F1F5F9);
+  color: var(--text-primary, #0F172A);
+  border-color: #CBD5E1;
+}
+
+.btn-remove-file .material-symbols-outlined {
+  font-size: 18px;
 }
 
 /* Step 2 (Query & Preset Helper) */
@@ -380,10 +386,23 @@
 
 .tab-badge {
   font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  font-weight: 600;
+}
+
+.tab-badge.active {
   background: #DCFCE7;
   color: #15803D;
-  padding: 2px 6px;
-  border-radius: 10px;
+  border: 1px solid #BBF7D0;
+}
+
+.tab-badge.off {
+  background: #F1F5F9;
+  color: #94A3B8;
+  border: 1px solid #E2E8F0;
+  font-weight: 500;
 }
 
 .tab-count {
@@ -413,42 +432,7 @@
   background-color: #10B981;
 }
 
-/* 4번째 탭 (공식 법률검토의견서) 최종 결론 핵심 강조 스타일 */
-.wb-tab-highlight {
-  background: linear-gradient(180deg, #F0F7FF 0%, #E0EDFD 100%);
-  border-left: 1px solid #BFDBFE;
-  border-right: 1px solid #BFDBFE;
-  color: #1E3A8A;
-  font-weight: 700;
-}
 
-.wb-tab-highlight:hover {
-  background: #DBEAFE;
-  color: #1E40AF;
-}
-
-.wb-tab-highlight.active {
-  background: #FFFFFF;
-  color: #1E3A8A;
-  border-bottom-color: #2563EB;
-  box-shadow: inset 0 2px 0 #2563EB;
-}
-
-.tab-num-highlight {
-  background: #1E3A8A !important;
-  color: #FFFFFF !important;
-}
-
-.tab-badge-core {
-  font-size: 11px;
-  font-weight: 700;
-  background: #1E3A8A;
-  color: #FFFFFF;
-  padding: 2px 8px;
-  border-radius: 10px;
-  letter-spacing: 0.3px;
-  box-shadow: 0 1px 3px rgba(30, 58, 138, 0.25);
-}
 
 .official-report-tab-container {
   display: flex;
@@ -1026,4 +1010,111 @@
   font-size: 11px;
   font-weight: 600;
   margin-top: 4px;
+}
+
+/* ==========================================================================
+   Tab 3: 조문 인용 충돌 및 현행 법령 적합성 대조표 (Comparison Table) Styles
+   ========================================================================== */
+
+.impact-comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: #FFFFFF;
+}
+
+.impact-comparison-table th {
+  background: #F1F5F9;
+  color: #1E293B;
+  font-weight: 700;
+  font-size: 12.5px;
+  border-bottom: 2px solid #CBD5E1;
+  padding: 12px 14px;
+  white-space: nowrap;
+}
+
+.impact-comparison-table td {
+  padding: 14px 14px;
+  border-bottom: 1px solid #E2E8F0;
+  vertical-align: top;
+  line-height: 1.6;
+}
+
+.impact-comparison-table tr:hover {
+  background-color: #F8FAFC;
+}
+
+.impact-comparison-table tr.row-conflict {
+  background-color: #FFF8F8;
+}
+
+.impact-comparison-table tr.row-conflict:hover {
+  background-color: #FEF2F2;
+}
+
+.impact-art-law {
+  font-size: 11px;
+  font-weight: 700;
+  color: #2563EB;
+  margin-bottom: 2px;
+}
+
+.impact-art-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #0F172A;
+}
+
+.statute-box {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: #334155;
+  line-height: 1.6;
+  position: relative;
+}
+
+.statute-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  background: #E2E8F0;
+  color: #475569;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-bottom: 4px;
+}
+
+.guide-box {
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  font-weight: 500;
+}
+
+.guide-box.valid {
+  background: #F0FDF4;
+  border: 1px solid #DCFCE7;
+  color: #166534;
+}
+
+.guide-box.deleted {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #991B1B;
+}
+
+.guide-box.old-law {
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  color: #92400E;
+}
+
+.guide-box.caution {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  color: #475569;
 }

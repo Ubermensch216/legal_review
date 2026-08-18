@@ -1,6 +1,6 @@
 // public/js/app.js - 메인 프론트엔드 엔트리포인트 및 이벤트 바인딩
 import { state, saveSettings } from './state.js';
-import { initWorkbenchTabs, renderWorkbench } from './lawWorkbench.js';
+import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio } from './documentStudio.js';
 import { initHistoryDrawer, refreshHistoryList, addHistoryRecord } from './history.js';
@@ -97,6 +97,8 @@ function initPresetChips() {
       if (targetLawInput && Object.values(PRESET_EXPERT_PROMPTS).some(p => p.targetLaw === targetLawInput.value.trim())) {
         targetLawInput.value = '';
       }
+
+      resetWorkbenchTabs();
     });
   }
 }

@@ -104,6 +104,19 @@ export function renderWorkbench(data) {
   state.lastReviewResult = data;
   const { review, officialEvidence, impactAndRevisions, meta } = data;
 
+  // 0. 검토 초안(Tab 1) 및 공식 법률검토의견서(Tab 4) 뱃지 램프 온 (활성화)
+  const badgeDraftEl = document.getElementById('badge-draft-status');
+  if (badgeDraftEl) {
+    badgeDraftEl.className = 'tab-badge active';
+    badgeDraftEl.textContent = '완료';
+  }
+
+  const badgeReportEl = document.getElementById('badge-report-status');
+  if (badgeReportEl) {
+    badgeReportEl.className = 'tab-badge active';
+    badgeReportEl.textContent = '완료';
+  }
+
   // 1. Tab 1: 검토 초안 (구조화된 테이블, Redline 대비표 & IRAC 공문서 뷰)
   renderDraftTab(review, officialEvidence, meta);
 
@@ -112,6 +125,32 @@ export function renderWorkbench(data) {
 
   // 3. Tab 3: 개정 및 영향
   renderRevisionsTab(impactAndRevisions, meta);
+}
+
+/**
+ * 워크벤치 탭 상태 및 뱃지 비활성화 초기화 (램프 오프)
+ */
+export function resetWorkbenchTabs() {
+  const badgeDraftEl = document.getElementById('badge-draft-status');
+  if (badgeDraftEl) {
+    badgeDraftEl.className = 'tab-badge off';
+    badgeDraftEl.textContent = '대기';
+  }
+
+  const badgeReportEl = document.getElementById('badge-report-status');
+  if (badgeReportEl) {
+    badgeReportEl.className = 'tab-badge off';
+    badgeReportEl.textContent = '대기';
+  }
+
+  const countEvidenceEl = document.getElementById('count-evidence');
+  if (countEvidenceEl) countEvidenceEl.textContent = '0건';
+
+  const dotImpactEl = document.getElementById('dot-impact');
+  if (dotImpactEl) {
+    dotImpactEl.className = 'tab-status-dot';
+    dotImpactEl.textContent = '';
+  }
 }
 
 /**
@@ -727,30 +766,105 @@ function renderRevisionsTab(impactData, meta) {
     }
   }
 
-  // 3. 조문 인용 충돌 및 개정 적합성 대조표 (2번 섹션)
+  // 3. 조문 인용 충돌 및 개정 적합성 대조표 (2번 섹션: 테이블 형태 렌더링)
   if (itemsContainer) {
     const items = impactMap?.impactItems || [];
     if (items.length > 0) {
-      const RISK_LABEL = { HIGH: '개정/폐지', CAUTION: '확인 필요', NORMAL: '현행 유효' };
+      const STATUS_CONFIG = {
+        VALID: {
+          label: '현행 유효',
+          icon: 'check_circle',
+          badgeClass: 'badge-gov',
+          guideClass: 'valid',
+          guideIcon: 'check_circle'
+        },
+        DELETED: {
+          label: '조문 삭제/폐지',
+          icon: 'cancel',
+          badgeClass: 'badge-risk HIGH',
+          guideClass: 'deleted',
+          guideIcon: 'error'
+        },
+        OLD_LAW: {
+          label: '구법 인용 의심',
+          icon: 'warning',
+          badgeClass: 'badge-risk HIGH',
+          guideClass: 'old-law',
+          guideIcon: 'warning'
+        },
+        CAUTION: {
+          label: '조문 확인 필요',
+          icon: 'help',
+          badgeClass: 'badge-risk MEDIUM',
+          guideClass: 'caution',
+          guideIcon: 'info'
+        }
+      };
 
-      itemsContainer.innerHTML = items.map(item => {
-        const risk = item.riskLevel || 'NORMAL';
-        const badgeClass = risk === 'HIGH' ? 'badge-risk HIGH' : risk === 'CAUTION' ? 'badge-risk MEDIUM' : 'badge-gov';
-        const title = item.articleTitle ? ` (${escapeHtml(item.articleTitle)})` : '';
+      let tableHtml = `
+        <div class="table-responsive" style="margin-top: 10px; border: 1px solid #CBD5E1; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          <table class="legal-table impact-comparison-table">
+            <thead>
+              <tr>
+                <th style="width: 22%; text-align: left;">인용 / 대상 조문</th>
+                <th style="width: 14%; text-align: center;">적합성 판정</th>
+                <th style="width: 32%; text-align: left;">현행 법령 공식 규정 요지</th>
+                <th style="width: 32%; text-align: left;">개정 영향 분석 및 실무 조치 가이드</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
 
-        return `
-          <div class="impact-item-card ${risk === 'HIGH' ? 'has-conflict' : ''}">
-            <div class="impact-item-header">
-              <span class="impact-citation-badge">${escapeHtml(item.citation || '')}${title}</span>
-              <span class="badge ${badgeClass}">${RISK_LABEL[risk] || escapeHtml(risk)}</span>
-            </div>
-            <div class="impact-item-reason">${escapeHtml(item.note || '')}</div>
-            ${item.currentTextSnippet
-              ? `<div class="impact-item-snippet">${escapeHtml(item.currentTextSnippet)}</div>`
-              : ''}
-          </div>
+      items.forEach(item => {
+        const stKey = item.status || (item.riskLevel === 'HIGH' ? 'DELETED' : (item.riskLevel === 'CAUTION' ? 'CAUTION' : 'VALID'));
+        const conf = STATUS_CONFIG[stKey] || STATUS_CONFIG.VALID;
+        const isConflict = stKey === 'DELETED' || stKey === 'OLD_LAW';
+
+        tableHtml += `
+          <tr class="${isConflict ? 'row-conflict' : ''}">
+            <!-- 1. 조문 명칭 -->
+            <td>
+              <div class="impact-art-law">${escapeHtml(item.lawName || lawName)}</div>
+              <div class="impact-art-title">${escapeHtml(item.articleTitle || item.citation || '')}</div>
+            </td>
+
+            <!-- 2. 적합성 판정 뱃지 -->
+            <td style="text-align: center; vertical-align: middle;">
+              <span class="badge ${conf.badgeClass}" style="display:inline-flex; align-items:center; gap:4px; font-weight:700; font-size:11.5px; padding:4px 8px;">
+                <span class="material-symbols-outlined" style="font-size:14px;">${conf.icon}</span>
+                <span>${conf.label}</span>
+              </span>
+            </td>
+
+            <!-- 3. 현행 공식 법령 내용 -->
+            <td>
+              <div class="statute-box">
+                <span class="statute-tag">공식 조문 내용</span>
+                <div>${escapeHtml(item.currentTextSnippet || '공식 법령 조문 본문 참조')}</div>
+              </div>
+            </td>
+
+            <!-- 4. 실무 조치 가이드 -->
+            <td>
+              <div class="guide-box ${conf.guideClass}">
+                <div style="font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:5px;">
+                  <span class="material-symbols-outlined" style="font-size:15px; vertical-align:middle;">${conf.guideIcon}</span>
+                  <span>${isConflict ? '주의 및 조치 필요' : '실무 적용 기준'}</span>
+                </div>
+                <div>${escapeHtml(item.actionGuide || item.note || '현행 조문 규정을 준수하십시오.')}</div>
+              </div>
+            </td>
+          </tr>
         `;
-      }).join('');
+      });
+
+      tableHtml += `
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      itemsContainer.innerHTML = tableHtml;
     } else {
       itemsContainer.innerHTML = '<p class="placeholder-text">수집된 조문 적합성 대조 데이터가 없습니다.</p>';
     }
@@ -829,5 +943,6 @@ function escapeHtml(unsafe) {
 
 export default {
   initWorkbenchTabs,
-  renderWorkbench
+  renderWorkbench,
+  resetWorkbenchTabs
 };
