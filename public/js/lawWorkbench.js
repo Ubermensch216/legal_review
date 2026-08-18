@@ -173,18 +173,35 @@ function renderDraftTab(review, officialEvidence, meta) {
     riskEl.innerHTML = '<p class="placeholder-text">발견된 특이 리스크가 없습니다.</p>';
   }
 
-  // 4. 심층 법률 검토의견 본문
+  // 4. 심층 법률 검토의견 본문 (20년 전문 변호사 다층 분석 렌더링)
   const opinionEl = document.getElementById('draft-opinion-content');
   const opinionText = cleanText(review.legalOpinion || '');
-  const paragraphs = opinionText.split('\n\n').filter(p => p.trim());
+  const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
 
   let opinionCardsHtml = '<div class="opinion-section-block">';
-  if (paragraphs.length > 0) {
-    paragraphs.forEach((p, idx) => {
+  if (rawParagraphs.length > 0) {
+    rawParagraphs.forEach((block, idx) => {
+      const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      let cardTitle = `[쟁점 ${idx + 1}] 심층 법리 해석 및 적법성 판단`;
+      let cardBodyLines = lines;
+
+      // 첫 번째 줄이 소제목 형태([쟁점 ...], [1. ...] 등)인 경우 분리
+      if (lines.length > 1 && (lines[0].startsWith('[') || lines[0].startsWith('■') || /^[0-9]\./.test(lines[0]))) {
+        cardTitle = lines[0].replace(/^\[|\]$/g, '').replace(/^■\s*/, '');
+        cardBodyLines = lines.slice(1);
+      }
+
+      const bodyHtml = cardBodyLines.map(line => `<p style="margin-bottom: 8px; line-height: 1.85;">${escapeHtml(line)}</p>`).join('');
+
       opinionCardsHtml += `
         <div class="opinion-item-card">
-          <h4>[쟁점 ${idx + 1}] 법리 해석 및 적법성 판단</h4>
-          <p>${escapeHtml(p.trim())}</p>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span class="material-symbols-outlined icon-sm" style="color:var(--brand-primary);">gavel</span>
+            <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--brand-primary);">${escapeHtml(cardTitle)}</h4>
+          </div>
+          <div class="opinion-body-text" style="font-size:14px; color:#334155;">
+            ${bodyHtml}
+          </div>
         </div>
       `;
     });
@@ -252,11 +269,38 @@ function renderDraftTab(review, officialEvidence, meta) {
         </div>
       </div>
 
-      <!-- 2. 관련 법령 및 조문 근거 -->
+      <!-- 2. 법률적 쟁점 및 심층 검토 의견 -->
+      <div class="report-section">
+        <div class="report-section-title">
+          <span class="material-symbols-outlined icon-sm">gavel</span>
+          <span>2. 법률적 쟁점 및 심층 검토 의견</span>
+        </div>
+        <div class="report-body-text" style="line-height: 1.9;">
+          ${escapeHtml(opinionText)}
+        </div>
+      </div>
+
+      <!-- 3. 리스크 평가 및 보완 조치 사항 -->
+      <div class="report-section">
+        <div class="report-section-title">
+          <span class="material-symbols-outlined icon-sm">checklist</span>
+          <span>3. 리스크 평가 및 보완 조치 사항</span>
+        </div>
+        <div class="rec-checklist" style="margin-top: 10px;">
+          ${recommendations.map((rec, i) => `
+            <div class="rec-check-item">
+              <div class="rec-num-badge">${i + 1}</div>
+              <div class="rec-text">${escapeHtml(cleanText(rec))}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- 4. 관련 법령 및 조문 근거 (마지막 배치) -->
       <div class="report-section">
         <div class="report-section-title">
           <span class="material-symbols-outlined icon-sm">balance</span>
-          <span>2. 관련 법령 및 조문 근거</span>
+          <span>4. 관련 법령 및 조문 근거표</span>
         </div>
         <div class="table-responsive" style="margin-top: 10px;">
           <table class="legal-table">
@@ -277,33 +321,6 @@ function renderDraftTab(review, officialEvidence, meta) {
               `).join('')}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <!-- 3. 법률적 검토 의견 -->
-      <div class="report-section">
-        <div class="report-section-title">
-          <span class="material-symbols-outlined icon-sm">gavel</span>
-          <span>3. 법률적 쟁점 및 심층 검토 의견</span>
-        </div>
-        <div class="report-body-text" style="line-height: 1.9;">
-          ${escapeHtml(opinionText)}
-        </div>
-      </div>
-
-      <!-- 4. 리스크 분석 및 보완 조치 사항 -->
-      <div class="report-section">
-        <div class="report-section-title">
-          <span class="material-symbols-outlined icon-sm">checklist</span>
-          <span>4. 리스크 평가 및 보완 조치 사항</span>
-        </div>
-        <div class="rec-checklist" style="margin-top: 10px;">
-          ${recommendations.map((rec, i) => `
-            <div class="rec-check-item">
-              <div class="rec-num-badge">${i + 1}</div>
-              <div class="rec-text">${escapeHtml(cleanText(rec))}</div>
-            </div>
-          `).join('')}
         </div>
       </div>
 

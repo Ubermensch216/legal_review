@@ -1,5 +1,12 @@
-// public/js/history.js - 검토 이력 관리 클라이언트 모듈
+// public/js/history.js - 브라우저 IndexedDB 기반 영구 검토 이력 관리 모듈
 import { renderWorkbench } from './lawWorkbench.js';
+import {
+  saveReviewToIndexedDB,
+  getAllReviewsFromIndexedDB,
+  getReviewByIdFromIndexedDB,
+  deleteReviewFromIndexedDB,
+  clearAllReviewsFromIndexedDB
+} from './historyDb.js';
 
 const drawer = document.getElementById('history-drawer');
 const btnOpen = document.getElementById('btn-open-history');
@@ -8,7 +15,7 @@ const btnClearAll = document.getElementById('btn-clear-all-history');
 const historyListEl = document.getElementById('history-list');
 const countBadge = document.getElementById('badge-history-count');
 
-export function initHistoryDrawer() {
+export async function initHistoryDrawer() {
   if (btnOpen) {
     btnOpen.addEventListener('click', () => {
       openHistoryDrawer();
@@ -23,14 +30,14 @@ export function initHistoryDrawer() {
 
   if (btnClearAll) {
     btnClearAll.addEventListener('click', async () => {
-      if (confirm('저장된 모든 검토 이력을 삭제하시겠습니까?')) {
+      if (confirm('브라우저에 영구 저장된 모든 검토 이력을 완전히 삭제하시겠습니까?')) {
         await clearAllHistory();
       }
     });
   }
 
-  // 초기 이력 카운트 조회
-  refreshHistoryList();
+  // 초기 IndexedDB 이력 동기화 및 카운트 갱신
+  await syncWithServerAndRefresh();
 }
 
 export function openHistoryDrawer() {
@@ -44,16 +51,81 @@ export function closeHistoryDrawer() {
 }
 
 /**
- * 서버에서 이력 목록 가져와서 렌더링
- * @param {boolean} highlight - 카운트 배지 하이라이트 여부
+ * 신규 검토 완료 시 IndexedDB에 즉시 영구 저장
+ * @param {object} workbenchPayload - 전체 워크벤치 결과 데이터
+ */
+export async function addHistoryRecord(workbenchPayload) {
+  try {
+    const meta = workbenchPayload.meta || {};
+    const review = workbenchPayload.review || {};
+
+    const record = {
+      id: `lr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString(),
+      preset: meta.preset || 'compliance',
+      query: meta.query || (meta.documentName ? `[문서] ${meta.documentName}` : '법령 종합 검토'),
+      targetLaw: meta.primaryLawName || '관련 법령',
+      summary: review.summary || '종합 검토가 완료되었습니다.',
+      data: workbenchPayload
+    };
+
+    // 1. 브라우저 IndexedDB 영구 저장
+    await saveReviewToIndexedDB(record);
+    console.log('[History] Saved review to browser IndexedDB:', record.id);
+
+    // 2. 서버 DB에도 백업
+    fetch('/api/law/history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record)
+    }).catch(e => console.warn('[History] Server backup skipped:', e));
+
+    // 3. UI 배지 갱신 및 애니메이션 하이라이트
+    await refreshHistoryList(true);
+  } catch (err) {
+    console.error('[History] Save to IndexedDB error:', err);
+  }
+}
+
+/**
+ * 서버의 기존 이력이 있고 IndexedDB가 비어있을 때 초기 1회 동기화
+ */
+async function syncWithServerAndRefresh() {
+  try {
+    const localItems = await getAllReviewsFromIndexedDB();
+    if (localItems.length === 0) {
+      // 서버에서 기존 이력 조회
+      const res = await fetch('/api/law/history');
+      if (res.ok) {
+        const data = await res.json();
+        const serverItems = data.items || [];
+        for (const item of serverItems) {
+          await saveReviewToIndexedDB({
+            id: item.id,
+            createdAt: item.created_at || item.createdAt || new Date().toISOString(),
+            preset: item.preset || 'compliance',
+            query: item.query || '법령 검토',
+            targetLaw: item.targetLaw || '관련 법령',
+            summary: item.summary || '',
+            data: item.data || item
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[History] Initial server sync error:', err);
+  } finally {
+    await refreshHistoryList();
+  }
+}
+
+/**
+ * IndexedDB에서 이력 목록을 읽어와 화면 렌더링
+ * @param {boolean} highlight - 카운트 배지 펄스 애니메이션 여부
  */
 export async function refreshHistoryList(highlight = false) {
   try {
-    const res = await fetch('/api/law/history');
-    if (!res.ok) return;
-
-    const data = await res.json();
-    const items = data.items || [];
+    const items = await getAllReviewsFromIndexedDB();
 
     if (countBadge) {
       countBadge.textContent = items.length;
@@ -66,8 +138,8 @@ export async function refreshHistoryList(highlight = false) {
       }
 
       if (highlight) {
-        countBadge.style.transform = 'scale(1.3)';
-        countBadge.style.transition = 'transform 0.2s ease';
+        countBadge.style.transform = 'scale(1.35)';
+        countBadge.style.transition = 'transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)';
         setTimeout(() => {
           countBadge.style.transform = 'scale(1)';
         }, 300);
@@ -77,13 +149,19 @@ export async function refreshHistoryList(highlight = false) {
     if (!historyListEl) return;
 
     if (items.length === 0) {
-      historyListEl.innerHTML = '<p class="placeholder-text">저장된 검토 이력이 없습니다.</p>';
+      historyListEl.innerHTML = `
+        <div style="text-align: center; padding: 40px 16px; color: #94A3B8;">
+          <span class="material-symbols-outlined" style="font-size: 40px; margin-bottom: 8px; color: #CBD5E1;">inventory_2</span>
+          <p style="font-size: 13.5px; font-weight: 500;">저장된 검토 이력이 없습니다.</p>
+          <p style="font-size: 11.5px; margin-top: 4px;">검토를 실행하면 브라우저 IndexedDB에 영구 보관됩니다.</p>
+        </div>
+      `;
       return;
     }
 
     let html = '';
     items.forEach(item => {
-      const dateStr = new Date(item.created_at || item.createdAt || item.timestamp).toLocaleString('ko-KR', {
+      const dateStr = new Date(item.createdAt || item.created_at).toLocaleString('ko-KR', {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
@@ -91,7 +169,7 @@ export async function refreshHistoryList(highlight = false) {
       });
 
       const presetName = getPresetName(item.preset);
-      const title = item.query || (item.documentName ? `[문서] ${item.documentName}` : '법령 검토');
+      const title = item.query || (item.documentName ? `[문서] ${item.documentName}` : '법령 종합 검토');
 
       html += `
         <div class="history-card" data-id="${item.id}">
@@ -102,13 +180,13 @@ export async function refreshHistoryList(highlight = false) {
           <div class="history-query-text">${escapeHtml(title)}</div>
           <div class="history-summary-snippet">${escapeHtml(item.summary || '')}</div>
           <div class="history-meta-row">
-            <span class="history-law-tag">${escapeHtml(item.targetLaw || '일반 법령')}</span>
+            <span class="history-law-tag">${escapeHtml(item.targetLaw || '관련 법령')}</span>
             <div class="history-card-actions">
               <button class="btn btn-xs btn-primary btn-restore-history" data-id="${item.id}" title="검토 결과 화면에 복원" style="display:inline-flex; align-items:center; gap:4px; padding:4px 8px;">
                 <span class="material-symbols-outlined" style="font-size:14px;">restore</span>
                 <span>불러오기</span>
               </button>
-              <button class="btn btn-xs btn-remove-history" data-id="${item.id}" title="이력 삭제" style="color:#DC2626; background:transparent; border:none; padding:3px 6px; cursor:pointer;">
+              <button class="btn btn-xs btn-remove-history" data-id="${item.id}" title="이력 영구 삭제" style="color:#DC2626; background:transparent; border:none; padding:3px 6px; cursor:pointer;">
                 <span class="material-symbols-outlined" style="font-size:16px;">delete</span>
               </button>
             </div>
@@ -132,14 +210,14 @@ export async function refreshHistoryList(highlight = false) {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const id = btn.getAttribute('data-id');
-        if (confirm('이 검토 이력을 삭제하시겠습니까?')) {
+        if (confirm('이 검토 이력을 브라우저에서 영구 삭제하시겠습니까?')) {
           await deleteHistory(id);
         }
       });
     });
 
   } catch (err) {
-    console.error('[History] 이력 로드 실패:', err);
+    console.error('[History] IndexedDB 이력 로드 실패:', err);
   }
 }
 
@@ -148,18 +226,16 @@ export async function refreshHistoryList(highlight = false) {
  */
 async function restoreHistory(id) {
   try {
-    const res = await fetch(`/api/law/history/${id}`);
-    if (!res.ok) throw new Error('이력 조회 실패');
+    const item = await getReviewByIdFromIndexedDB(id);
+    if (!item) throw new Error('이력을 찾을 수 없습니다.');
 
-    const data = await res.json();
-    if (data.ok && data.item && data.item.data) {
-      renderWorkbench(data.item.data);
-      closeHistoryDrawer();
+    const data = item.data || item;
+    renderWorkbench(data);
+    closeHistoryDrawer();
 
-      // 워크벤치 영역으로 스크롤
-      const wbSection = document.getElementById('workbench-section');
-      if (wbSection) wbSection.scrollIntoView({ behavior: 'smooth' });
-    }
+    // 워크벤치 영역으로 스크롤
+    const wbSection = document.getElementById('workbench-section');
+    if (wbSection) wbSection.scrollIntoView({ behavior: 'smooth' });
   } catch (err) {
     alert(`이력 복원 중 오류가 발생했습니다: ${err.message}`);
   }
@@ -170,10 +246,14 @@ async function restoreHistory(id) {
  */
 async function deleteHistory(id) {
   try {
-    const res = await fetch(`/api/law/history/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      await refreshHistoryList();
-    }
+    // 1. IndexedDB에서 삭제
+    await deleteReviewFromIndexedDB(id);
+
+    // 2. 서버 DB 백업도 삭제 시도
+    fetch(`/api/law/history/${id}`, { method: 'DELETE' }).catch(() => {});
+
+    // 3. UI 새로고침
+    await refreshHistoryList();
   } catch (err) {
     alert('삭제 실패: ' + err.message);
   }
@@ -184,10 +264,14 @@ async function deleteHistory(id) {
  */
 async function clearAllHistory() {
   try {
-    const res = await fetch('/api/law/history', { method: 'DELETE' });
-    if (res.ok) {
-      await refreshHistoryList();
-    }
+    // 1. IndexedDB 전체 삭제
+    await clearAllReviewsFromIndexedDB();
+
+    // 2. 서버 DB 백업도 전체 삭제
+    fetch('/api/law/history', { method: 'DELETE' }).catch(() => {});
+
+    // 3. UI 새로고침
+    await refreshHistoryList();
   } catch (err) {
     alert('전체 삭제 실패: ' + err.message);
   }
@@ -218,5 +302,6 @@ export default {
   initHistoryDrawer,
   openHistoryDrawer,
   closeHistoryDrawer,
-  refreshHistoryList
+  refreshHistoryList,
+  addHistoryRecord
 };

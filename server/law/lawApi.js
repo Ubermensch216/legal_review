@@ -206,12 +206,12 @@ router.post('/report', async (req, res) => {
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(cleanTitle)}.hwpx`);
       return res.send(buffer);
     } else if (format === 'docx') {
-      const buffer = await generateDocx({ title, contentMarkdown: content });
+      const buffer = await generateDocx({ title, contentMarkdown: content, reviewData });
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(cleanTitle)}.docx`);
       return res.send(buffer);
     } else if (format === 'pdf') {
-      const buffer = await generatePdf({ title, contentMarkdown: content });
+      const buffer = await generatePdf({ title, contentMarkdown: content, reviewData });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(cleanTitle)}.pdf`);
       return res.send(buffer);

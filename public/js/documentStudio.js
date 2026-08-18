@@ -155,10 +155,35 @@ function buildVisualReportHtml(data, reportTitle) {
         </p>
       </div>
 
-      <!-- 2. 관련 법령 및 조문 근거 (표) -->
+      <!-- 2. 법률적 검토의견 -->
       <div style="margin-bottom: 22px;">
         <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
-          2. 관련 법령 및 조문 근거표
+          2. 법률적 쟁점 및 심층 검토 의견
+        </h3>
+        <div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">
+          ${escapeHtml(cleanText(review.legalOpinion || '')).replace(/\n/g, '<br>')}
+        </div>
+      </div>
+
+      <!-- 3. 리스크 평가 및 보완 조치 사항 -->
+      <div style="margin-bottom: 22px;">
+        <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
+          3. 리스크 평가 및 보완 조치 사항
+        </h3>
+        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+          ${recommendations.map((rec, i) => `
+            <div style="display: flex; align-items: flex-start; gap: 10px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 10px 14px; border-radius: 6px;">
+              <span style="background:#1E3A8A; color:#FFF; font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${i + 1}</span>
+              <span style="font-size: 13.5px; color: #1E293B;">${escapeHtml(cleanText(rec))}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- 4. 관련 법령 및 조문 근거 (마지막 배치) -->
+      <div style="margin-bottom: 22px;">
+        <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
+          4. 관련 법령 및 조문 근거표
         </h3>
         <div class="table-responsive">
           <table class="legal-table">
@@ -179,31 +204,6 @@ function buildVisualReportHtml(data, reportTitle) {
               `).join('')}
             </tbody>
           </table>
-        </div>
-      </div>
-
-      <!-- 3. 법률적 검토의견 -->
-      <div style="margin-bottom: 22px;">
-        <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
-          3. 법률적 쟁점 및 심층 검토 의견
-        </h3>
-        <div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">
-          ${escapeHtml(cleanText(review.legalOpinion || '')).replace(/\n/g, '<br>')}
-        </div>
-      </div>
-
-      <!-- 4. 리스크 평가 및 보완 조치 사항 -->
-      <div style="margin-bottom: 22px;">
-        <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
-          4. 리스크 평가 및 보완 조치 사항
-        </h3>
-        <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
-          ${recommendations.map((rec, i) => `
-            <div style="display: flex; align-items: flex-start; gap: 10px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 10px 14px; border-radius: 6px;">
-              <span style="background:#1E3A8A; color:#FFF; font-size:11px; font-weight:700; width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0;">${i + 1}</span>
-              <span style="font-size: 13.5px; color: #1E293B;">${escapeHtml(cleanText(rec))}</span>
-            </div>
-          `).join('')}
         </div>
       </div>
 
