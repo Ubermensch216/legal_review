@@ -1,7 +1,7 @@
 // public/js/state.js - 클라이언트 상태 관리
 
 export const state = {
-  currentPreset: 'compliance',
+  currentPreset: '',
   selectedFile: null,
   isReviewing: false,
   lastReviewResult: null,

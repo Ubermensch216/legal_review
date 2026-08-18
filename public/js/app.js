@@ -22,17 +22,83 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 /**
- * 1. 6대 검토 프리셋 칩 선택
+ * 6대 검토 유형별 20년 차 베테랑 변호사 전문 프롬프트 템플릿
+ */
+const PRESET_EXPERT_PROMPTS = {
+  compliance: {
+    query: '첨부된 문서(또는 사안)의 주요 조항 및 업무 프로세스가 관련 상위 법령(시행령·시행규칙)의 강행규정, 인허가 요건, 법정 의무사항을 충족하고 있는지 전면 검토하고, 위반 소지나 규제 리스크가 있는 항목에 대한 개선 권고사항을 제시해주세요.',
+    targetLaw: '행정기본법'
+  },
+  contract_risk: {
+    query: '첨부된 계약서(협약서) 전문을 심층 검토하여 일방 당사자에게 현저히 불리한 독소조항, 손해배상 및 위약벌 과다 위험, 해제·해지 요건의 모호성, 지식재산권 귀속 및 비밀유지 의무의 적정성을 분석하고 수정 조문 대안을 제시해주세요.',
+    targetLaw: '민법, 약관의 규제에 관한 법률'
+  },
+  ordinance_conflict: {
+    query: '첨부된 조례안(또는 사규·내부지침)의 각 조항이 상위 법률의 명시적 위임 범위를 일탈(법률유보원칙 위반)했는지, 포괄위임금지 및 과잉금지원칙에 반하여 주민(구성원)의 권리를 제한하거나 의무를 부과하는 무효 조항이 존재하는지 검토해주세요.',
+    targetLaw: '지방자치법, 행정기본법'
+  },
+  admin_dispute: {
+    query: '본 사안에 따른 감독관청의 시정명령, 영업정지, 과징금 등 불이익 행정처분의 실체적·절차적 적법성(사전통지, 의견제출 절차 준수 여부)을 검토하고, 행정심판 및 행정소송 관점에서의 방어 논리와 처분 취소 가능성을 평가해주세요.',
+    targetLaw: '행정절차법, 행정심판법, 행정소송법'
+  },
+  privacy_security: {
+    query: '첨부된 업무 절차 및 개인정보 처리방침 상 필수/선택 수집 항목의 최소 수집 원칙 준수 여부, 제3자 제공 및 위탁 동의 절차의 적법성, 안전성 확보조치(암호화, 접근통제) 이행 요건 충족 여부를 정밀 검토해주세요.',
+    targetLaw: '개인정보 보호법'
+  },
+  labor_hr: {
+    query: '취업규칙, 근로계약서, 임금·근로시간 운영 기준이 근로기준법 및 관련 노동법령의 최저기준을 준수하고 있는지 검토하고, 해고·징계의 정당한 이유, 연장·야간수당 산정, 주휴수당 등 노사 분쟁 취약 조항에 대한 정비 방안을 제시해주세요.',
+    targetLaw: '근로기준법, 노동조합법'
+  }
+};
+
+/**
+ * 1. 6대 검토 프리셋 칩 선택 및 전문가 프롬프트 자동 세팅
  */
 function initPresetChips() {
   const chips = document.querySelectorAll('.chip');
+  const queryTextarea = document.getElementById('input-query');
+  const targetLawInput = document.getElementById('input-target-law');
+
   chips.forEach(chip => {
     chip.addEventListener('click', () => {
       chips.forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      state.currentPreset = chip.getAttribute('data-preset');
+      const presetKey = chip.getAttribute('data-preset');
+      state.currentPreset = presetKey;
+
+      const template = PRESET_EXPERT_PROMPTS[presetKey];
+      if (template) {
+        // 질의 입력창에 전문가 프롬프트 자동 세팅
+        if (queryTextarea) {
+          queryTextarea.value = template.query;
+          queryTextarea.focus();
+          queryTextarea.classList.add('pulse-highlight');
+          setTimeout(() => queryTextarea.classList.remove('pulse-highlight'), 600);
+        }
+        // 기준 법령 입력창이 비어있거나 기존 프리셋 기본값이었던 경우 자동 세팅
+        if (targetLawInput && (!targetLawInput.value.trim() || Object.values(PRESET_EXPERT_PROMPTS).some(p => p.targetLaw === targetLawInput.value.trim()))) {
+          targetLawInput.value = template.targetLaw;
+        }
+      }
     });
   });
+
+  // 질의 박스 우측 상단 초기화 버튼
+  const btnResetQuery = document.getElementById('btn-reset-query');
+  if (btnResetQuery) {
+    btnResetQuery.addEventListener('click', () => {
+      if (queryTextarea) {
+        queryTextarea.value = '';
+        queryTextarea.focus();
+      }
+      chips.forEach(c => c.classList.remove('active'));
+      state.currentPreset = '';
+
+      if (targetLawInput && Object.values(PRESET_EXPERT_PROMPTS).some(p => p.targetLaw === targetLawInput.value.trim())) {
+        targetLawInput.value = '';
+      }
+    });
+  }
 }
 
 /**
@@ -129,7 +195,7 @@ function initReviewForm() {
 
     const formData = new FormData();
     formData.append('query', query);
-    formData.append('preset', state.currentPreset);
+    formData.append('preset', state.currentPreset || 'compliance');
     formData.append('targetLaw', targetLaw);
     formData.append('llmProvider', state.settings.provider);
     formData.append('llmModel', state.settings.modelName);

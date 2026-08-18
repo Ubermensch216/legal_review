@@ -1,65 +1,279 @@
-/* public/css/workbench.css - 워크벤치, 3단계 탭, 테이블 및 공문서 스타일 */
-
-/* 1. Hero Section */
+/* 1. Hero Section (Step-based Flow) */
 .hero-section {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
 }
 
-.preset-selector {
+.review-input-form {
   display: flex;
   flex-direction: column;
+  gap: 18px;
+}
+
+/* Step Card Base */
+.step-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  transition: all 0.2s ease;
+}
+
+.step-card:hover {
+  border-color: #CBD5E1;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.step-badge {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
 }
 
-.section-label {
-  font-size: 13px;
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--brand-primary);
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-label {
+  font-size: 14.5px;
   font-weight: 700;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.step-hint {
+  font-size: 12px;
+  color: #64748B;
+  font-weight: 500;
+}
+
+/* File Dropzone (Step 1) */
+.file-dropzone {
+  border: 2px dashed #CBD5E1;
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  background: #FFFFFF;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-dropzone:hover,
+.file-dropzone.dragover {
+  border-color: #2563EB;
+  background-color: #EFF6FF;
+}
+
+.dropzone-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.dropzone-icon-wrap {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #EFF6FF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dropzone-icon {
+  font-size: 24px;
+  color: #2563EB;
+}
+
+.dropzone-text strong {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1E293B;
+  display: block;
+}
+
+.dropzone-text p {
+  font-size: 12px;
+  color: #64748B;
+  margin-top: 3px;
+}
+
+.attached-file-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #FFFFFF;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #BFDBFE;
+  width: 100%;
+}
+
+.file-badge {
+  background: #1E3A8A;
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.file-meta {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.file-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1E293B;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  font-size: 11.5px;
+  color: #64748B;
+}
+
+.btn-remove-file {
+  background: #FEE2E2;
+  border: 1px solid #FECACA;
+  color: #DC2626;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.btn-remove-file:hover {
+  background: #FCA5A5;
+  color: #991B1B;
+}
+
+/* Step 2 (Query & Preset Helper) */
+.preset-helper {
+  display: flex;
+  align-items: center;
 }
 
 .preset-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chip {
-  background: var(--bg-sub);
-  border: 1px solid var(--border-color);
-  padding: 7px 14px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
+  background: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  padding: 5px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
   cursor: pointer;
   transition: all 0.15s ease;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .chip:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  background: #F1F5F9;
+  border-color: #94A3B8;
+  color: #0F172A;
 }
 
 .chip.active {
-  background: var(--brand-primary);
+  background: #1E3A8A;
   color: #FFFFFF;
-  border-color: var(--brand-primary);
-  box-shadow: 0 2px 4px rgba(30, 58, 138, 0.2);
+  border-color: #1E3A8A;
+  box-shadow: 0 1px 3px rgba(30, 58, 138, 0.25);
 }
 
 .chip.active .chip-icon {
   color: #FFFFFF;
 }
 
-.review-input-form {
+.query-label-row {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.btn-reset-query {
+  background: transparent;
+  border: 1px solid #E2E8F0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748B;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.btn-reset-query:hover {
+  background: #F1F5F9;
+  border-color: #CBD5E1;
+  color: #1E293B;
+}
+
+.btn-reset-query:hover .material-symbols-outlined {
+  transform: rotate(-45deg);
+  transition: transform 0.2s ease;
+}
+
+.pulse-highlight {
+  animation: pulse-border 0.6s ease;
+}
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4); border-color: #2563EB; }
+  50% { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.15); border-color: #2563EB; }
+  100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
 }
 
 .input-row {
@@ -74,98 +288,14 @@
   .input-row { flex-direction: column; }
 }
 
-/* File Dropzone */
-.file-dropzone {
-  border: 2px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 16px 20px;
-  background-color: #FAFAFA;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.file-dropzone:hover,
-.file-dropzone.dragover {
-  border-color: var(--brand-accent);
-  background-color: var(--brand-accent-light);
-}
-
-.dropzone-content {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.dropzone-text strong {
-  font-size: 14px;
-  color: var(--text-primary);
-  display: block;
-}
-
-.dropzone-text p {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.attached-file-info {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: #FFFFFF;
-  padding: 8px 14px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-color);
-  width: 100%;
-}
-
-.file-badge {
-  background: var(--brand-primary);
-  color: #FFFFFF;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.file-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-size {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.btn-remove-file {
-  background: transparent;
-  border: none;
-  font-size: 14px;
-  color: var(--text-muted);
-  cursor: pointer;
-  padding: 2px 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-remove-file:hover {
-  color: var(--risk-high-text);
-}
-
-.form-actions {
+/* Step 3 (Actions Bar) */
+.form-actions-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-top: 6px;
+  padding-top: 4px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .llm-indicator {
