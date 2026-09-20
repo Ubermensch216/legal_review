@@ -176,8 +176,18 @@ export async function searchOrdinances(query, page = 1, display = 10) {
 // -------------------------------------------------------------
 // LAW_OC 미설정 시 Fallback 샘플 목업 데이터
 // -------------------------------------------------------------
+
+/**
+ * 목업 레코드에 출처 표식을 부착한다.
+ * 이 표식이 없으면 샘플 판례/해석례가 공식 수집 결과와 구분되지 않은 채
+ * 검토의견서와 결재 문서에 그대로 인용된다.
+ */
+function markMock(items) {
+  return items.map(item => ({ ...item, isMockData: true }));
+}
+
 function getMockPrecedents(query) {
-  return [
+  return markMock([
     {
       id: '210452',
       caseNo: '2021다247854',
@@ -202,11 +212,11 @@ function getMockPrecedents(query) {
       summary: '법률의 위임 없이 주민의 권리를 제한하거나 의무를 부과하는 조례 규정은 지방자치법 제28조 단서에 위배되어 효력이 없다.',
       detailUrl: 'http://www.law.go.kr/판례/2019두51234'
     }
-  ];
+  ]);
 }
 
 function getMockInterpretations(query) {
-  return [
+  return markMock([
     {
       id: '98452',
       itemNo: '21-0342',
@@ -218,11 +228,11 @@ function getMockInterpretations(query) {
       reason: '법률 규정의 문언상 계약 당사자의 명확한 의사에 부합하는 범위 내에서는 동의권 남용을 방지하기 위함이다.',
       detailUrl: 'http://www.law.go.kr/해석례/21-0342'
     }
-  ];
+  ]);
 }
 
 function getMockAdminRules(query) {
-  return [
+  return markMock([
     {
       id: '8910',
       name: '개인정보의 안전성 확보조치 기준',
@@ -232,11 +242,11 @@ function getMockAdminRules(query) {
       promulDate: '2023.09.22',
       detailUrl: 'http://www.law.go.kr/행정규칙/개인정보의안전성확보조치기준'
     }
-  ];
+  ]);
 }
 
 function getMockOrdinances(query) {
-  return [
+  return markMock([
     {
       id: '54321',
       name: '서울특별시 개인정보 보호에 관한 조례',
@@ -245,7 +255,7 @@ function getMockOrdinances(query) {
       enforceDate: '2023.05.18',
       detailUrl: 'http://www.law.go.kr/자치법규/서울특별시개인정보보호에관한조례'
     }
-  ];
+  ]);
 }
 
 export default {

@@ -60,7 +60,7 @@ export async function searchLaw(query, page = 1, display = 20) {
 
   const oc = ENV.LAW_OC;
   if (!oc) {
-    console.warn('[LawApiClient] LAW_OC 미설정 - 목업 데이터 또는 기본 검색으로 대응');
+    console.warn(`[LawApiClient] LAW_OC 미설정 - '${trimmed}' 검색을 목업 샘플로 대체합니다 (공식 법령 데이터 아님).`);
     return getMockLawSearch(trimmed);
   }
 
@@ -74,7 +74,7 @@ export async function searchLaw(query, page = 1, display = 20) {
     }
     return parsed;
   } catch (err) {
-    console.error('[LawApiClient] searchLaw 실패:', err.message);
+    console.error(`[LawApiClient] searchLaw 실패, 목업 샘플로 대체합니다 (공식 법령 데이터 아님):`, err.message);
     return getMockLawSearch(trimmed);
   }
 }
@@ -94,6 +94,7 @@ export async function getLawDetail(lawId, lawSeq = '') {
 
   const oc = ENV.LAW_OC;
   if (!oc) {
+    console.warn(`[LawApiClient] LAW_OC 미설정 - 법령 본문(${lawId || lawSeq})을 목업으로 대체합니다 (공식 조문 아님).`);
     return getMockLawDetail(lawId || 'sample');
   }
 
@@ -108,7 +109,7 @@ export async function getLawDetail(lawId, lawSeq = '') {
     }
     return parsed;
   } catch (err) {
-    console.error('[LawApiClient] getLawDetail 실패:', err.message);
+    console.error(`[LawApiClient] getLawDetail 실패, 목업으로 대체합니다 (공식 조문 아님):`, err.message);
     return getMockLawDetail(lawId || 'sample');
   }
 }
@@ -217,11 +218,38 @@ function getMockLawSearch(query) {
     }
   ];
 
-  return samples.filter(s => s.lawName.includes(query) || query.includes(s.lawName) || query.includes('법'));
+  // 법령명이 실제로 맞아떨어지는 샘플만 돌려준다.
+  // 과거에는 `query.includes('법')` 조건이 있어 '저작권법', '중대재해처벌법' 등
+  // '법'을 포함한 모든 질의가 5건 전부와 매칭되었고, 그 결과 첫 항목인
+  // 개인정보 보호법이 무관한 질의의 기준 법령으로 선택되었다.
+  const normalized = query.replace(/\s+/g, '');
+  const matched = samples.filter(s => {
+    const name = s.lawName.replace(/\s+/g, '');
+    const shortName = (s.lawNameShort || '').replace(/\s+/g, '');
+    return normalized.includes(name) || name.includes(normalized) ||
+           (shortName && (normalized.includes(shortName) || shortName.includes(normalized)));
+  });
+
+  return matched.map(s => ({ ...s, isMockData: true }));
 }
 
 function getMockLawDetail(lawId) {
+  // 샘플 본문을 보유한 법령은 개인정보 보호법뿐이다. 다른 법령의 ID로 조회된
+  // 경우에도 이 본문을 돌려주면 '근로기준법 제15조(개인정보의 수집·이용)' 같은
+  // 교차 오표기가 발생하므로, 조문 없이 목업임을 표시한 스텁만 반환한다.
+  if (lawId && lawId !== '001552' && lawId !== 'sample') {
+    return {
+      lawId,
+      lawName: '',
+      articles: [],
+      annexes: [],
+      isMockData: true,
+      unavailableReason: 'LAW_OC 미설정 또는 법령 API 응답 실패로 공식 조문을 가져오지 못했습니다.'
+    };
+  }
+
   return {
+    isMockData: true,
     lawId: lawId || '001552',
     lawSeq: '243015',
     lawName: '개인정보 보호법',

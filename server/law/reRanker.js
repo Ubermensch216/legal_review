@@ -17,7 +17,10 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
   const targetArticles = new Set(articleNos.map(a => normalizeArticleString(a)));
 
   const scoredList = precedents.map(prec => {
-    let score = 30; // 기본 베이스 점수
+    // 무조건 주어지는 베이스 점수를 제거했다. 과거에는 기본 30점에 더해
+    // 조문/키워드/법원 각 분기의 else 가산점이 항상 붙어, 사안과 전혀 무관한
+    // 판례도 최소 75점이 보장됐다. 이제 0점에서 실제 일치분만 가산한다.
+    let score = 0;
     const matchReasons = [];
     const matchedTokens = [];
 
@@ -40,8 +43,6 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
     if (!articleMatched && targetLaw && fullText.includes(targetLaw.toLowerCase())) {
       score += 25;
       matchReasons.push(`관련 법령(${targetLaw}) 판결 법리`);
-    } else if (!articleMatched) {
-      score += 20;
     }
 
     // 2. 핵심 쟁점 키워드 포섭도 (최대 40점)
@@ -59,8 +60,6 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
     } else if (keywordHits >= 1) {
       score += 25;
       matchReasons.push('주요 법적 쟁점 키워드 일치');
-    } else {
-      score += 15;
     }
 
     // 3. 법원 권위 및 중요성 (최대 15점)
@@ -73,17 +72,18 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
       } else {
         matchReasons.push('대법원 확립 판례');
       }
-    } else {
-      score += 10;
     }
 
-    // 100점 상한 제한
-    const finalScore = Math.min(Math.max(score, 40), 99);
+    // 상한만 적용한다. 하한(Math.max(score, 40))은 무관한 판례에도
+    // 점수를 보장해 주므로 제거했다.
+    const finalScore = Math.min(score, 100);
 
     return {
       ...prec,
       relevanceScore: finalScore,
-      matchReason: matchReasons.length > 0 ? matchReasons.join(' · ') : '사안 관련 법리 참조 판례',
+      matchReason: matchReasons.length > 0
+        ? matchReasons.join(' · ')
+        : '질의어·조문과 일치하는 요소가 확인되지 않음',
       matchedTokens: Array.from(new Set(matchedTokens)).slice(0, 5)
     };
   });
@@ -101,7 +101,7 @@ export function reRankInterpretations({ interpretations = [], query = '', target
   const queryTerms = extractKeyTerms(`${query} ${expandedTerms.join(' ')}`);
 
   const scoredList = interpretations.map(item => {
-    let score = 40;
+    let score = 0; // 베이스 40점 제거 (무관한 해석례도 45점이 보장되던 원인)
     const title = item.title || '';
     const answer = item.answer || item.reason || '';
     const fullText = `${title} ${answer}`.toLowerCase();
@@ -124,12 +124,14 @@ export function reRankInterpretations({ interpretations = [], query = '', target
       matchReasons.push('사안 쟁점 해석 회답 일치');
     }
 
-    const finalScore = Math.min(Math.max(score, 45), 98);
+    const finalScore = Math.min(score, 100);
 
     return {
       ...item,
       relevanceScore: finalScore,
-      matchReason: matchReasons.length > 0 ? matchReasons.join(' · ') : '소관 부처 공식 해석례'
+      matchReason: matchReasons.length > 0
+        ? matchReasons.join(' · ')
+        : '질의어·법령과 일치하는 요소가 확인되지 않음'
     };
   });
 

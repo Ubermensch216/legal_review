@@ -34,6 +34,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
 
   // 3. 검색 대상 주요 법령 결정
   let primaryLawName = targetLaw;
+  let lawLookupFailed = false;
 
   if (!primaryLawName) {
     if (explicitRefs.length > 0 && explicitRefs[0].lawName) {
@@ -46,18 +47,45 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   // 4. 주요 법령 검색 및 상세 조문 조회
   let mainLawDetail = null;
   if (primaryLawName) {
+    const requestedLawName = primaryLawName;
     const searchRes = await searchLaw(primaryLawName, 1, 3);
-    if (searchRes.length > 0) {
-      primaryLawName = searchRes[0].lawName;
-      mainLawDetail = await getLawDetail(searchRes[0].lawId, searchRes[0].lawSeq);
+
+    // 검색 결과 중 요청한 법령과 실제로 일치하는 항목만 채택한다.
+    // 과거에는 무조건 searchRes[0]을 채택해, 검색이 빗나가면 사용자가 지정한
+    // targetLaw가 조용히 다른 법령으로 바뀌었다.
+    const normalizedRequest = requestedLawName.replace(/\s+/g, '');
+    const exactMatch = searchRes.find(l => {
+      const name = (l.lawName || '').replace(/\s+/g, '');
+      return name.includes(normalizedRequest) || normalizedRequest.includes(name);
+    });
+
+    if (exactMatch) {
+      primaryLawName = exactMatch.lawName;
+      mainLawDetail = await getLawDetail(exactMatch.lawId, exactMatch.lawSeq);
+    } else {
+      // 일치하는 법령을 찾지 못하면 요청한 법령명을 유지하고 조문 없이 진행한다.
+      // (다른 법령의 조문을 요청 법령명으로 표기하는 교차 오표기를 방지)
+      console.warn(`[LawWorkbench] '${requestedLawName}'과 일치하는 법령을 찾지 못했습니다. 공식 조문 없이 진행합니다.`);
+      lawLookupFailed = true;
     }
-  } else {
-    // 질의어 자체로 법령 검색
-    const generalSearch = await searchLaw(query || '개인정보 보호법', 1, 3);
+  } else if (query) {
+    // 질의어 자체로 법령 검색.
+    // 질의가 비어 있을 때 '개인정보 보호법'을 기본 검색어로 넣던 동작은 제거했다.
+    // 무관한 사안에 개인정보 보호법이 기준 법령으로 붙는 원인이었다.
+    const generalSearch = await searchLaw(query, 1, 3);
     if (generalSearch.length > 0) {
       primaryLawName = generalSearch[0].lawName;
       mainLawDetail = await getLawDetail(generalSearch[0].lawId, generalSearch[0].lawSeq);
+    } else {
+      lawLookupFailed = true;
     }
+  } else {
+    lawLookupFailed = true;
+  }
+
+  // 목업 스텁(조문 없음)은 기준 법령으로 삼지 않는다.
+  if (mainLawDetail && mainLawDetail.isMockData && (!mainLawDetail.articles || mainLawDetail.articles.length === 0)) {
+    lawLookupFailed = true;
   }
 
   // 5. 관련 조문 핀포인트 추출
@@ -131,6 +159,23 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const annexes = (mainLawDetail && mainLawDetail.annexes) ? mainLawDetail.annexes : [];
   const durationMs = Date.now() - startTime;
 
+  // 수집된 데이터의 출처를 집계한다. 목업/폴백이 섞인 결과가 공식 수집 결과와
+  // 구분되지 않은 채 결재 문서로 나가는 것을 막기 위한 표식이다.
+  const dataIntegrity = buildDataIntegrityReport({
+    lawDetail: mainLawDetail,
+    articles: collectedArticles,
+    precedents: rankedPrecedents,
+    interpretations: rankedInterpretations,
+    adminRules,
+    ordinances,
+    lawLookupFailed,
+    primaryLawName
+  });
+
+  if (dataIntegrity.isFallback) {
+    console.warn(`[LawWorkbench] 폴백 데이터 포함 응답: ${dataIntegrity.warnings.join(' / ')}`);
+  }
+
   return {
     meta: {
       query,
@@ -139,6 +184,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       hasAttachedDocument: Boolean(documentText),
       isOptimizedDoc: Boolean(optimizedDoc.omittedCount > 0),
       durationMs,
+      dataIntegrity,
       timestamp: new Date().toISOString()
     },
     // Tab 2: 공식 근거 데이터 (Re-ranking 및 Cascading 반영)
@@ -169,6 +215,59 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       documentChunks: optimizedDoc.selectedChunks,
       riskClauses: (optimizedDoc.selectedChunks || []).filter(c => c.isRiskClause)
     }
+  };
+}
+
+/**
+ * 수집 결과에 목업/폴백 데이터가 섞였는지 집계한다.
+ * @returns {{ isFallback: boolean, hasOfficialArticles: boolean, sources: object, warnings: string[] }}
+ */
+function buildDataIntegrityReport({
+  lawDetail, articles, precedents, interpretations, adminRules, ordinances, lawLookupFailed, primaryLawName
+}) {
+  const isMock = (list) => Array.isArray(list) && list.length > 0 && list.some(x => x && x.isMockData);
+  const sourceOf = (list) => {
+    if (!Array.isArray(list) || list.length === 0) return 'NONE';
+    return isMock(list) ? 'MOCK' : 'OFFICIAL_API';
+  };
+
+  const lawSource = lawLookupFailed
+    ? 'NONE'
+    : (lawDetail && lawDetail.isMockData ? 'MOCK' : (lawDetail ? 'OFFICIAL_API' : 'NONE'));
+
+  const sources = {
+    law: lawSource,
+    articles: lawSource === 'MOCK' ? 'MOCK' : (articles.length > 0 ? 'OFFICIAL_API' : 'NONE'),
+    precedents: sourceOf(precedents),
+    interpretations: sourceOf(interpretations),
+    adminRules: sourceOf(adminRules),
+    ordinances: sourceOf(ordinances)
+  };
+
+  const warnings = [];
+  if (lawLookupFailed) {
+    warnings.push(primaryLawName
+      ? `'${primaryLawName}'의 공식 조문을 가져오지 못했습니다. 조문 근거 없이 작성된 검토입니다.`
+      : '기준 법령을 특정하지 못했습니다. 조문 근거 없이 작성된 검토입니다.');
+  }
+  if (sources.law === 'MOCK' || sources.articles === 'MOCK') {
+    warnings.push('법령 조문이 공식 API가 아닌 샘플 목업 데이터입니다. 인용하지 마십시오.');
+  }
+  if (sources.precedents === 'MOCK') {
+    warnings.push('판례가 공식 API가 아닌 샘플 목업 데이터입니다. 실제 사건번호가 아닙니다.');
+  }
+  if (sources.interpretations === 'MOCK') {
+    warnings.push('유권해석례가 공식 API가 아닌 샘플 목업 데이터입니다.');
+  }
+  if (sources.adminRules === 'MOCK' || sources.ordinances === 'MOCK') {
+    warnings.push('행정규칙/자치법규가 샘플 목업 데이터입니다.');
+  }
+
+  return {
+    isFallback: warnings.length > 0,
+    hasOfficialArticles: sources.articles === 'OFFICIAL_API',
+    sources,
+    warnings
   };
 }
 
