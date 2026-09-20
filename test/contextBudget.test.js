@@ -3,13 +3,13 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { optimizeDocumentContext } from '../server/parsers/contextOptimizer.js';
 import { chunkLegalDocument } from '../server/parsers/legalDocChunker.js';
-import { resolveBudget, readTokenUsage, estimatePromptTokens } from '../server/law/llmBudget.js';
+import { resolveBudget, readTokenUsage, estimatePromptTokens, resetCalibration, resolveTokenizerFamily, createTokenCounter } from '../server/law/llmBudget.js';
 import { generateLegalReview } from '../server/law/lawWorkbenchReview.js';
 
 const noNetwork = globalThis.fetch;
 const keys = ['LLM_MODEL_BUDGETS', 'LLM_CONTEXT_TOKENS', 'LLM_OUTPUT_TOKENS'];
 const previous = Object.fromEntries(keys.map(k => [k, process.env[k]]));
-afterEach(() => { globalThis.fetch = noNetwork; for (const k of keys) { if (previous[k] === undefined) delete process.env[k]; else process.env[k] = previous[k]; } });
+afterEach(() => { globalThis.fetch = noNetwork; resetCalibration(); for (const k of keys) { if (previous[k] === undefined) delete process.env[k]; else process.env[k] = previous[k]; } });
 const review = { summary: '검토', facts: '사실', legalOpinion: '근거 부족', draftOpinion: '검토 초안', coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] };
 const context = { meta: { primaryLawName: '민법' }, officialEvidence: {} };
 const run = (provider, config = {}, documentText = '', query = '면책 검토') => generateLegalReview({ query, preset: 'contract_risk', documentText, workbenchContext: context, llmConfig: { provider, model: 'fixture-model', apiKey: 'fixture', ...config } });
@@ -92,4 +92,74 @@ test('출력이 잘려도 제공자의 사용량과 입력 제한을 보존한�
   assert.equal(result.reviewStatus, 'FAILED');
   assert.equal(result.tokenUsage.outputTokens, 500);
   assert.ok(result.inputBudget.inputLimit > 0);
+});
+
+test('위험 키워드도 질의어도 없는 조항 말미의 조건을 회수한다', () => {
+  const filler = '일반 업무 배경과 처리 절차를 설명한다. '.repeat(600);
+  const marked = optimizeDocumentContext({ documentText: `제1조(일반) ${filler}별도 부속 문서의 조건이 우선한다. UNMATCHED_TAIL`, query: '검토', maxChars: 1500 });
+  assert.ok(marked.optimizedText.includes('UNMATCHED_TAIL'), '구조 표지 기반 회수');
+  // 표지조차 없는 문장도 꼬리 구간 발췌로 덮는다. 앞부분만 잘라 보내지 않는다.
+  const plain = optimizeDocumentContext({ documentText: `제1조(현황) ${filler}접수 창구는 본관에 둔다. PLAIN_TAIL`, query: '검토', maxChars: 1500 });
+  assert.ok(plain.optimizedText.includes('PLAIN_TAIL'), '구조적 꼬리 발췌');
+  assert.ok(plain.selectedChunks[0].excerptSpans.length >= 2);
+  for (const span of plain.selectedChunks[0].excerptSpans) assert.ok(plain.selectedChunks[0].excerpt.includes(plain.selectedChunks[0].content.slice(span.start, span.end)));
+});
+
+test('모델 계열별 토큰 계수를 구분하고 미상 모델은 보수적으로 센다', () => {
+  assert.equal(resolveTokenizerFamily('anthropic', 'claude-3-5-sonnet-latest'), 'claude');
+  assert.equal(resolveTokenizerFamily('openai', 'gpt-4o-mini'), 'o200k');
+  assert.equal(resolveTokenizerFamily('openai', 'gpt-4-turbo'), 'cl100k');
+  assert.equal(resolveTokenizerFamily('openai', 'unknown-model'), 'default');
+  process.env.LLM_MODEL_BUDGETS = JSON.stringify({ 'ollama:my-model': { family: 'o200k' } });
+  assert.equal(resolveTokenizerFamily('ollama', 'my-model'), 'o200k');
+  const korean = '개인정보를 제3자에게 제공한다. '.repeat(200);
+  const claude = estimatePromptTokens('', korean, { provider: 'anthropic', model: 'claude-3-5-sonnet-latest' });
+  const legacy = estimatePromptTokens('', korean, { provider: 'openai', model: 'gpt-4-turbo' });
+  const unknown = estimatePromptTokens('', korean);
+  assert.ok(claude < legacy && legacy <= unknown, `${claude} < ${legacy} <= ${unknown}`);
+});
+
+test('제공자 사전 계수 API의 정확한 입력 토큰을 사용한다', async () => {
+  let counted = false;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/count_tokens')) {
+      counted = true;
+      assert.equal(JSON.parse(options.body).model, 'fixture-model');
+      return { ok: true, json: async () => ({ input_tokens: 4321 }) };
+    }
+    return { ok: true, json: async () => ({ content: [{ text: JSON.stringify(review) }], usage: { input_tokens: 4400, output_tokens: 120 } }) };
+  };
+  const result = await run('anthropic', { contextTokens: 32000, outputTokens: 900 });
+  assert.equal(counted, true);
+  assert.equal(result.inputBudget.exact, true);
+  assert.equal(result.inputBudget.tokenCountSource, 'PROVIDER_COUNT_API');
+  assert.equal(result.inputBudget.estimatedInputTokens, 4321);
+  assert.equal(result.inputBudget.accuracy.reportedInputTokens, 4400);
+  assert.equal(result.inputBudget.accuracy.errorPct, -1.8);
+});
+
+test('사전 계수 실패를 드러내고 추정으로 대체한다', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/count_tokens')) return { ok: false, status: 429 };
+    return { ok: true, json: async () => ({ content: [{ text: JSON.stringify(review) }], usage: { input_tokens: 900, output_tokens: 10 } }) };
+  };
+  const result = await run('anthropic', { contextTokens: 32000, outputTokens: 900 });
+  assert.equal(result.inputBudget.exact, false);
+  assert.match(result.inputBudget.tokenCountError, /429/);
+  assert.equal(result.inputBudget.tokenizerFamily, 'claude');
+});
+
+test('실제 사용량으로 추정 오차를 보정하고 엉뚱한 값은 버린다', () => {
+  const counter = createTokenCounter('openai', { model: 'calib-model' });
+  const before = counter.estimate('지시문', '한글 본문 '.repeat(200));
+  assert.equal(before.source, 'HEURISTIC');
+  assert.equal(counter.observe(before, { inputTokens: 1 }).appliedToCalibration, false);
+  const accuracy = counter.observe(before, { inputTokens: Math.round(before.raw * 0.5) });
+  assert.equal(accuracy.appliedToCalibration, true);
+  const after = counter.estimate('지시문', '한글 본문 '.repeat(200));
+  assert.equal(after.source, 'CALIBRATED_HEURISTIC');
+  assert.equal(after.calibrationSamples, 1);
+  assert.ok(after.tokens < before.tokens, `${after.tokens} < ${before.tokens}`);
+  // 보정은 다른 모델로 번지지 않는다.
+  assert.equal(createTokenCounter('openai', { model: 'other-model' }).estimate('지시문', '한글 본문 '.repeat(200)).source, 'HEURISTIC');
 });

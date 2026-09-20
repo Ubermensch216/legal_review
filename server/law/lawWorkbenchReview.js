@@ -1,6 +1,6 @@
 // server/law/lawWorkbenchReview.js - IRAC 4단계 법리 추론, Redline 수정 조문 생성 및 환각 방지 엔진
 import { buildReviewInput } from './reviewContext.js';
-import { resolveBudget, estimatePromptTokens, readTokenUsage } from './llmBudget.js';
+import { resolveBudget, createTokenCounter, readTokenUsage } from './llmBudget.js';
 import { ENV } from '../env.js';
 import { maskLawSecrets } from './lawErrors.js';
 import { verifyAndCorrectReviewCitations } from './factualityVerifier.js';
@@ -122,18 +122,31 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
     const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
     const budget = resolveBudget(provider, { ...llmConfig, model });
     const callConfig = { ...llmConfig, budget };
+    const counter = createTokenCounter(provider, { model, apiKey: llmConfig.apiKey || ENV[`${provider.toUpperCase()}_API_KEY`] });
     let userPrompt = renderPrompt(input);
     let scale = 1;
-    for (let attempt = 0; estimatePromptTokens(systemPrompt, userPrompt) > budget.inputLimit && attempt < 24; attempt++) {
-      scale *= 0.7;
-      input = buildReviewInput(workbenchContext, documentText, query, {
-        document: Math.floor(4500 * scale), articles: Math.floor(9000 * scale),
-        precedents: Math.floor(5000 * scale), interpretations: Math.floor(4000 * scale)
-      });
-      userPrompt = renderPrompt(input);
+    // 축소 반복은 동기 추정으로 돌리고, 정확한 계수는 완성된 프롬프트에 한 번만 적용한다.
+    const shrinkToFit = () => {
+      for (let attempt = 0; counter.estimate(systemPrompt, userPrompt).tokens > budget.inputLimit && attempt < 24; attempt++) {
+        scale *= 0.7;
+        input = buildReviewInput(workbenchContext, documentText, query, {
+          document: Math.floor(4500 * scale), articles: Math.floor(9000 * scale),
+          precedents: Math.floor(5000 * scale), interpretations: Math.floor(4000 * scale)
+        });
+        userPrompt = renderPrompt(input);
+      }
+    };
+    shrinkToFit();
+    // 정확한 계수가 추정을 넘어서면 그 값으로 보정된 추정을 다시 적용해 한 번 더 줄인다.
+    let counted = await counter.measure(systemPrompt, userPrompt);
+    if (counted.exact && counted.tokens > budget.inputLimit) {
+      shrinkToFit();
+      counted = await counter.measure(systemPrompt, userPrompt);
     }
-    inputBudget = { ...budget, estimatedInputTokens: estimatePromptTokens(systemPrompt, userPrompt), reduced: scale < 1 };
-    if (inputBudget.estimatedInputTokens > budget.inputLimit) throw new Error('질의와 필수 지시문이 입력 예산을 초과합니다. 질의 범위를 줄이거나 모델에 맞는 컨텍스트 예산을 설정하십시오.');
+    inputBudget = { ...budget, estimatedInputTokens: counted.tokens, exact: counted.exact, tokenCountSource: counted.source,
+      tokenizerFamily: counted.tokenizerFamily, calibrationSamples: counted.calibrationSamples ?? null,
+      tokenCountError: counted.countError || null, reduced: scale < 1 };
+    if (counted.tokens > budget.inputLimit) throw new Error('질의와 필수 지시문이 입력 예산을 초과합니다. 질의 범위를 줄이거나 모델에 맞는 컨텍스트 예산을 설정하십시오.');
     let completion;
 
 
@@ -149,6 +162,8 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
 
     const rawContent = completion.content;
     tokenUsage = completion.tokenUsage;
+    // 사전 계수와 제공자가 보고한 실제 입력 토큰의 오차를 남기고 다음 추정에 반영한다.
+    inputBudget = { ...inputBudget, accuracy: counter.observe(counted, tokenUsage) };
     const parsed = parseReviewJson(rawContent);
     if (!parsed) {
       // 파싱 실패 시 normalizeReviewResult가 조용히 룰베이스 결과를 돌려주므로,
