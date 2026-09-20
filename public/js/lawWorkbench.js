@@ -100,21 +100,70 @@ async function downloadQuickReport(format) {
  * 워크벤치 전체 데이터 렌더링
  * @param {object} data - /api/law/workbench 응답 데이터
  */
+/**
+ * 데이터 출처 및 검토 엔진 상태를 상단 배너로 표시한다.
+ * 폴백/목업 결과가 정상 검토와 구분되지 않던 문제를 눈에 보이게 만든다.
+ */
+function renderReliabilityBanner() {
+  const rel = window.__reliability;
+  let host = document.getElementById('reliability-banner');
+
+  if (!rel || !rel.isFallback) {
+    if (host) host.remove();
+    return;
+  }
+
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'reliability-banner';
+    const anchor = document.getElementById('draft-factuality-badge');
+    if (anchor && anchor.parentNode) {
+      anchor.parentNode.insertBefore(host, anchor);
+    } else {
+      document.body.prepend(host);
+    }
+  }
+
+  const engineLabel = rel.reviewEngine === 'RULE_BASED_FALLBACK'
+    ? '규칙 기반 점검 (LLM 법리 검토 미수행)'
+    : rel.reviewEngine;
+
+  host.className = 'reliability-banner';
+  host.innerHTML = `
+    <div class="reliability-banner-head">
+      <span class="material-symbols-outlined">report</span>
+      <strong>이 결과는 참고용 제한 결과입니다 — 결재 문서로 사용하지 마십시오</strong>
+    </div>
+    <div class="reliability-banner-body">
+      <div>검토 엔진: <b>${escapeHtml(engineLabel)}</b></div>
+      <ul>
+        ${(rel.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+      </ul>
+    </div>
+  `;
+}
+
 export function renderWorkbench(data) {
   state.lastReviewResult = data;
   const { review, officialEvidence, impactAndRevisions, meta } = data;
 
-  // 0. 검토 초안(Tab 1) 및 공식 법률검토의견서(Tab 4) 뱃지 램프 온 (활성화)
+  // 서버가 내려준 신뢰도/출처 정보를 렌더러 전반에서 참조할 수 있게 보관한다.
+  window.__reliability = data.reliability || null;
+
+  const isFallback = Boolean(data.reliability && data.reliability.isFallback);
+
+  // 0. 검토 초안(Tab 1) 및 공식 법률검토의견서(Tab 4) 뱃지 램프 온
+  //    폴백 결과는 '완료'로 표시하지 않는다.
   const badgeDraftEl = document.getElementById('badge-draft-status');
   if (badgeDraftEl) {
-    badgeDraftEl.className = 'tab-badge active';
-    badgeDraftEl.textContent = '완료';
+    badgeDraftEl.className = isFallback ? 'tab-badge warning' : 'tab-badge active';
+    badgeDraftEl.textContent = isFallback ? '제한' : '완료';
   }
 
   const badgeReportEl = document.getElementById('badge-report-status');
   if (badgeReportEl) {
-    badgeReportEl.className = 'tab-badge active';
-    badgeReportEl.textContent = '완료';
+    badgeReportEl.className = isFallback ? 'tab-badge warning' : 'tab-badge active';
+    badgeReportEl.textContent = isFallback ? '제한' : '완료';
   }
 
   // 1. Tab 1: 검토 초안 (구조화된 테이블, Redline 대비표 & IRAC 공문서 뷰)
@@ -162,22 +211,52 @@ function renderDraftTab(review, officialEvidence, meta) {
   const lawName = meta?.primaryLawName || '관련 법령';
   const query = meta?.query || '요청 사안에 관한 법적 검토';
 
-  // 0. 조문 실존성 검증 뱃지
+  // 0. 조문 실존성 검증 뱃지 및 폴백 경고
   const badgeContainer = document.getElementById('draft-factuality-badge');
   if (badgeContainer) {
     const factReport = review.factualityVerification;
-    if (factReport) {
-      badgeContainer.innerHTML = `
-        <div class="badge-confidence-tag" title="국가법령정보 DB 조문 실존성 전수 검증 완료">
-          <span class="material-symbols-outlined" style="font-size:14px; color:#16A34A;">verified</span>
-          <span>조문 검증 ${factReport.citationConfidence}% 확정</span>
-          ${factReport.correctionsCount > 0 ? `<span class="badge-corrected">자동보정 ${factReport.correctionsCount}건</span>` : ''}
+    const parts = [];
+
+    // 검토 엔진이 폴백이거나 수집 데이터가 목업이면 가장 먼저 경고를 띄운다.
+    const warnings = (window.__reliability && window.__reliability.warnings) || [];
+    if (review.isFallback || warnings.length > 0) {
+      parts.push(`
+        <div class="badge-fallback-warning">
+          <span class="material-symbols-outlined" style="font-size:14px;">warning</span>
+          <span>${review.isFallback ? '규칙 기반 점검 결과 (법리 검토 아님)' : '폴백 데이터 포함'}</span>
         </div>
-      `;
-    } else {
-      badgeContainer.innerHTML = '';
+      `);
     }
+
+    if (factReport) {
+      if (!factReport.isMeasurable) {
+        // 측정 불가를 숫자로 위장하지 않는다.
+        parts.push(`
+          <div class="badge-confidence-tag badge-unmeasurable" title="${escapeHtml(factReport.unmeasurableReason || '검증 대상 인용이 없습니다.')}">
+            <span class="material-symbols-outlined" style="font-size:14px; color:#B45309;">help</span>
+            <span>조문 검증 측정 불가</span>
+          </div>
+        `);
+      } else {
+        const conf = factReport.citationConfidence;
+        const tone = conf >= 90 ? '#16A34A' : (conf >= 60 ? '#B45309' : '#DC2626');
+        parts.push(`
+          <div class="badge-confidence-tag" title="수집된 공식 조문 및 법령 API로 검증된 인용 비율">
+            <span class="material-symbols-outlined" style="font-size:14px; color:${tone};">verified</span>
+            <span>조문 검증 ${conf}% (${factReport.validCount}/${factReport.totalChecked}건)</span>
+          </div>
+        `);
+        if (factReport.unverifiedCount > 0) {
+          parts.push(`<span class="badge-unverified">미검증 인용 ${factReport.unverifiedCount}건</span>`);
+        }
+      }
+    }
+
+    badgeContainer.innerHTML = parts.join('');
   }
+
+  // 0-1. 상단 경고 배너 (데이터 출처 및 엔진 상태)
+  renderReliabilityBanner();
 
   // 1. 핵심 요약 하이라이트 박스
   const summaryEl = document.getElementById('draft-summary-content');

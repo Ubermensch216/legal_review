@@ -1118,3 +1118,76 @@
   border: 1px solid #E2E8F0;
   color: #475569;
 }
+
+/* ── 신뢰도/출처 경고 (폴백·목업 데이터 표시) ───────────────────── */
+.reliability-banner {
+  border: 1px solid #FCA5A5;
+  background: #FEF2F2;
+  border-left: 4px solid #DC2626;
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #7F1D1D;
+}
+
+.reliability-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.reliability-banner-head .material-symbols-outlined {
+  font-size: 18px;
+  color: #DC2626;
+}
+
+.reliability-banner-body ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.reliability-banner-body li {
+  margin: 2px 0;
+  line-height: 1.5;
+}
+
+.badge-fallback-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #FEF2F2;
+  border: 1px solid #FCA5A5;
+  color: #B91C1C;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+.badge-confidence-tag.badge-unmeasurable {
+  background: #FFFBEB;
+  border-color: #FCD34D;
+  color: #92400E;
+}
+
+.badge-unverified {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #FFF7ED;
+  border: 1px solid #FDBA74;
+  color: #9A3412;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.tab-badge.warning {
+  background: #FEF3C7;
+  color: #92400E;
+  border-color: #FCD34D;
+}

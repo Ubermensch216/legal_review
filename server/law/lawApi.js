@@ -108,8 +108,25 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       llmConfig
     });
 
+    // 데이터 출처(목업 여부)와 검토 엔진(LLM/룰베이스)을 응답 최상단에 노출한다.
+    // 폴백 결과가 정상 검토와 구분되지 않은 채 결재 문서로 나가는 것을 막기 위함이다.
+    const dataIntegrity = workbenchContext.meta?.dataIntegrity || {};
+    const reviewIsFallback = Boolean(reviewResult?.isFallback);
+    const warnings = [...(dataIntegrity.warnings || [])];
+    if (reviewIsFallback && reviewResult.fallbackReason) {
+      warnings.push(reviewResult.fallbackReason);
+    }
+
     const responsePayload = {
       ok: true,
+      reliability: {
+        isFallback: Boolean(dataIntegrity.isFallback) || reviewIsFallback,
+        reviewEngine: reviewResult?.reviewEngine || 'UNKNOWN',
+        dataSources: dataIntegrity.sources || {},
+        citationConfidence: reviewResult?.factualityVerification?.citationConfidence ?? null,
+        isCitationMeasurable: Boolean(reviewResult?.factualityVerification?.isMeasurable),
+        warnings
+      },
       meta: workbenchContext.meta,
       review: reviewResult,                     // Tab 1: 검토 초안
       officialEvidence: workbenchContext.officialEvidence, // Tab 2: 공식 근거

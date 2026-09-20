@@ -171,8 +171,9 @@ ${interpretationsText || '(해석례 정보 없음)'}
 
     return verifiedReview;
   } catch (err) {
-    console.warn('[LawWorkbenchReview] LLM 호출 실패 또는 미응답, 베테랑 변호사 IRAC 룰베이스 엔진 가동:', err.message);
+    console.warn('[LawWorkbenchReview] LLM 호출 실패, 규칙 기반 점검으로 대체합니다:', err.message);
     const ruleBased = generateRuleBasedReview(query, preset, documentText, workbenchContext);
+    ruleBased.fallbackReason = `LLM 검토를 실행하지 못했습니다 (${maskLawSecrets(err.message || '원인 미상')}). 규칙 기반 점검 결과만 제공됩니다.`;
     
     const { verifiedReview } = await verifyAndCorrectReviewCitations({
       review: ruleBased,
@@ -459,7 +460,11 @@ function repairTruncatedJson(text) {
 }
 
 function normalizeReviewResult(parsed, workbenchContext, query, preset) {
-  if (!parsed) return generateRuleBasedReview(query, preset, '', workbenchContext);
+  if (!parsed) {
+    const fallback = generateRuleBasedReview(query, preset, '', workbenchContext);
+    fallback.fallbackReason = 'LLM 응답을 JSON으로 해석하지 못해 규칙 기반 점검 결과로 대체했습니다.';
+    return fallback;
+  }
 
   const primaryLaw = workbenchContext?.meta?.primaryLawName || '관련 법령';
   let legalBasis = Array.isArray(parsed.legalBasis) && parsed.legalBasis.length > 0 ? parsed.legalBasis : [];
@@ -475,6 +480,8 @@ function normalizeReviewResult(parsed, workbenchContext, query, preset) {
   }
 
   return {
+    isFallback: false,
+    reviewEngine: 'LLM',
     summary: parsed.summary || '검토가 완료되었습니다.',
     coreIssues: Array.isArray(parsed.coreIssues) ? parsed.coreIssues : [],
     facts: parsed.facts || query || '',
@@ -490,7 +497,48 @@ function normalizeReviewResult(parsed, workbenchContext, query, preset) {
 }
 
 /**
- * 20년 베테랑 전문 변호사 IRAC 룰베이스 고품질 검토서 생성기 (Fallback 및 고속 추론)
+ * 첨부문서에서 실제로 탐지된 위험 조항만으로 점검 항목을 구성한다.
+ *
+ * 룰베이스 엔진은 문서를 읽을 뿐 법리 추론을 하지 못하므로, 수정 문구(revisedText)를
+ * 지어내지 않는다. 탐지된 조항 원문과 '무엇을 확인해야 하는지'만 제시하고,
+ * 수정안 작성은 LLM 검토 또는 사람의 판단에 맡긴다.
+ *
+ * @param {object} context - buildWorkbenchContext 결과
+ * @returns {Array<object>} 점검 항목 목록 (탐지된 위험 조항이 없으면 빈 배열)
+ */
+function buildRedlineChecklist(context) {
+  const riskClauses = context?.impactAndRevisions?.riskClauses || [];
+
+  return riskClauses.slice(0, 10).map(clause => {
+    const labels = (clause.riskTags || []).map(t => t.label).filter(Boolean);
+    const keywords = (clause.riskTags || []).flatMap(t => t.matchedKeywords || []);
+    const clauseNo = [clause.articleNo, clause.title].filter(Boolean).join(' ') || '조항 미상';
+
+    return {
+      clauseNo,
+      // 첨부문서에서 그대로 발췌한 실제 원문만 사용한다.
+      originalText: (clause.fullHeader ? `${clause.fullHeader}\n` : '') +
+        (clause.content || '').trim().slice(0, 500),
+      revisedText: '',
+      reason: labels.length > 0
+        ? `탐지된 위험 유형: ${labels.join(', ')}` +
+          (keywords.length > 0 ? ` (일치 문구: ${keywords.slice(0, 3).join(', ')})` : '') +
+          '. 해당 조항이 상위 법령의 강행규정에 저촉되는지 확인이 필요합니다.'
+        : '위험 조항으로 탐지되었습니다. 상위 법령 저촉 여부 확인이 필요합니다.',
+      riskLevel: clause.riskLevel || 'MEDIUM',
+      // 룰베이스 탐지 결과임을 명시한다. 수정안은 제시되지 않았다.
+      source: 'RULE_BASED_DETECTION',
+      needsLegalDrafting: true
+    };
+  });
+}
+
+/**
+ * 룰베이스 검토서 생성기 (LLM 사용 불가 시의 축소 폴백).
+ *
+ * 이 엔진은 법리 추론을 하지 않는다. 수집된 조문 목록과 문서에서 탐지된
+ * 위험 조항을 정리해 '무엇을 확인해야 하는지'를 제시할 뿐이다.
+ * 반환값에는 isFallback 표식이 붙으며, 완성된 법률 검토의견으로 취급해선 안 된다.
  */
 function generateRuleBasedReview(query, preset, documentText, context) {
   const lawName = context.meta?.primaryLawName || '관련 법령';
@@ -513,98 +561,64 @@ function generateRuleBasedReview(query, preset, documentText, context) {
     `[쟁점 4: 반대 논리 분석 및 실무상 방어·조항 수정 전략 (Conclusion & Defense)]\n상대방 또는 규제 당국의 위법성 주장을 선제적으로 방어하기 위해, 위법 소지가 있는 독소/면책 조항을 즉각 삭제하고 상위 법령의 명시적 위임 규정에 부합하는 대체 조항(Redline)으로 개정해야 합니다. 이를 통해 사후 분쟁 발생 시 적법절차(Due Process) 준수를 완벽히 입증할 수 있습니다.`
   ];
 
-  // 쟁점별 실무형 수정 조문(Redline Diffs) 도출
-  const redlineDiffs = [];
-  const lowerQuery = `${queryText} ${documentText}`.toLowerCase();
-
-  if (lowerQuery.includes('cctv') || lowerQuery.includes('생체') || lowerQuery.includes('안면') || lowerQuery.includes('동의') || lowerQuery.includes('녹음')) {
-    redlineDiffs.push({
-      clauseNo: '제7조 제2항 (생체정보 수집 동의)',
-      originalText: '제1항의 생체정보 수집 시 정보주체의 개별 동의는 공공복리 증진 및 시설안전 목적을 위하여 생략할 수 있다.',
-      revisedText: '제1항에 따른 생체정보를 수집하려는 경우에는 개인정보 보호법 제15조 제1항 및 제23조에 따라 정보주체로부터 명시적인 사전 동의를 받아야 한다.',
-      reason: '개인정보 보호법상 법정 예외 사유가 없는 한 생체인식정보(민감정보) 수집 시 사전 동의 생략은 위법(5천만원 이하 과태료 사유)',
-      riskLevel: 'HIGH'
-    });
-    redlineDiffs.push({
-      clauseNo: '제12조 제1항 (음성 녹음 기능)',
-      originalText: '관제 효율성 극대화를 위하여 고위험 구역에 설치된 카메라는 음성 녹음 기능을 상시 활성화하여 대화 내용을 수집할 수 있다.',
-      revisedText: '설치된 영상정보처리기기에는 음성 녹음 기능을 일체 사용할 수 없으며, 녹음 기능이 장착된 기기는 물리적·기술적으로 해당 기능을 영구 비활성화하여야 한다.',
-      reason: '개인정보 보호법 제25조 제5항(녹음기능 사용금지 강행규정) 및 통신비밀보호법 위반(3년 이하 징역 또는 3천만원 이하 벌금)',
-      riskLevel: 'HIGH'
-    });
-    redlineDiffs.push({
-      clauseNo: '제22조 (일방적 면책 조항)',
-      originalText: '관제 업무 수행 중 발생한 개인정보 유출 또는 오남용 사고에 대하여 고의가 없는 한 관제요원 및 운영기관은 민·형사상 책임을 일체 부담하지 아니한다.',
-      revisedText: '개인정보 유출 또는 권리 침해 사고 발생 시 운영기관은 개인정보 보호법 제34조에 따라 즉시 통지하고 손해배상 등 법정 책임을 신속히 이행한다.',
-      reason: '약관규제법 제7조 및 민법 제750조에 따라 중과실 면책 조항은 원천 무효임',
-      riskLevel: 'HIGH'
-    });
-  } else if (lowerQuery.includes('조례') || lowerQuery.includes('견인') || lowerQuery.includes('등록취소') || lowerQuery.includes('영업정지')) {
-    redlineDiffs.push({
-      clauseNo: '제8조 (무인대여사업자 즉시 등록취소)',
-      originalText: '시장은 무단방치 기기를 1시간 이내에 수거하지 아니하는 경우, 청문 절차 없이 즉시 사업자 등록을 취소하거나 6개월 이내의 영업정지를 명할 수 있다.',
-      revisedText: '시장은 무단방치 기기에 대해 도로교통법 및 행정절차법 제21조, 제22조에 따라 사전통지 및 청문 절차를 거친 후 시정명령 등 법정 처분을 행한다.',
-      reason: '법률의 위임 없는 침익적 행정처분 신설은 지방자치법 제28조(법률유보원칙) 및 행정절차법 위배로 조례 무효 사유임',
-      riskLevel: 'HIGH'
-    });
-    redlineDiffs.push({
-      clauseNo: '제14조 (가중 과태료 부과)',
-      originalText: '보행자 안심구역에서 개인형 이동장치를 운행한 자에 대하여는 도로교통법 규정에도 불구하고 조례에 따라 50만원 이하의 과태료를 즉시 부과한다.',
-      revisedText: '보행자 안심구역 내 위반 행위에 대하여는 도로교통법 제156조 및 질서위반행위규제법이 정한 법정 기준에 따라 관할 경찰관서에 통보하여 처리한다.',
-      reason: '법정 과태료 상한을 조례로 초과 가중하는 것은 상위 모법 충돌로 무효임',
-      riskLevel: 'HIGH'
-    });
-  } else {
-    redlineDiffs.push({
-      clauseNo: '제O조 (손해배상 및 책임 분담 조항)',
-      originalText: '일방 당사자의 귀책사유로 인한 손해 발생 시 상대방은 어떠한 이의나 손해배상 청구도 제기할 수 없다.',
-      revisedText: '각 당사자는 본 계약상의 의무를 위반하여 상대방에게 발생한 직접 손해에 대하여 민법 제390조 및 제750조에 따라 통상손해의 범위 내에서 배상 책임을 부담한다.',
-      reason: '일방적 면책 규정은 약관규제법 제6조, 제7조 및 민법 신의칙에 반하여 무효임',
-      riskLevel: 'HIGH'
-    });
-  }
+  // 쟁점별 점검 항목 도출.
+  //
+  // 과거 이 자리에는 질의에 'cctv'/'동의'/'조례' 같은 키워드가 있으면
+  // 하드코딩된 가짜 조항을 반환하는 분기가 있었다. 사용자가 작성한 적 없는
+  // 문구가 신·구 조문 대비표의 [현행] 칸에 들어가 결재 문서로 출력됐다.
+  // 이제 originalText는 첨부문서에서 실제로 탐지된 조항에서만 채운다.
+  const redlineDiffs = buildRedlineChecklist(context);
 
   const fullLegalOpinionText = deepOpinions.join('\n\n');
 
+  const detectedCount = redlineDiffs.length;
+
   return {
-    summary: `${lawName} 강행규정 및 대법원 확립 판례에 비추어 볼 때, 현행 안건은 법정 사전 동의 및 상위법 위임 한계를 일탈하여 위법성 및 행정처분(과태료/시정명령) 리스크가 명백하므로, 제시된 수정 조문(Redline)에 따른 조항 개정이 시급합니다.`,
+    // 룰베이스 엔진은 법리 추론을 하지 않으므로 위법성을 단정하지 않는다.
+    // 과거에는 어떤 사안이든 '위법성이 명백'하다고 단정해 출력했다.
+    isFallback: true,
+    reviewEngine: 'RULE_BASED_FALLBACK',
+    fallbackReason: 'LLM 검토를 사용할 수 없어 규칙 기반 점검 결과만 제공합니다. 법리 추론과 수정 조문 작성은 수행되지 않았습니다.',
+    summary: detectedCount > 0
+      ? `[규칙 기반 점검 결과] 첨부문서에서 확인이 필요한 조항 ${detectedCount}건이 탐지되었습니다. ` +
+        `기준 법령은 ${lawName}입니다. 위법 여부에 대한 법적 판단은 포함되어 있지 않으며, 각 조항의 적법성은 별도 검토가 필요합니다.`
+      : `[규칙 기반 점검 결과] 사전 정의된 위험 패턴에 해당하는 조항은 탐지되지 않았습니다. ` +
+        `이는 적법하다는 의미가 아니라 자동 탐지 범위에서 걸리지 않았다는 뜻이며, 법리 검토는 수행되지 않았습니다.`,
     coreIssues: [
-      `${lawName} 상의 사전 절차 및 명시적 동의/위임 한계 준수 여부`,
-      `대법원 판례 법리에 따른 비례원칙 위반 및 사후 손해배상 청구 위험성`,
-      `주무관청 행정제재(과태료·시정명령) 및 사법상 계약/처분의 효력 유무`
+      `${lawName} 상의 사전 절차 및 명시적 동의/위임 한계 준수 여부 (확인 필요)`,
+      '비례원칙 및 상위법 위임 한계 일탈 여부 (확인 필요)',
+      '주무관청 행정제재 및 계약/처분의 효력 유무 (확인 필요)'
     ],
     facts: queryText,
     legalBasis: basisList,
     legalOpinion: fullLegalOpinionText,
-    risks: [
-      {
-        level: 'HIGH',
-        title: '행정제재 및 과태료 부과 리스크',
-        description: `${lawName} 위반에 따른 주무관청의 시정명령, 업무정지 처분 및 수천만원 이하의 과태료 부과 위험`
-      },
-      {
-        level: 'HIGH',
-        title: '처분/약관 무효 및 민사상 손해배상 리스크',
-        description: '강행법규 위반 또는 약관규제법 위배로 인한 조항 무효화 및 이해관계인의 손해배상 청구 소송 위험'
-      },
-      {
-        level: 'MEDIUM',
-        title: '지자체 조례 및 상위법 위임 한계 일탈 리스크',
-        description: '지방자치법 제28조 단서(주민의 권리제한 및 의무부과 시 법률 위임 필요) 위배로 인한 조례 효력 상실 위험'
-      }
-    ],
+    risks: detectedCount > 0
+      ? [{
+          level: 'UNASSESSED',
+          title: `자동 탐지된 확인 필요 조항 ${detectedCount}건`,
+          description: '규칙 기반 키워드 탐지 결과이며, 위험 수준은 평가되지 않았습니다. 각 조항의 실제 법적 리스크는 법리 검토를 거쳐야 판단할 수 있습니다.'
+        }]
+      : [],
     recommendations: [
-      '상위 법령의 명시적 강행 규정에 부합하도록 제시된 수정 조문(Redline) 즉시 반영',
-      '정보주체/계약당사자에 대한 명확한 사전 고지문 및 개별 동의 서식 체계 도입',
-      '위법성 논란이 있는 독소/면책 조항을 삭제하고 합리적 분쟁조정 절차로 대체',
-      '감독기관의 공식 유권해석 질의를 통한 유권적 적법성 확인 및 소명자료 확보'
+      'LLM 검토 엔진(Ollama 또는 클라우드 LLM)을 구성한 뒤 재검토를 실행하십시오.',
+      '탐지된 조항의 원문을 상위 법령 조문과 직접 대조하십시오.',
+      '감독기관의 공식 유권해석 질의를 통한 적법성 확인 및 소명자료 확보를 검토하십시오.'
     ],
     redlineDiffs,
     furtherChecks: [
       '내부 규정 제정 당시의 입법 예고 및 상위 부처 협의 이력 문서 확인',
       '실제 운영 과정에서 당사자에게 교부된 동의서 및 계약서 원본의 문언 검토'
     ],
-    draftOpinion: `# 법률 검토의견서\n\n## 1. 검토 배경 및 질의 요지\n- 검토 대상: ${queryText}\n- 주요 법령: ${lawName}\n\n## 2. 심층 법률 검토의견 (IRAC)\n${fullLegalOpinionText}\n\n## 3. 실무 조항 수정 권고안 (Redline)\n${redlineDiffs.map(d => `### ${d.clauseNo}\n- [현행]: ${d.originalText}\n- [수정]: ${d.revisedText}\n- [사유]: ${d.reason}`).join('\n\n')}\n\n## 4. 권고사항\n- 제시된 수정안 반영 및 법정 서식 도입 요망.`,
+    draftOpinion: `# 규칙 기반 사전 점검 결과 (법률 검토의견서 아님)\n\n` +
+      `> 이 문서는 LLM 검토를 사용할 수 없어 자동 생성된 **점검 결과**입니다.\n` +
+      `> 법리 추론과 수정 조문 작성은 수행되지 않았으며, 결재용 법률검토의견서로 사용할 수 없습니다.\n\n` +
+      `## 1. 점검 배경\n- 점검 대상: ${queryText}\n- 기준 법령: ${lawName}\n\n` +
+      `## 2. 일반 점검 관점\n${fullLegalOpinionText}\n\n` +
+      `## 3. 확인이 필요한 조항 (첨부문서에서 자동 탐지)\n` +
+      (redlineDiffs.length > 0
+        ? redlineDiffs.map(d => `### ${d.clauseNo}\n- [문서 원문]: ${d.originalText}\n- [탐지 사유]: ${d.reason}\n- [수정안]: 미작성 (법리 검토 필요)`).join('\n\n')
+        : '- 자동 탐지된 조항 없음') +
+      `\n\n## 4. 다음 단계\n- LLM 검토 엔진을 구성한 뒤 재검토를 실행하십시오.`,
     disclaimer: DEFAULT_REVIEW_SCHEMA.disclaimer
   };
 }
