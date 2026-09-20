@@ -1,5 +1,6 @@
 // server/law/decisionsApiParser.js - 판례, 법령해석례, 행정규칙, 자치법규 XML/JSON 응답 파서
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import { DecisionDataError } from './decisionDiagnostics.js';
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -69,20 +70,21 @@ export function parseInterpretations(raw) {
     } catch { throw new Error('목록 응답을 해석할 수 없습니다.'); }
   }
 
-  const container = root.ExpcSearch || root.expcSearch;
+  const container = root.ExpcSearch || root.expcSearch || root.Expc;
   if (!container || typeof container !== 'object') throw new Error('목록 응답 루트가 올바르지 않습니다.');
+  if (container.resultCode !== undefined && getText(container.resultCode) !== '00') throw new DecisionDataError('API_RESULT_ERROR', '해석례 API가 실패 상태를 반환했습니다.');
   const items = ensureArray(container.expc || container.item || []);
 
   return items.map(item => ({
     id: getText(item.법령해석례일련번호 || item.해석례일련번호 || item.expcSeq || item.id),
     itemNo: getText(item.안건번호 || item.itemNo),
     title: getText(item.안건명 || item.title),
-    orgName: getText(item.해석기관명 || item.orgName || '법제처'),
-    replyDate: getText(item.해석일자 || item.회답일자 || item.replyDate),
+    orgName: getText(item.해석기관명 || item.회신기관명 || item.orgName),
+    replyDate: getText(item.해석일자 || item.회신일자 || item.회답일자 || item.replyDate),
     question: getText(item.질의요지 || item.question),
     answer: getText(item.회답 || item.회답요지 || item.answer),
     reason: getText(item.이유 || item.reason),
-    detailUrl: getText(item.해석례상세링크 || item.detailUrl)
+    detailUrl: getText(item.법령해석례상세링크 || item.해석례상세링크 || item.detailUrl)
   })).filter(e => e.title || e.itemNo || e.id);
 }
 
@@ -149,10 +151,10 @@ export default {
 };
 
 function detailRoot(raw, keys) {
-  if (typeof raw === 'string' && !raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('본문 XML이 올바르지 않습니다.');
+  if (typeof raw === 'string' && !raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new DecisionDataError('INVALID_XML', '본문 XML이 올바르지 않습니다.');
   const root = typeof raw === 'string' ? (raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw)) : raw;
   const found = keys.map(k => root?.[k]).find(r => r && typeof r === 'object');
-  if (!found) throw new Error('본문 응답 루트가 올바르지 않습니다.');
+  if (!found) throw new DecisionDataError('UNEXPECTED_BODY_ROOT', '본문 응답 루트가 올바르지 않습니다. 권한 또는 제공 범위는 별도 확인이 필요합니다.');
   return found;
 }
 export function parsePrecedentDetail(raw) {
@@ -162,7 +164,7 @@ export function parsePrecedentDetail(raw) {
     courtName: getText(root.법원명), judgeDate: getText(root.선고일자), holding: getText(root.판시사항),
     summary: getText(root.판결요지), content: getText(root.판례내용), referencedArticles: getText(root.참조조문)
   };
-  if (!result.id || !result.caseNo || !(result.summary || result.holding || result.content)) throw new Error('판례 본문을 확보하지 못했습니다.');
+  if (!result.id || !result.caseNo || !(result.summary || result.holding || result.content)) throw new DecisionDataError('MISSING_BODY_FIELDS', '판례 본문을 확보하지 못했습니다.');
   return result;
 }
 export function parseInterpretationDetail(raw) {
@@ -171,6 +173,6 @@ export function parseInterpretationDetail(raw) {
     id: getText(root.법령해석례일련번호 || root.해석례일련번호), itemNo: getText(root.안건번호), title: getText(root.안건명),
     orgName: getText(root.해석기관명), replyDate: getText(root.해석일자), question: getText(root.질의요지), answer: getText(root.회답), reason: getText(root.이유)
   };
-  if (!result.id || !result.title || !(result.answer || result.reason)) throw new Error('해석례 본문을 확보하지 못했습니다.');
+  if (!result.id || !result.title || !(result.answer || result.reason)) throw new DecisionDataError('MISSING_BODY_FIELDS', '해석례 본문을 확보하지 못했습니다.');
   return result;
 }

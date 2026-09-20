@@ -8,6 +8,7 @@ import { reRankPrecedents, reRankInterpretations } from './reRanker.js';
 import { retrieveCascadingHierarchy } from './cascadingRetriever.js';
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { runTool } from './tools/toolRunner.js';
+import { summarizeAvailability } from './decisionDiagnostics.js';
 
 /**
  * 법령 워크벤치 종합 분석 실행
@@ -155,6 +156,13 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const cascadingHierarchy = cascadingRes.status === 'fulfilled' ? cascadingRes.value : null;
   const impactMap = impactRes.status === 'fulfilled' && impactRes.value ? impactRes.value.result : null;
   const lawHistory = historyRes.status === 'fulfilled' && historyRes.value ? historyRes.value.result : null;
+  const retrievalAvailability = {
+    precedents: summarizeAvailability(precRes.status === 'fulfilled' ? rawPrecedents : Object.assign([], { fetchStatus: 'ERROR' })),
+    interpretations: summarizeAvailability(expcRes.status === 'fulfilled' ? rawInterpretations : Object.assign([], { fetchStatus: 'ERROR' }))
+  };
+  for (const [name, stats] of [['판례', retrievalAvailability.precedents], ['해석례', retrievalAvailability.interpretations]]) {
+    if (stats.unavailableCount) collectionWarnings.push(`${name} 목록 ${stats.listCount}건 중 본문 ${stats.fullTextCount}건 확보, ${stats.unavailableCount}건 미확보`);
+  }
 
   // 7. 시맨틱 Re-ranking 적용 (Top 3 판례, Top 2 해석례 엄선)
   const rankedPrecedents = reRankPrecedents({
@@ -202,6 +210,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       isOptimizedDoc: Boolean(optimizedDoc.omittedCount > 0 || optimizedDoc.truncatedCount > 0),
       durationMs,
       dataIntegrity,
+      retrievalAvailability,
       timestamp: new Date().toISOString()
     },
     reviewContext: { document: optimizedDoc },

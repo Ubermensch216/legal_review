@@ -268,6 +268,18 @@ test('실제 워크벤치 경로에서 복수 법령의 조문과 최적화 문�
   assert.equal(verified.verificationReport.validCount, 1);
 });
 
+test('워크벤치 확보 통계는 재정렬 전 전체 후보와 실패 경고를 보존한다', async () => {
+  const candidates = [
+    { id: '1', source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', summary: '본문', caseNo: '2020다1' },
+    ...['2', '3', '4'].map(id => ({ id, source: 'OFFICIAL_API', contentStatus: 'LIST_ONLY', detailErrorCode: 'UNEXPECTED_BODY_ROOT' }))
+  ];
+  const result = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조' }, services({ searchPrecedents: async () => candidates }));
+  assert.equal(result.meta.retrievalAvailability.precedents.listCount, 4);
+  assert.equal(result.meta.retrievalAvailability.precedents.fullTextCount, 1);
+  assert.equal(result.meta.retrievalAvailability.precedents.failures.UNEXPECTED_BODY_ROOT, 3);
+  assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes('본문 1건 확보, 3건 미확보')));
+});
+
 test('직접 실행한 이력 테스트도 외부의 기존 DB를 건드리지 않는다', () => {
   const seed = saveHistoryItem({ query: 'PRESERVE_TEST_SEED' });
   const child = spawnSync(process.execPath, ['--test', 'test/lawHistory.test.js'], { env: process.env, encoding: 'utf8' });

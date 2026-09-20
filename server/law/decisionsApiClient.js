@@ -3,12 +3,19 @@ import { LAW_CONFIG } from './lawConfig.js';
 import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parsePrecedentDetail, parseInterpretationDetail } from './decisionsApiParser.js';
 import { getCache, setCache } from './lawCache.js';
 import { isOfficial, unavailableList } from './evidence.js';
+import { DecisionDataError } from './decisionDiagnostics.js';
 
 async function fetchXml(base, params) {
   const url = `${base}?${new URLSearchParams({ OC: ENV.LAW_OC, type: 'XML', ...params })}`;
-  const response = await fetch(url, { signal: AbortSignal.timeout(LAW_CONFIG.TIMEOUT_MS), headers: { Accept: 'application/xml' } });
-  if (!response.ok) throw new Error(`법률 자료 조회 HTTP ${response.status}`);
-  return response.text();
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(LAW_CONFIG.TIMEOUT_MS), headers: { Accept: 'application/xml' } });
+    if (!response.ok) throw new DecisionDataError(`HTTP_${response.status}`, `법률 자료 조회 HTTP ${response.status}`);
+    return await response.text();
+  } catch (err) {
+    if (err instanceof DecisionDataError) throw err;
+    const timeout = ['TimeoutError', 'AbortError'].includes(err.name);
+    throw new DecisionDataError(timeout ? 'TIMEOUT' : 'NETWORK_ERROR', timeout ? '법률 자료 조회 시간 초과' : '법률 자료 연결 실패');
+  }
 }
 
 async function detail(target, id, parse) {
@@ -18,7 +25,7 @@ async function detail(target, id, parse) {
   if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT') return cached;
   if (!ENV.LAW_OC) throw new Error('LAW_OC 미설정으로 본문 조회 불가');
   const result = parse(await fetchXml(LAW_CONFIG.LAW_SERVICE_BASE_URL, { target, ID: id }));
-  if (String(result.id) !== String(id)) throw new Error('목록과 본문 일련번호가 일치하지 않습니다.');
+  if (String(result.id) !== String(id)) throw new DecisionDataError('RECORD_ID_MISMATCH', '목록과 본문 일련번호가 일치하지 않습니다.');
   const value = { ...result, source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', retrievedAt: new Date().toISOString() };
   await setCache(key, value, LAW_CONFIG.CACHE_TTL.PRECEDENT_DETAIL, target);
   return value;
@@ -49,9 +56,9 @@ async function search(target, query, page, display, parse, mock, loadDetail) {
         // A detail may list consolidated cases while search exposes only the lead case.
         // The detail loader has already checked the exact official record ID.
         const leadCase = value => String(value || '').split(/[,，]/)[0].replace(/\s+/g, '');
-        if (item.caseNo && leadCase(body.caseNo) !== leadCase(item.caseNo)) throw new Error('판례 사건번호 불일치');
+        if (item.caseNo && leadCase(body.caseNo) !== leadCase(item.caseNo)) throw new DecisionDataError('CASE_NUMBER_MISMATCH', '판례 사건번호 불일치');
         return { ...item, ...body };
-      } catch (err) { return { ...item, contentStatus: 'LIST_ONLY', summary: '', holding: '', answer: '', reason: '', detailError: err.message }; }
+      } catch (err) { return { ...item, contentStatus: 'LIST_ONLY', summary: '', holding: '', answer: '', reason: '', detailError: err.message, detailErrorCode: err.code || 'BODY_FETCH_FAILED' }; }
     })));
   }
   return enriched;

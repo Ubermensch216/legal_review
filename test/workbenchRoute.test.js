@@ -28,6 +28,7 @@ test('워크벤치 HTTP 응답·이력·다운로드가 제한 상태를 유지�
     assert.equal(payload.reliability.reviewStatus, 'FAILED');
     assert.equal(payload.reliability.citationConfidence, null);
     assert.equal(payload.review.legalBasis.length, 0);
+    assert.equal(payload.meta.retrievalAvailability.precedents.status, 'UNAVAILABLE');
     assert.ok(payload.historyId);
     const stored = await request(`/history/${payload.historyId}`);
     assert.equal(stored.status, 200);

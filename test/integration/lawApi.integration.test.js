@@ -10,8 +10,10 @@ const root = mkdtempSync(path.join(tmpdir(), 'legal-review-integration-'));
 process.env.CACHE_DIR = path.join(root, 'cache');
 process.env.UPLOAD_DIR = path.join(root, 'uploads');
 process.env.LAW_DEMO_MODE = 'false';
-const { searchLaw, getLawDetail } = await import('../../server/law/lawApiClient.js');
-const { searchPrecedents } = await import('../../server/law/decisionsApiClient.js');
+const { searchLaw, getLawDetail, getLawVersions } = await import('../../server/law/lawApiClient.js');
+const { searchPrecedents, searchInterpretations } = await import('../../server/law/decisionsApiClient.js');
+const { execute: timeTravel } = await import('../../server/law/tools/timeTravel.js');
+const { summarizeAvailability } = await import('../../server/law/decisionDiagnostics.js');
 
 test('공식 법령 목록과 시행일 본문 계약', { skip: !process.env.LAW_OC && 'LAW_OC 미설정: 실제 API 검증 미실행' }, async () => {
   const items = await searchLaw('개인정보 보호법', 1, 100);
@@ -23,9 +25,30 @@ test('공식 법령 목록과 시행일 본문 계약', { skip: !process.env.LAW
   assert.ok(detail.articles.length > 0);
 });
 
-test('공식 판례 목록과 본문 계약', { skip: !process.env.LAW_OC && 'LAW_OC 미설정: 실제 API 검증 미실행' }, async () => {
+test('공식 연혁과 과거 시행일 본문 계약', { skip: !process.env.LAW_OC && 'LAW_OC 미설정' }, async t => {
+  const versions = await getLawVersions('개인정보 보호법');
+  assert.ok(versions.length > 1, '현행 외 과거 버전이 필요하다');
+  assert.equal(new Set(versions.map(v => Number(v.lawId))).size, 1);
+  const result = await timeTravel({ lawName: '개인정보 보호법', targetDate: '2020-01-01', articleNo: '15' });
+  assert.equal(result.found, true, result.message);
+  assert.ok(result.appliedVersion.enforceDate <= '20200101');
+  assert.equal(result.source, 'OFFICIAL_API');
+  assert.ok(result.targetArticle);
+  t.diagnostic(JSON.stringify({ versionCount: versions.length, targetDate: result.targetDate, appliedDate: result.appliedVersion.enforceDate }));
+});
+
+test('공식 해석례 목록과 본문 계약', { skip: !process.env.LAW_OC && 'LAW_OC 미설정' }, async t => {
+  const items = await searchInterpretations('개인정보', 1, 3);
+  assert.equal(items.fetchStatus, undefined, items.unavailableReason);
+  assert.ok(items.length > 0);
+  t.diagnostic(JSON.stringify(summarizeAvailability(items)));
+  assert.ok(items.some(p => p.contentStatus === 'FULL_TEXT'), items.map(p => p.detailError).join('; '));
+});
+
+test('공식 판례 목록과 본문 계약', { skip: !process.env.LAW_OC && 'LAW_OC 미설정: 실제 API 검증 미실행' }, async t => {
   const items = await searchPrecedents('손해배상', 1, 3);
   assert.equal(items.fetchStatus, undefined, items.unavailableReason);
   assert.ok(items.length > 0);
+  t.diagnostic(JSON.stringify(summarizeAvailability(items)));
   assert.ok(items.some(p => p.contentStatus === 'FULL_TEXT'), `본문 권한/필드 계약 확인 실패: ${items.map(p => `${p.id}: ${p.detailError || p.contentStatus}`).join('; ')}`);
 });
