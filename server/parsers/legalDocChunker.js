@@ -52,7 +52,7 @@ const RISK_PATTERNS = [
  * 조항 시작 패턴 정규식
  * - 제1조(목적) / 제 1 조 (목적) / 제12조의2(제목) / 제1장 / 제2절 / 1. 조항 등
  */
-const ARTICLE_START_REGEX = /^(?:###?\s*)?(?:■\s*)?(?:제\s*(\d+(?:의\d+)?)\s*조(?:\s*\(([^)]+)\))?|(?:제\s*(\d+)\s*[장절관])\s*([^\n\r]*))/;
+const ARTICLE_START_REGEX = /^(?:###?\s*)?(?:■\s*)?(?:제\s*(?<article>\d+)(?:의(?<legacyBranch>\d+))?\s*조(?:\s*의\s*(?<branch>\d+))?(?:\s*\((?<title>[^)]+)\))?|제\s*(?<sectionNo>\d+)\s*(?<sectionUnit>[장절관])\s*(?<sectionTitle>[^\n\r]*))/;
 
 /**
  * 항(Paragraph) 기호: ① ~ ⑳ 또는 1. 2.
@@ -110,8 +110,10 @@ export function chunkLegalDocument(text) {
         preambleLines = [];
       }
 
-      const articleNo = artMatch[1] ? `제${artMatch[1]}조` : (artMatch[3] ? `제${artMatch[3]}장/절` : '');
-      const title = artMatch[2] || artMatch[4] || '조항';
+      const g = artMatch.groups;
+      const branch = g.branch || g.legacyBranch;
+      const articleNo = g.article ? `제${g.article}조${branch ? '의' + branch : ''}` : `제${g.sectionNo}${g.sectionUnit}`;
+      const title = g.title || g.sectionTitle || '조항';
 
       currentArticle = {
         articleNo,

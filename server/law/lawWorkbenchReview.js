@@ -1,11 +1,12 @@
 // server/law/lawWorkbenchReview.js - IRAC 4단계 법리 추론, Redline 수정 조문 생성 및 환각 방지 엔진
 import { buildReviewInput } from './reviewContext.js';
+import { resolveBudget, estimatePromptTokens, readTokenUsage } from './llmBudget.js';
 import { ENV } from '../env.js';
 import { maskLawSecrets } from './lawErrors.js';
 import { verifyAndCorrectReviewCitations } from './factualityVerifier.js';
 
 /**
- * 20년 경력 수석 변호사 법률 검토 표준 스키마
+ * 근거와 제한 사항을 구분하는 법률 검토 출력 스키마
  */
 const DEFAULT_REVIEW_SCHEMA = {
   summary: '',
@@ -35,10 +36,14 @@ export async function generateLegalReview({ query, preset, documentText, workben
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
 
-  const input = buildReviewInput(workbenchContext, documentText, query);
-  const { articlesText, precedentsText, interpretationsText } = input;
+  let input = buildReviewInput(workbenchContext, documentText, query);
+  let inputBudget = null;
+  let tokenUsage = null;
+  const coverage = () => ({ omittedEvidence: input.omittedEvidence, omittedChunks: input.document.omittedCount,
+    truncatedChunks: input.document.truncatedCount,
+    selectedClauses: (input.document.selectedChunks || []).map(c => ({ articleNo: c.articleNo, partial: Boolean(c.isPartial), spans: c.excerptSpans || [{ start: 0, end: c.content.length }] })) });
 
-  // 20년 경력 수석 전문 변호사 IRAC 페르소나 시스템 프롬프트
+  // 공식 근거의 범위 안에서 IRAC 분석을 요청한다.
   const systemPrompt = `당신은 대한민국 법률 검토를 돕는 AI 분석 도구입니다.
 대한민국 헌법, 법률, 시행령, 규칙, 조례 및 대법원/헌재 판례, 법제처 유권해석례를 바탕으로 복잡한 분쟁과 규제 리스크를 엄격한 IRAC 법리 추론 체계로 분석합니다.
 
@@ -89,50 +94,61 @@ export async function generateLegalReview({ query, preset, documentText, workben
   "disclaimer": "본 검토의견서는 사전 분석 참고자료이며, 최종 법적 결정 시에는 법률전문가의 자문을 받으시기 바랍니다."
 }`;
 
-  const trimmedDocText = input.document.optimizedText || '(첨부문서 없음 - 질의 기반 검토)';
-
-  const userPrompt = `[검토 유형]: ${preset}
+  const renderPrompt = input => `[검토 유형]: ${preset}
 [주요 기준 법령]: ${primaryLaw}
 [수집·분석 제한]: ${input.warnings.join(' / ') || '없음'}
 [검토 질의 / 요청 사안]:
 ${query || '첨부 문서의 법령 적법성, 상위법 충돌 및 법적 리스크 심층 검토'}
 
 [검토 대상 첨부문서 내용 (핵심 조항 발췌)]:
-${trimmedDocText}
+${input.document.optimizedText || '(첨부문서 없음 - 질의 기반 검토)'}
 
 [수집된 공식 법령 조문 본문]:
-${articlesText || '(조문 정보 없음)'}
+${input.articlesText || '(조문 정보 없음)'}
 
 [수집 및 시맨틱 Re-ranking된 대법원 판례]:
-${precedentsText || '(판례 정보 없음)'}
+${input.precedentsText || '(판례 정보 없음)'}
 
 [수집된 부처 유권해석례]:
-${interpretationsText || '(해석례 정보 없음)'}
+${input.interpretationsText || '(해석례 정보 없음)'}
 
-위 사실관계와 법령/판례를 바탕으로 20년 경력 수석 변호사 관점에서 IRAC 법리 포섭 및 실무형 수정 조문(Redline Diff)을 포함한 심층 검토의견서 JSON을 작성하십시오.`;
+위 사실관계와 법령/판례를 바탕으로 제공된 근거의 범위 안에서 IRAC 법리 포섭 및 실무형 수정 조문(Redline Diff)을 포함한 심층 검토의견서 JSON을 작성하십시오.`;
 
   try {
-    if (systemPrompt.length + userPrompt.length > 28000) throw new Error('검토 입력이 허용 예산을 초과했습니다. 질의 또는 첨부문서 범위를 줄이십시오.');
-    let rawContent = '';
-
     if (provider === 'rule_based' || provider === 'local_rule') {
-      const ruleBased = generateRuleBasedReview(query, preset, documentText, workbenchContext);
-      const { verifiedReview } = await verifyAndCorrectReviewCitations({
-        review: ruleBased,
-        workbenchContext
-      });
+      const { verifiedReview } = await verifyAndCorrectReviewCitations({ review: generateRuleBasedReview(query, preset, documentText, workbenchContext), workbenchContext });
       return verifiedReview;
-    } else if (provider === 'openai' && (llmConfig.apiKey || ENV.OPENAI_API_KEY)) {
-      rawContent = await callOpenAi(systemPrompt, userPrompt, llmConfig);
-    } else if (provider === 'anthropic' && (llmConfig.apiKey || ENV.ANTHROPIC_API_KEY)) {
-      rawContent = await callAnthropic(systemPrompt, userPrompt, llmConfig);
-    } else if (provider === 'gemini' && (llmConfig.apiKey || ENV.GEMINI_API_KEY)) {
-      rawContent = await callGemini(systemPrompt, userPrompt, llmConfig);
-    } else {
-      // 기본 Ollama 로컬 LLM 호출
-      rawContent = await callOllama(systemPrompt, userPrompt, llmConfig);
     }
+    const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
+    const budget = resolveBudget(provider, { ...llmConfig, model });
+    const callConfig = { ...llmConfig, budget };
+    let userPrompt = renderPrompt(input);
+    let scale = 1;
+    for (let attempt = 0; estimatePromptTokens(systemPrompt, userPrompt) > budget.inputLimit && attempt < 24; attempt++) {
+      scale *= 0.7;
+      input = buildReviewInput(workbenchContext, documentText, query, {
+        document: Math.floor(4500 * scale), articles: Math.floor(9000 * scale),
+        precedents: Math.floor(5000 * scale), interpretations: Math.floor(4000 * scale)
+      });
+      userPrompt = renderPrompt(input);
+    }
+    inputBudget = { ...budget, estimatedInputTokens: estimatePromptTokens(systemPrompt, userPrompt), reduced: scale < 1 };
+    if (inputBudget.estimatedInputTokens > budget.inputLimit) throw new Error('질의와 필수 지시문이 입력 예산을 초과합니다. 질의 범위를 줄이거나 모델에 맞는 컨텍스트 예산을 설정하십시오.');
+    let completion;
 
+
+    if (provider === 'openai' && (llmConfig.apiKey || ENV.OPENAI_API_KEY)) {
+      completion = await callOpenAi(systemPrompt, userPrompt, callConfig);
+    } else if (provider === 'anthropic' && (llmConfig.apiKey || ENV.ANTHROPIC_API_KEY)) {
+      completion = await callAnthropic(systemPrompt, userPrompt, callConfig);
+    } else if (provider === 'gemini' && (llmConfig.apiKey || ENV.GEMINI_API_KEY)) {
+      completion = await callGemini(systemPrompt, userPrompt, callConfig);
+    } else if (provider === 'ollama') {
+      completion = await callOllama(systemPrompt, userPrompt, callConfig);
+    } else throw new Error('선택한 LLM 제공자 또는 API 키 설정을 확인하십시오.');
+
+    const rawContent = completion.content;
+    tokenUsage = completion.tokenUsage;
     const parsed = parseReviewJson(rawContent);
     if (!parsed) {
       // 파싱 실패 시 normalizeReviewResult가 조용히 룰베이스 결과를 돌려주므로,
@@ -144,7 +160,9 @@ ${interpretationsText || '(해석례 정보 없음)'}
     }
     const normalized = normalizeReviewResult(parsed, workbenchContext, query, preset, documentText);
     
-    normalized.inputCoverage = { omittedEvidence: input.omittedEvidence, omittedChunks: input.document.omittedCount, truncatedChunks: input.document.truncatedCount };
+    normalized.inputBudget = inputBudget;
+    normalized.tokenUsage = tokenUsage;
+    normalized.inputCoverage = coverage();
     normalized.warnings = input.warnings;
     if (normalized.reviewStatus === 'COMPLETE' && (input.omittedEvidence || input.document.omittedCount || input.document.truncatedCount)) normalized.reviewStatus = 'PARTIAL';
     // 공식 인용 존재 확인
@@ -157,6 +175,10 @@ ${interpretationsText || '(해석례 정보 없음)'}
   } catch (err) {
     console.warn('[LawWorkbenchReview] LLM 호출 실패, 규칙 기반 점검으로 대체합니다:', err.message);
     const ruleBased = generateRuleBasedReview(query, preset, documentText, workbenchContext);
+    ruleBased.inputBudget = inputBudget;
+    ruleBased.tokenUsage = err.tokenUsage || tokenUsage;
+    ruleBased.inputCoverage = coverage();
+    ruleBased.warnings = input.warnings;
     ruleBased.fallbackReason = `LLM 검토를 실행하지 못했습니다 (${maskLawSecrets(err.message || '원인 미상')}). 규칙 기반 점검 결과만 제공됩니다.`;
     
     const { verifiedReview } = await verifyAndCorrectReviewCitations({
@@ -218,8 +240,8 @@ async function callOllama(systemPrompt, userPrompt, config = {}) {
           temperature: 0.1,
           // num_ctx는 프롬프트와 생성 토큰이 함께 쓰는 예산이다. Ollama 기본값(4096)은
           // 법령·판례가 포함된 긴 프롬프트에서 출력 여유를 거의 남기지 않아 응답이 잘린다.
-          num_ctx: parseInt(process.env.OLLAMA_NUM_CTX || '16384', 10),
-          num_predict: parseInt(process.env.OLLAMA_NUM_PREDICT || '8192', 10)
+          num_ctx: config.budget.contextTokens,
+          num_predict: config.budget.outputTokens
         }
       })
     });
@@ -241,9 +263,9 @@ async function callOllama(systemPrompt, userPrompt, config = {}) {
 
   // num_predict 한도에 걸려 응답이 잘리면 JSON 파싱이 실패하고 조용히 룰베이스로 대체된다.
   // 원인을 알 수 있도록 절단 사실을 명시적으로 남긴다.
-  if (data.done_reason === 'length') throw new Error('LLM 출력이 토큰 한도로 잘렸습니다.');
+  if (data.done_reason === 'length') throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: readTokenUsage('ollama', data) });
 
-  return data.message?.content || '';
+  return { content: data.message?.content || '', tokenUsage: readTokenUsage('ollama', data) };
 }
 
 /**
@@ -269,7 +291,7 @@ async function callOpenAi(systemPrompt, userPrompt, config = {}) {
         { role: 'user', content: userPrompt }
       ],
       temperature: 0.1,
-      max_tokens: 3500
+      max_tokens: config.budget.outputTokens
     })
   });
 
@@ -278,8 +300,8 @@ async function callOpenAi(systemPrompt, userPrompt, config = {}) {
   }
 
   const data = await response.json();
-  if (data.choices?.[0]?.finish_reason === 'length') throw new Error('LLM 출력이 토큰 한도로 잘렸습니다.');
-  return data.choices?.[0]?.message?.content || '';
+  if (data.choices?.[0]?.finish_reason === 'length') throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: readTokenUsage('openai', data) });
+  return { content: data.choices?.[0]?.message?.content || '', tokenUsage: readTokenUsage('openai', data) };
 }
 
 /**
@@ -304,7 +326,7 @@ async function callAnthropic(systemPrompt, userPrompt, config = {}) {
       messages: [
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 3500,
+      max_tokens: config.budget.outputTokens,
       temperature: 0.1
     })
   });
@@ -314,8 +336,8 @@ async function callAnthropic(systemPrompt, userPrompt, config = {}) {
   }
 
   const data = await response.json();
-  if (data.stop_reason === 'max_tokens') throw new Error('LLM 출력이 토큰 한도로 잘렸습니다.');
-  return data.content?.[0]?.text || '';
+  if (data.stop_reason === 'max_tokens') throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: readTokenUsage('anthropic', data) });
+  return { content: data.content?.[0]?.text || '', tokenUsage: readTokenUsage('anthropic', data) };
 }
 
 /**
@@ -337,7 +359,7 @@ async function callGemini(systemPrompt, userPrompt, config = {}) {
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,
-        maxOutputTokens: 3500
+        maxOutputTokens: config.budget.outputTokens
       }
     })
   });
@@ -347,8 +369,8 @@ async function callGemini(systemPrompt, userPrompt, config = {}) {
   }
 
   const data = await response.json();
-  if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw new Error('LLM 출력이 토큰 한도로 잘렸습니다.');
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  if (data.candidates?.[0]?.finishReason === 'MAX_TOKENS') throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: readTokenUsage('gemini', data) });
+  return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || '', tokenUsage: readTokenUsage('gemini', data) };
 }
 
 /**

@@ -1,0 +1,138 @@
+{
+  "scope": "SYNTHETIC_EXCERPT_MARKER_RECALL_NOT_LEGAL_ACCURACY",
+  "baseline": "same-budget document prefix",
+  "rows": [
+    {
+      "case": "late-clause",
+      "budgetChars": 1500,
+      "inputChars": 20745,
+      "outputChars": 816,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "late-clause",
+      "budgetChars": 4500,
+      "inputChars": 20745,
+      "outputChars": 2316,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "inside-large-clause",
+      "budgetChars": 1500,
+      "inputChars": 20733,
+      "outputChars": 1492,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "inside-large-clause",
+      "budgetChars": 4500,
+      "inputChars": 20733,
+      "outputChars": 4492,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "separated-risks",
+      "budgetChars": 1500,
+      "inputChars": 20742,
+      "outputChars": 1489,
+      "targets": 2,
+      "recovered": 2,
+      "prefixRecovered": 1,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "separated-risks",
+      "budgetChars": 4500,
+      "inputChars": 20742,
+      "outputChars": 4489,
+      "targets": 2,
+      "recovered": 2,
+      "prefixRecovered": 1,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "neighbor-exception",
+      "budgetChars": 1500,
+      "inputChars": 20753,
+      "outputChars": 1492,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "neighbor-exception",
+      "budgetChars": 4500,
+      "inputChars": 20753,
+      "outputChars": 4492,
+      "targets": 1,
+      "recovered": 1,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "multiple-large-clauses",
+      "budgetChars": 1500,
+      "inputChars": 41465,
+      "outputChars": 1038,
+      "targets": 3,
+      "recovered": 3,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 2
+    },
+    {
+      "case": "multiple-large-clauses",
+      "budgetChars": 4500,
+      "inputChars": 41465,
+      "outputChars": 3038,
+      "targets": 3,
+      "recovered": 3,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 2
+    },
+    {
+      "case": "unmatched-tail-control",
+      "budgetChars": 1500,
+      "inputChars": 20742,
+      "outputChars": 1492,
+      "targets": 1,
+      "recovered": 0,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    },
+    {
+      "case": "unmatched-tail-control",
+      "budgetChars": 4500,
+      "inputChars": 20742,
+      "outputChars": 4492,
+      "targets": 1,
+      "recovered": 0,
+      "prefixRecovered": 0,
+      "omittedChunks": 0,
+      "truncatedChunks": 1
+    }
+  ]
+}
