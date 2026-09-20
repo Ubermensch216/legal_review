@@ -110,17 +110,13 @@ function buildVisualReportHtml(data, reportTitle) {
   const query = meta?.query || '요청 사안에 관한 법적 검토';
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const basisList = review.legalBasis?.length > 0 ? review.legalBasis : (officialEvidence?.articles || []).map(a => ({
-    lawName,
-    articleNo: `제${a.fullArticleNo || a.articleNo}조`,
-    title: a.title,
-    relevance: '본 사안의 행위 요건 및 적법성 판단의 직접적 근거 조항임'
-  }));
+  const basisList = review.legalBasis || [];
 
   const recommendations = review.recommendations || [];
 
   return `
     <div class="visual-report-container" style="line-height: 1.8;">
+      <div role="note">${escapeHtml((data.reliability?.warnings || []).join(' / '))}</div>
       <!-- 헤더 -->
       <div style="text-align: center; border-bottom: 2px solid #1E3A8A; padding-bottom: 16px; margin-bottom: 22px;">
         <h2 style="font-size: 21px; font-weight: 800; color: #1E3A8A; letter-spacing: 2px; margin-bottom: 12px;">${escapeHtml(reportTitle || '법 률 검 토 의 견 서')}</h2>

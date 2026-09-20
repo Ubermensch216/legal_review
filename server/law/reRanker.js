@@ -1,3 +1,4 @@
+import { extractArticleReferences, normalizeArticleNo } from './lawArticleRef.js';
 // server/law/reRanker.js - 판례·법령해석례 시맨틱 Re-ranking 및 관련도 스코어링 엔진
 
 /**
@@ -14,7 +15,7 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
   if (!Array.isArray(precedents) || precedents.length === 0) return [];
 
   const queryTerms = extractKeyTerms(`${query} ${expandedTerms.join(' ')}`);
-  const targetArticles = new Set(articleNos.map(a => normalizeArticleString(a)));
+  const targetArticles = new Set(articleNos.map(normalizeArticleNo));
 
   const scoredList = precedents.map(prec => {
     // 무조건 주어지는 베이스 점수를 제거했다. 과거에는 기본 30점에 더해
@@ -29,10 +30,11 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
     const summary = prec.summary || '';
     const fullText = `${caseName} ${holding} ${summary}`.toLowerCase();
 
+    const mentionedArticles = new Set(extractArticleReferences(fullText).map(r => r.fullArticleNo));
     // 1. 조문 및 법령 일치도 검증 (최대 45점)
     let articleMatched = false;
     for (const art of targetArticles) {
-      if (art && (fullText.includes(art) || holding.includes(art))) {
+      if (art && mentionedArticles.has(art)) {
         score += 35;
         articleMatched = true;
         matchReasons.push(`적용 조문(${art}) 직접 판시`);

@@ -1,5 +1,5 @@
 // server/law/decisionsApiParser.js - 판례, 법령해석례, 행정규칙, 자치법규 XML/JSON 응답 파서
-import { XMLParser } from 'fast-xml-parser';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -33,13 +33,13 @@ export function parsePrecedents(raw) {
   let root = raw;
   if (typeof raw === 'string') {
     try {
+      if (!raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('Invalid XML');
       root = raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw);
-    } catch {
-      return [];
-    }
+    } catch { throw new Error('목록 응답을 해석할 수 없습니다.'); }
   }
 
-  const container = root.PrecSearch || root.precSearch || root.prec || root;
+  const container = root.PrecSearch || root.precSearch;
+  if (!container || typeof container !== 'object') throw new Error('목록 응답 루트가 올바르지 않습니다.');
   const items = ensureArray(container.prec || container.item || container.precInfo || []);
 
   return items.map(item => ({
@@ -64,23 +64,23 @@ export function parseInterpretations(raw) {
   let root = raw;
   if (typeof raw === 'string') {
     try {
+      if (!raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('Invalid XML');
       root = raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw);
-    } catch {
-      return [];
-    }
+    } catch { throw new Error('목록 응답을 해석할 수 없습니다.'); }
   }
 
-  const container = root.ExpcSearch || root.expcSearch || root.expc || root;
+  const container = root.ExpcSearch || root.expcSearch;
+  if (!container || typeof container !== 'object') throw new Error('목록 응답 루트가 올바르지 않습니다.');
   const items = ensureArray(container.expc || container.item || []);
 
   return items.map(item => ({
-    id: getText(item.해석례일련번호 || item.expcSeq || item.id),
+    id: getText(item.법령해석례일련번호 || item.해석례일련번호 || item.expcSeq || item.id),
     itemNo: getText(item.안건번호 || item.itemNo),
     title: getText(item.안건명 || item.title),
     orgName: getText(item.해석기관명 || item.orgName || '법제처'),
-    replyDate: getText(item.회답일자 || item.replyDate),
+    replyDate: getText(item.해석일자 || item.회답일자 || item.replyDate),
     question: getText(item.질의요지 || item.question),
-    answer: getText(item.회답요지 || item.answer),
+    answer: getText(item.회답 || item.회답요지 || item.answer),
     reason: getText(item.이유 || item.reason),
     detailUrl: getText(item.해석례상세링크 || item.detailUrl)
   })).filter(e => e.title || e.itemNo || e.id);
@@ -94,13 +94,13 @@ export function parseAdminRules(raw) {
   let root = raw;
   if (typeof raw === 'string') {
     try {
+      if (!raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('Invalid XML');
       root = raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw);
-    } catch {
-      return [];
-    }
+    } catch { throw new Error('목록 응답을 해석할 수 없습니다.'); }
   }
 
-  const container = root.AdmrulSearch || root.admrulSearch || root.admrul || root;
+  const container = root.AdmrulSearch || root.admrulSearch;
+  if (!container || typeof container !== 'object') throw new Error('목록 응답 루트가 올바르지 않습니다.');
   const items = ensureArray(container.admrul || container.item || []);
 
   return items.map(item => ({
@@ -122,13 +122,13 @@ export function parseOrdinances(raw) {
   let root = raw;
   if (typeof raw === 'string') {
     try {
+      if (!raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('Invalid XML');
       root = raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw);
-    } catch {
-      return [];
-    }
+    } catch { throw new Error('목록 응답을 해석할 수 없습니다.'); }
   }
 
-  const container = root.OrdinSearch || root.ordinSearch || root.ordin || root;
+  const container = root.OrdinSearch || root.ordinSearch;
+  if (!container || typeof container !== 'object') throw new Error('목록 응답 루트가 올바르지 않습니다.');
   const items = ensureArray(container.ordin || container.item || []);
 
   return items.map(item => ({
@@ -147,3 +147,30 @@ export default {
   parseAdminRules,
   parseOrdinances
 };
+
+function detailRoot(raw, keys) {
+  if (typeof raw === 'string' && !raw.trim().startsWith('{') && XMLValidator.validate(raw) !== true) throw new Error('본문 XML이 올바르지 않습니다.');
+  const root = typeof raw === 'string' ? (raw.trim().startsWith('{') ? JSON.parse(raw) : xmlParser.parse(raw)) : raw;
+  const found = keys.map(k => root?.[k]).find(r => r && typeof r === 'object');
+  if (!found) throw new Error('본문 응답 루트가 올바르지 않습니다.');
+  return found;
+}
+export function parsePrecedentDetail(raw) {
+  const root = detailRoot(raw, ['PrecService', 'precService', '판례']);
+  const result = {
+    id: getText(root.판례정보일련번호 || root.판례일련번호), caseNo: getText(root.사건번호), caseName: getText(root.사건명),
+    courtName: getText(root.법원명), judgeDate: getText(root.선고일자), holding: getText(root.판시사항),
+    summary: getText(root.판결요지), content: getText(root.판례내용), referencedArticles: getText(root.참조조문)
+  };
+  if (!result.id || !result.caseNo || !(result.summary || result.holding || result.content)) throw new Error('판례 본문을 확보하지 못했습니다.');
+  return result;
+}
+export function parseInterpretationDetail(raw) {
+  const root = detailRoot(raw, ['ExpcService', 'expcService', '법령해석례', '법령해석']);
+  const result = {
+    id: getText(root.법령해석례일련번호 || root.해석례일련번호), itemNo: getText(root.안건번호), title: getText(root.안건명),
+    orgName: getText(root.해석기관명), replyDate: getText(root.해석일자), question: getText(root.질의요지), answer: getText(root.회답), reason: getText(root.이유)
+  };
+  if (!result.id || !result.title || !(result.answer || result.reason)) throw new Error('해석례 본문을 확보하지 못했습니다.');
+  return result;
+}

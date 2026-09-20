@@ -1,3 +1,4 @@
+import { reportText } from './reportSafety.js';
 // server/export/exportFiles.js - HWPX, DOCX, PDF, Markdown 정형화 공문서 보고서 생성 엔진
 import JSZip from 'jszip';
 import PDFDocument from 'pdfkit';
@@ -8,86 +9,10 @@ import { EXPORT_STYLES } from './exportStyles.js';
  * 관련 법령 조문 근거 목록을 reviewData 및 contentMarkdown에서 안전하게 추출하는 헬퍼
  */
 function resolveBasisList(reviewData, contentMarkdown, defaultLawName) {
-  const review = reviewData?.review || {};
-  const evidence = reviewData?.officialEvidence || {};
-
-  // 1. review.legalBasis가 있는 경우
-  if (Array.isArray(review.legalBasis) && review.legalBasis.length > 0) {
-    return review.legalBasis.map(b => ({
-      lawName: b.lawName || defaultLawName,
-      articleNo: b.articleNo || '',
-      title: b.title || '주요 규정',
-      relevance: b.relevance || '본 사안의 실체적 행위 요건 및 적법성 판단의 직접적 근거 조항임'
-    }));
-  }
-
-  // 2. officialEvidence.articles가 있는 경우
-  if (Array.isArray(evidence.articles) && evidence.articles.length > 0) {
-    return evidence.articles.map(a => ({
-      lawName: defaultLawName,
-      articleNo: `제${a.fullArticleNo || a.articleNo}조`,
-      title: a.title || '주요 조항',
-      relevance: a.content ? `[조문 요지] ${cleanText(a.content).slice(0, 120)}...` : '본 사안의 법적 요건 및 효력 검토 기준 조항임'
-    }));
-  }
-
-  // 3. contentMarkdown에서 "4. 관련 법령" 섹션 텍스트 파싱 시도
-  if (contentMarkdown) {
-    const lines = contentMarkdown.split('\n');
-    const parsed = [];
-    let inSection4 = false;
-    let currentItem = null;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.includes('관련 법령 및 조문') || trimmed.includes('관련 법령') || trimmed.includes('4.')) {
-        inSection4 = true;
-        continue;
-      }
-
-      if (inSection4) {
-        if (trimmed.startsWith('※') || trimmed.startsWith('본 검토의견서는')) {
-          break;
-        }
-
-        if (trimmed.startsWith('■') || trimmed.startsWith('###') || (trimmed.startsWith('-') && trimmed.includes('제'))) {
-          if (currentItem) parsed.push(currentItem);
-          currentItem = {
-            lawName: defaultLawName,
-            articleNo: '',
-            title: cleanText(trimmed.replace(/^[■#\-\*]\s*/, '')),
-            relevance: '본 사안의 행위 요건 및 적법성 판단의 직접적 근거 조항임'
-          };
-        } else if (currentItem && (trimmed.startsWith('-') || trimmed.startsWith('•') || trimmed.startsWith('적용'))) {
-          currentItem.relevance = cleanText(trimmed.replace(/^[-•]\s*/, ''));
-        }
-      }
-    }
-    if (currentItem) parsed.push(currentItem);
-    if (parsed.length > 0) return parsed;
-  }
-
-  // 4. 폴백: 기본 법률 규정 세트 생성 (절대 빈 내용이 되지 않도록 보장)
-  return [
-    {
-      lawName: defaultLawName,
-      articleNo: '제1조 및 제2조',
-      title: '목적 및 기본 정의 규정',
-      relevance: '본 제도의 법적 적용 범위 및 행정·사법적 규율 대상을 명확히 확정하는 총칙 조항'
-    },
-    {
-      lawName: defaultLawName,
-      articleNo: '실체적 적법성 규정',
-      title: '법정 요건 및 사전 절차 의무',
-      relevance: '당사자의 권리 보호, 명시적 동의 요건, 상위법령 위임 한계 준수 여부의 직접 판단 기준'
-    },
-    {
-      lawName: defaultLawName,
-      articleNo: '제재 및 벌칙 규정',
-      title: '위반 시 행정처분 및 제재 기준',
-      relevance: '규정 위반 시 시정명령, 과태료 부과 및 손해배상 책임 발생의 법률상 처분 근거'
-    }
-  ];
+  return (Array.isArray(reviewData?.review?.legalBasis) ? reviewData.review.legalBasis : []).map(b => ({
+    lawName: b.lawName || defaultLawName, articleNo: b.articleNo || '', title: b.title || '',
+    relevance: `${b.verificationStatus === 'VERIFIED' ? '[조문 존재 확인]' : '[미검증]'} ${b.relevance || ''} ${b.verificationNote || ''}`.trim()
+  }));
 }
 
 /**
@@ -95,7 +20,7 @@ function resolveBasisList(reviewData, contentMarkdown, defaultLawName) {
  */
 export async function generateHwpx({ title = '법률검토의견서', contentMarkdown = '', reviewData = {} }) {
   const zip = new JSZip();
-  const docTitle = cleanText(title || '법률검토의견서');
+  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
   const review = reviewData?.review || {};
   const meta = reviewData?.meta || {};
 
@@ -106,7 +31,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
 
   const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
   const recommendations = review.recommendations || [];
-  const opinionText = review.legalOpinion || contentMarkdown || '';
+  const opinionText = reportText(reviewData, contentMarkdown);
 
   // 공통 네임스페이스 선언 (한컴 정품 HWPX와 동일 세트 — 누락 시 손상 파일로 판정됨)
   const HWPX_NS = 'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph" xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history" xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf/" xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart" xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"';
@@ -288,7 +213,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
  */
 export async function generateDocx({ title = '법률검토의견서', contentMarkdown = '', reviewData = {} }) {
   const zip = new JSZip();
-  const docTitle = cleanText(title || '법률검토의견서');
+  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
   const review = reviewData?.review || {};
   const meta = reviewData?.meta || {};
 
@@ -299,7 +224,7 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
 
   const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
   const recommendations = review.recommendations || [];
-  const opinionText = review.legalOpinion || contentMarkdown || '';
+  const opinionText = reportText(reviewData, contentMarkdown);
 
   zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -442,7 +367,7 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
         doc.font(fontPath);
       }
 
-      const docTitle = cleanText(title || '법률검토의견서');
+      const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
       const review = reviewData?.review || {};
       const meta = reviewData?.meta || {};
 
@@ -453,7 +378,7 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
 
       const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
       const recommendations = review.recommendations || [];
-      const opinionText = review.legalOpinion || contentMarkdown || '';
+      const opinionText = reportText(reviewData, contentMarkdown);
 
       // 1. 헤더 타이틀
       doc.fillColor('#1E3A8A').fontSize(18).text(docTitle, { align: 'center' });

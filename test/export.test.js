@@ -1,3 +1,4 @@
+import './setup.js';
 // test/export.test.js - HWPX, DOCX, PDF 생성 및 OWPML 표준 검증
 import test from 'node:test';
 import assert from 'node:assert/strict';

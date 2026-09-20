@@ -1,3 +1,4 @@
+import './setup.js';
 // test/advancedParsers.test.js - 고도화 파서, 계층 청킹 및 컨텍스트 최적화 단위 테스트
 import test from 'node:test';
 import assert from 'node:assert/strict';

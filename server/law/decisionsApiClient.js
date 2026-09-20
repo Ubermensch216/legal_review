@@ -1,187 +1,63 @@
-// server/law/decisionsApiClient.js - 판례, 법령해석례, 행정규칙, 자치법규 오픈API 클라이언트
 import { ENV } from '../env.js';
 import { LAW_CONFIG } from './lawConfig.js';
-import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances } from './decisionsApiParser.js';
+import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parsePrecedentDetail, parseInterpretationDetail } from './decisionsApiParser.js';
 import { getCache, setCache } from './lawCache.js';
-import { LawApiError, maskLawSecrets } from './lawErrors.js';
+import { isOfficial, unavailableList } from './evidence.js';
 
-async function fetchXml(url, timeoutMs = LAW_CONFIG.TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'Accept': 'application/xml, text/xml, */*',
-        'User-Agent': 'LegalReviewer-Standalone/1.0'
-      }
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
-    }
-
-    return await response.text();
-  } catch (err) {
-    clearTimeout(timeoutId);
-    throw new LawApiError(`판례/결정례 API 통신 실패 (${url}): ${err.message}`, {
-      code: 'DECISIONS_API_FETCH_FAILED',
-      details: { url: maskLawSecrets(url) }
-    });
-  }
+async function fetchXml(base, params) {
+  const url = `${base}?${new URLSearchParams({ OC: ENV.LAW_OC, type: 'XML', ...params })}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(LAW_CONFIG.TIMEOUT_MS), headers: { Accept: 'application/xml' } });
+  if (!response.ok) throw new Error(`법률 자료 조회 HTTP ${response.status}`);
+  return response.text();
 }
 
-/**
- * 키워드 또는 사건번호로 판례 검색
- * @param {string} query 
- * @param {number} page 
- * @param {number} display 
- * @returns {Promise<Array<object>>}
- */
-export async function searchPrecedents(query, page = 1, display = 10) {
-  if (!query || !query.trim()) return [];
-  const trimmed = query.trim();
-  const cacheKey = `prec:${trimmed}:${page}:${display}`;
-
-  const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    return getMockPrecedents(trimmed);
-  }
-
-  const url = `${LAW_CONFIG.PRECEDENT_BASE_URL}&OC=${oc}&type=XML&query=${encodeURIComponent(trimmed)}&page=${page}&display=${display}`;
-
-  try {
-    const rawXml = await fetchXml(url);
-    const parsed = parsePrecedents(rawXml);
-    if (parsed.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.PRECEDENT_DETAIL, 'precedent');
-    }
-    return parsed;
-  } catch (err) {
-    console.error('[DecisionsApiClient] searchPrecedents 실패:', err.message);
-    return getMockPrecedents(trimmed);
-  }
+async function detail(target, id, parse) {
+  if (!/^\d+$/.test(String(id || ''))) throw new Error('유효한 본문 일련번호가 필요합니다.');
+  const key = `v2:${target}:detail:${id}`;
+  const cached = await getCache(key);
+  if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT') return cached;
+  if (!ENV.LAW_OC) throw new Error('LAW_OC 미설정으로 본문 조회 불가');
+  const result = parse(await fetchXml(LAW_CONFIG.LAW_SERVICE_BASE_URL, { target, ID: id }));
+  if (String(result.id) !== String(id)) throw new Error('목록과 본문 일련번호가 일치하지 않습니다.');
+  const value = { ...result, source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', retrievedAt: new Date().toISOString() };
+  await setCache(key, value, LAW_CONFIG.CACHE_TTL.PRECEDENT_DETAIL, target);
+  return value;
 }
+export const getPrecedentDetail = id => detail('prec', id, parsePrecedentDetail);
+export const getInterpretationDetail = id => detail('expc', id, parseInterpretationDetail);
 
-/**
- * 키워드로 법령해석례 검색
- * @param {string} query 
- * @param {number} page 
- * @param {number} display 
- * @returns {Promise<Array<object>>}
- */
-export async function searchInterpretations(query, page = 1, display = 10) {
-  if (!query || !query.trim()) return [];
-  const trimmed = query.trim();
-  const cacheKey = `expc:${trimmed}:${page}:${display}`;
-
-  const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    return getMockInterpretations(trimmed);
+async function search(target, query, page, display, parse, mock, loadDetail) {
+  if (!String(query || '').trim()) return [];
+  display = Math.min(100, Math.max(1, Number(display) || 10));
+  page = Math.max(1, Number(page) || 1);
+  const trimmed = String(query).trim();
+  const key = `v2:${target}:list:${trimmed}:${page}:${display}`;
+  let items = await getCache(key);
+  if (!Array.isArray(items) || !items.every(isOfficial)) {
+    if (!ENV.LAW_OC) return ENV.LAW_DEMO_MODE ? mock(trimmed) : unavailableList('UNAVAILABLE', 'LAW_OC 미설정');
+    try {
+      items = parse(await fetchXml(LAW_CONFIG.LAW_DRF_BASE_URL, { target, query: trimmed, page, display })).map(item => ({ ...item, source: 'OFFICIAL_API', contentStatus: 'LIST_ONLY', retrievedAt: new Date().toISOString() }));
+      await setCache(key, items, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, target);
+    } catch (err) { return unavailableList('ERROR', err.message); }
   }
-
-  const url = `${LAW_CONFIG.DECISION_BASE_URL}&OC=${oc}&type=XML&query=${encodeURIComponent(trimmed)}&page=${page}&display=${display}`;
-
-  try {
-    const rawXml = await fetchXml(url);
-    const parsed = parseInterpretations(rawXml);
-    if (parsed.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.PRECEDENT_DETAIL, 'interpretation');
-    }
-    return parsed;
-  } catch (err) {
-    console.error('[DecisionsApiClient] searchInterpretations 실패:', err.message);
-    return getMockInterpretations(trimmed);
+  if (!loadDetail) return items;
+  const enriched = [];
+  for (let i = 0; i < items.length; i += 3) {
+    enriched.push(...await Promise.all(items.slice(i, i + 3).map(async item => {
+      try {
+        const body = await loadDetail(item.id);
+        if (item.caseNo && body.caseNo !== item.caseNo) throw new Error('판례 사건번호 불일치');
+        return { ...item, ...body };
+      } catch (err) { return { ...item, contentStatus: 'LIST_ONLY', summary: '', holding: '', answer: '', reason: '', detailError: err.message }; }
+    })));
   }
+  return enriched;
 }
+export const searchPrecedents = (q, p = 1, d = 10) => search('prec', q, p, d, parsePrecedents, getMockPrecedents, getPrecedentDetail);
+export const searchInterpretations = (q, p = 1, d = 10) => search('expc', q, p, d, parseInterpretations, getMockInterpretations, getInterpretationDetail);
+export const searchAdminRules = (q, p = 1, d = 10) => search('admrul', q, p, d, parseAdminRules, getMockAdminRules);
+export const searchOrdinances = (q, p = 1, d = 10) => search('ordin', q, p, d, parseOrdinances, getMockOrdinances);
 
-/**
- * 행정규칙(훈령/예규/고시) 검색
- * @param {string} query 
- * @param {number} page 
- * @param {number} display 
- * @returns {Promise<Array<object>>}
- */
-export async function searchAdminRules(query, page = 1, display = 10) {
-  if (!query || !query.trim()) return [];
-  const trimmed = query.trim();
-  const cacheKey = `admrul:${trimmed}:${page}:${display}`;
-
-  const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    return getMockAdminRules(trimmed);
-  }
-
-  const url = `${LAW_CONFIG.ADMIN_RULE_BASE_URL}&OC=${oc}&type=XML&query=${encodeURIComponent(trimmed)}&page=${page}&display=${display}`;
-
-  try {
-    const rawXml = await fetchXml(url);
-    const parsed = parseAdminRules(rawXml);
-    if (parsed.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.LAW_DETAIL, 'adminRule');
-    }
-    return parsed;
-  } catch (err) {
-    console.error('[DecisionsApiClient] searchAdminRules 실패:', err.message);
-    return getMockAdminRules(trimmed);
-  }
-}
-
-/**
- * 자치법규(조례/규칙) 검색
- * @param {string} query 
- * @param {number} page 
- * @param {number} display 
- * @returns {Promise<Array<object>>}
- */
-export async function searchOrdinances(query, page = 1, display = 10) {
-  if (!query || !query.trim()) return [];
-  const trimmed = query.trim();
-  const cacheKey = `ordin:${trimmed}:${page}:${display}`;
-
-  const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    return getMockOrdinances(trimmed);
-  }
-
-  const url = `${LAW_CONFIG.ORDINANCE_BASE_URL}&OC=${oc}&type=XML&query=${encodeURIComponent(trimmed)}&page=${page}&display=${display}`;
-
-  try {
-    const rawXml = await fetchXml(url);
-    const parsed = parseOrdinances(rawXml);
-    if (parsed.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.ORDINANCE_DETAIL, 'ordinance');
-    }
-    return parsed;
-  } catch (err) {
-    console.error('[DecisionsApiClient] searchOrdinances 실패:', err.message);
-    return getMockOrdinances(trimmed);
-  }
-}
-
-// -------------------------------------------------------------
-// LAW_OC 미설정 시 Fallback 샘플 목업 데이터
-// -------------------------------------------------------------
-
-/**
- * 목업 레코드에 출처 표식을 부착한다.
- * 이 표식이 없으면 샘플 판례/해석례가 공식 수집 결과와 구분되지 않은 채
- * 검토의견서와 결재 문서에 그대로 인용된다.
- */
 function markMock(items) {
   return items.map(item => ({ ...item, isMockData: true }));
 }
@@ -258,9 +134,5 @@ function getMockOrdinances(query) {
   ]);
 }
 
-export default {
-  searchPrecedents,
-  searchInterpretations,
-  searchAdminRules,
-  searchOrdinances
-};
+
+export default { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getPrecedentDetail, getInterpretationDetail };

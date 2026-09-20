@@ -7,3 +7,6 @@ data/uploads/*
 logs/
 .DS_Store
 Thumbs.db
+
+data/cache/*.db-wal
+data/cache/*.db-shm

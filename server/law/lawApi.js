@@ -1,3 +1,4 @@
+import { reportText, reportWarnings } from '../export/reportSafety.js';
 // server/law/lawApi.js - 법령 검토 및 워크벤치 Express 라우터
 import express from 'express';
 import multer from 'multer';
@@ -112,7 +113,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     // 폴백 결과가 정상 검토와 구분되지 않은 채 결재 문서로 나가는 것을 막기 위함이다.
     const dataIntegrity = workbenchContext.meta?.dataIntegrity || {};
     const reviewIsFallback = Boolean(reviewResult?.isFallback);
-    const warnings = [...(dataIntegrity.warnings || [])];
+    const warnings = reportWarnings({ meta: workbenchContext.meta, review: reviewResult });
     if (reviewIsFallback && reviewResult.fallbackReason) {
       warnings.push(reviewResult.fallbackReason);
     }
@@ -120,7 +121,8 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const responsePayload = {
       ok: true,
       reliability: {
-        isFallback: Boolean(dataIntegrity.isFallback) || reviewIsFallback,
+        isFallback: Boolean(dataIntegrity.isFallback) || reviewIsFallback || reviewResult?.reviewStatus !== 'COMPLETE',
+        reviewStatus: reviewResult?.reviewStatus || 'FAILED',
         reviewEngine: reviewResult?.reviewEngine || 'UNKNOWN',
         dataSources: dataIntegrity.sources || {},
         citationConfidence: reviewResult?.factualityVerification?.citationConfidence ?? null,
@@ -235,7 +237,7 @@ router.post('/report', async (req, res) => {
     } else if (format === 'md' || format === 'markdown') {
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(cleanTitle)}.md`);
-      return res.send(content);
+      return res.send(reportText(reviewData, content));
     } else {
       return res.status(400).json({ ok: false, error: '지원하지 않는 포맷입니다. (hwpx, docx, pdf, md)' });
     }
@@ -255,7 +257,7 @@ router.get('/search', async (req, res) => {
     const display = parseInt(req.query.display || '20', 10);
 
     const items = await searchLaw(query, page, display);
-    res.json({ ok: true, query, page, total: items.length, items });
+    res.json({ ok: !items.fetchStatus, query, page, total: items.length, items, fetchStatus: items.fetchStatus || 'SUCCESS', message: items.unavailableReason });
   } catch (err) {
     res.status(500).json(formatErrorResponse(err));
   }

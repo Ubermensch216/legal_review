@@ -1,3 +1,4 @@
+import { matchesLaw, sameLaw, isOfficial, today } from './evidence.js';
 // server/law/lawWorkbench.js - 종합 법령 워크벤치 오케스트레이터 (Re-ranking & Cascading 통합)
 import { expandQueryKeywords } from './lawTermKb.js';
 import { extractArticleReferences, normalizeArticleNo } from './lawArticleRef.js';
@@ -17,7 +18,9 @@ import { runTool } from './tools/toolRunner.js';
  * @param {string} options.targetLaw - 특정 지정 법령명 (선택)
  * @returns {Promise<object>}
  */
-export async function buildWorkbenchContext({ query = '', preset = 'compliance', documentText = '', targetLaw = '' }) {
+export async function buildWorkbenchContext({ query = '', preset = 'compliance', documentText = '', targetLaw = '' }, dependencies = {}) {
+  const clients = { searchLaw, getLawDetail, searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, retrieveCascadingHierarchy, runTool, ...dependencies };
+  const collectionWarnings = [];
   const startTime = Date.now();
   const fullContextText = `${query}\n${documentText}`.trim();
 
@@ -48,20 +51,16 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   let mainLawDetail = null;
   if (primaryLawName) {
     const requestedLawName = primaryLawName;
-    const searchRes = await searchLaw(primaryLawName, 1, 3);
+    const searchRes = await clients.searchLaw(primaryLawName, 1, 100);
 
     // 검색 결과 중 요청한 법령과 실제로 일치하는 항목만 채택한다.
     // 과거에는 무조건 searchRes[0]을 채택해, 검색이 빗나가면 사용자가 지정한
     // targetLaw가 조용히 다른 법령으로 바뀌었다.
-    const normalizedRequest = requestedLawName.replace(/\s+/g, '');
-    const exactMatch = searchRes.find(l => {
-      const name = (l.lawName || '').replace(/\s+/g, '');
-      return name.includes(normalizedRequest) || normalizedRequest.includes(name);
-    });
+    const exactMatch = searchRes.find(l => matchesLaw(l, requestedLawName));
 
     if (exactMatch) {
       primaryLawName = exactMatch.lawName;
-      mainLawDetail = await getLawDetail(exactMatch.lawId, exactMatch.lawSeq);
+      mainLawDetail = await clients.getLawDetail(exactMatch.lawId, exactMatch.lawSeq, { enforceDate: exactMatch.enforceDate }).catch(err => { collectionWarnings.push(err.message); return null; });
     } else {
       // 일치하는 법령을 찾지 못하면 요청한 법령명을 유지하고 조문 없이 진행한다.
       // (다른 법령의 조문을 요청 법령명으로 표기하는 교차 오표기를 방지)
@@ -72,10 +71,10 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     // 질의어 자체로 법령 검색.
     // 질의가 비어 있을 때 '개인정보 보호법'을 기본 검색어로 넣던 동작은 제거했다.
     // 무관한 사안에 개인정보 보호법이 기준 법령으로 붙는 원인이었다.
-    const generalSearch = await searchLaw(query, 1, 3);
+    const generalSearch = await clients.searchLaw(query, 1, 3);
     if (generalSearch.length > 0) {
       primaryLawName = generalSearch[0].lawName;
-      mainLawDetail = await getLawDetail(generalSearch[0].lawId, generalSearch[0].lawSeq);
+      mainLawDetail = await clients.getLawDetail(generalSearch[0].lawId, generalSearch[0].lawSeq, { enforceDate: generalSearch[0].enforceDate }).catch(err => { collectionWarnings.push(err.message); return null; });
     } else {
       lawLookupFailed = true;
     }
@@ -83,14 +82,11 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     lawLookupFailed = true;
   }
 
-  // 목업 스텁(조문 없음)은 기준 법령으로 삼지 않는다.
-  if (mainLawDetail && mainLawDetail.isMockData && (!mainLawDetail.articles || mainLawDetail.articles.length === 0)) {
-    lawLookupFailed = true;
-  }
+  if (!mainLawDetail?.articles?.length || !sameLaw(mainLawDetail.lawName, primaryLawName)) lawLookupFailed = true;
 
   // 5. 관련 조문 핀포인트 추출
   const targetArticleNos = new Set();
-  explicitRefs.forEach(r => targetArticleNos.add(r.fullArticleNo));
+  explicitRefs.filter(r => !r.lawName || sameLaw(r.lawName, primaryLawName)).forEach(r => targetArticleNos.add(r.fullArticleNo));
 
   if (targetArticleNos.size === 0 && kbResult.suggestedLaws.length > 0) {
     const matched = kbResult.suggestedLaws.find(l => l.name === primaryLawName);
@@ -102,19 +98,35 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const collectedArticles = [];
   if (mainLawDetail && mainLawDetail.articles) {
     if (targetArticleNos.size > 0) {
-      mainLawDetail.articles.forEach(art => {
-        if (targetArticleNos.has(art.fullArticleNo) || targetArticleNos.has(art.articleNo)) {
+      mainLawDetail.articles.filter(a => !a.isDeleted && (!a.enforceDate || a.enforceDate <= today())).forEach(art => {
+        if (targetArticleNos.has(art.fullArticleNo || String(art.articleNo))) {
           collectedArticles.push(art);
         }
       });
     }
     
     // 조문이 매칭되지 않았으면 앞부분 주요 조문 4~6개 제공
-    if (collectedArticles.length === 0) {
-      collectedArticles.push(...mainLawDetail.articles.slice(0, 5));
+    if (collectedArticles.length === 0 && targetArticleNos.size === 0) {
+      collectedArticles.push(...mainLawDetail.articles.filter(a => !a.isDeleted && (!a.enforceDate || a.enforceDate <= today())).slice(0, 5));
     }
   }
 
+  if (targetArticleNos.size && !collectedArticles.length) collectionWarnings.push('요청한 조문을 공식 본문에서 확인하지 못했습니다.');
+  // Preserve each article's law identity and provenance, including multi-law documents.
+  const tagArticle = (article, detail) => ({ ...article, lawName: detail.lawName, lawId: detail.lawId, lawSeq: detail.lawSeq,
+    source: detail.source || (detail.isMockData ? 'MOCK' : 'UNKNOWN'), isMockData: Boolean(detail.isMockData), enforceDate: article.enforceDate || detail.enforceDate });
+  collectedArticles.splice(0, collectedArticles.length, ...collectedArticles.map(a => tagArticle(a, mainLawDetail)));
+  const otherNames = [...new Set(explicitRefs.map(r => r.lawName).filter(n => n && !sameLaw(n, primaryLawName)))];
+  if (otherNames.length > 5) collectionWarnings.push('추가 인용 법령이 조회 예산을 초과하여 일부만 수집했습니다.');
+  for (const name of otherNames.slice(0, 5)) {
+    try {
+      const match = (await clients.searchLaw(name, 1, 100)).find(l => matchesLaw(l, name));
+      const detail = match && await clients.getLawDetail(match.lawId, match.lawSeq, { enforceDate: match.enforceDate });
+      if (!detail || !sameLaw(detail.lawName, match.lawName)) { collectionWarnings.push(`${name} 본문 수집 실패`); continue; }
+      const numbers = new Set(explicitRefs.filter(r => sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
+      collectedArticles.push(...detail.articles.filter(a => numbers.has(a.fullArticleNo || String(a.articleNo))).map(a => tagArticle(a, detail)));
+    } catch { collectionWarnings.push(`${name} 본문 수집 실패`); }
+  }
   const targetArticleList = Array.from(targetArticleNos);
 
   // 6. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단계 연쇄 체계, 영향 분석, 개정 이력
@@ -123,14 +135,18 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const textToAnalyze = `${documentText}\n${query}`.trim();
 
   const [precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes, historyRes] = await Promise.allSettled([
-    searchPrecedents(searchQuery, 1, 10),
-    searchInterpretations(searchQuery, 1, 8),
-    searchAdminRules(primaryLawName || query, 1, 5),
-    searchOrdinances(primaryLawName || query, 1, 5),
-    primaryLawName ? retrieveCascadingHierarchy({ lawName: primaryLawName, articleNos: targetArticleList }) : Promise.resolve(null),
-    runTool('impactMap', { documentText: textToAnalyze, targetLaw: primaryLawName }),
-    primaryLawName ? runTool('lawHistory', { lawName: primaryLawName }) : Promise.resolve(null)
+    clients.searchPrecedents(searchQuery, 1, 10),
+    clients.searchInterpretations(searchQuery, 1, 8),
+    clients.searchAdminRules(primaryLawName || query, 1, 5),
+    clients.searchOrdinances(primaryLawName || query, 1, 5),
+    primaryLawName ? clients.retrieveCascadingHierarchy({ lawName: primaryLawName, articleNos: targetArticleList }, clients) : Promise.resolve(null),
+    clients.runTool('impactMap', { documentText: textToAnalyze, targetLaw: primaryLawName }),
+    primaryLawName ? clients.runTool('lawHistory', { lawName: primaryLawName }) : Promise.resolve(null)
   ]);
+
+  for (const [name, result] of Object.entries({ precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes, historyRes })) {
+    if (result.status === 'rejected' || result.value?.fetchStatus || result.value?.ok === false) collectionWarnings.push(`${name}: 공식 자료 조회 미완료`);
+  }
 
   const rawPrecedents = precRes.status === 'fulfilled' ? precRes.value : [];
   const rawInterpretations = expcRes.status === 'fulfilled' ? expcRes.value : [];
@@ -169,7 +185,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     adminRules,
     ordinances,
     lawLookupFailed,
-    primaryLawName
+    primaryLawName,
+    collectionWarnings
   });
 
   if (dataIntegrity.isFallback) {
@@ -182,15 +199,20 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       preset,
       primaryLawName,
       hasAttachedDocument: Boolean(documentText),
-      isOptimizedDoc: Boolean(optimizedDoc.omittedCount > 0),
+      isOptimizedDoc: Boolean(optimizedDoc.omittedCount > 0 || optimizedDoc.truncatedCount > 0),
       durationMs,
       dataIntegrity,
       timestamp: new Date().toISOString()
     },
+    reviewContext: { document: optimizedDoc },
     // Tab 2: 공식 근거 데이터 (Re-ranking 및 Cascading 반영)
     officialEvidence: {
       lawDetail: mainLawDetail ? {
         lawId: mainLawDetail.lawId,
+        lawSeq: mainLawDetail.lawSeq,
+        source: mainLawDetail.source || (mainLawDetail.isMockData ? 'MOCK' : 'UNKNOWN'),
+        isMockData: Boolean(mainLawDetail.isMockData),
+        contentStatus: mainLawDetail.contentStatus,
         lawName: mainLawDetail.lawName,
         promulDate: mainLawDetail.promulDate,
         enforceDate: mainLawDetail.enforceDate,
@@ -223,28 +245,31 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
  * @returns {{ isFallback: boolean, hasOfficialArticles: boolean, sources: object, warnings: string[] }}
  */
 function buildDataIntegrityReport({
-  lawDetail, articles, precedents, interpretations, adminRules, ordinances, lawLookupFailed, primaryLawName
+  lawDetail, articles, precedents, interpretations, adminRules, ordinances, lawLookupFailed, primaryLawName, collectionWarnings = []
 }) {
   const isMock = (list) => Array.isArray(list) && list.length > 0 && list.some(x => x && x.isMockData);
   const sourceOf = (list) => {
     if (!Array.isArray(list) || list.length === 0) return 'NONE';
-    return isMock(list) ? 'MOCK' : 'OFFICIAL_API';
+    return isMock(list) ? 'MOCK' : (list.every(isOfficial) ? 'OFFICIAL_API' : 'UNKNOWN');
   };
 
   const lawSource = lawLookupFailed
     ? 'NONE'
-    : (lawDetail && lawDetail.isMockData ? 'MOCK' : (lawDetail ? 'OFFICIAL_API' : 'NONE'));
+    : (lawDetail && lawDetail.isMockData ? 'MOCK' : (isOfficial(lawDetail) ? 'OFFICIAL_API' : 'NONE'));
 
   const sources = {
     law: lawSource,
-    articles: lawSource === 'MOCK' ? 'MOCK' : (articles.length > 0 ? 'OFFICIAL_API' : 'NONE'),
+    articles: sourceOf(articles),
     precedents: sourceOf(precedents),
     interpretations: sourceOf(interpretations),
     adminRules: sourceOf(adminRules),
     ordinances: sourceOf(ordinances)
   };
 
-  const warnings = [];
+  const warnings = [...collectionWarnings];
+  if (Object.values(sources).includes('UNKNOWN')) warnings.push('출처를 확인하지 못한 자료가 포함되어 있습니다.');
+  if (precedents.some(p => p.contentStatus !== 'FULL_TEXT' && !p.isMockData)) warnings.push('본문을 확보하지 못한 판례는 검토 근거에서 제외했습니다.');
+  if (interpretations.some(p => p.contentStatus !== 'FULL_TEXT' && !p.isMockData)) warnings.push('본문을 확보하지 못한 해석례는 검토 근거에서 제외했습니다.');
   if (lawLookupFailed) {
     warnings.push(primaryLawName
       ? `'${primaryLawName}'의 공식 조문을 가져오지 못했습니다. 조문 근거 없이 작성된 검토입니다.`

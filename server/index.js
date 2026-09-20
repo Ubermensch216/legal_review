@@ -1,6 +1,6 @@
 // server/index.js - Legal Review Standalone 메인 서버 진입점
 import express from 'express';
-import cors from 'cors';
+import { sameOriginOnly } from './requestOrigin.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { ENV } from './env.js';
@@ -15,7 +15,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const app = express();
 
 // 1. 기본 미들웨어
-app.use(cors());
+app.use('/api', sameOriginOnly);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 

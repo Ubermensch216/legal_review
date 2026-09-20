@@ -1,159 +1,111 @@
-// server/law/lawApiClient.js - 국가법령정보센터(law.go.kr) DRF 오픈API 통신 클라이언트
+// Official law data, with explicit demo mode and version-specific cache keys.
 import { ENV } from '../env.js';
 import { LAW_CONFIG } from './lawConfig.js';
 import { parseLawSearchList, parseLawDetail } from './lawApiParser.js';
 import { getCache, setCache } from './lawCache.js';
-import { LawApiError, maskLawSecrets } from './lawErrors.js';
+import { LawApiError } from './lawErrors.js';
+import { matchesLaw, exactArticle, isOfficial, validDate, unavailableList } from './evidence.js';
+import { normalizeArticleNo } from './lawArticleRef.js';
 
-// 네트워크 요청 재시도 및 타임아웃 헬퍼
-async function fetchWithRetry(url, options = {}, retries = LAW_CONFIG.MAX_RETRIES) {
-  const timeoutMs = options.timeoutMs || LAW_CONFIG.TIMEOUT_MS;
+async function fetchWithRetry(url, retries = LAW_CONFIG.MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        headers: {
-          'Accept': 'application/xml, text/xml, application/json, */*',
-          'User-Agent': 'LegalReviewer-Standalone/1.0',
-          ...(options.headers || {})
-        }
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP Error ${response.status}: ${response.statusText}`);
-      }
-
-      return await response.text();
+      const response = await fetch(url, { signal: AbortSignal.timeout(LAW_CONFIG.TIMEOUT_MS), headers: { Accept: 'application/xml' } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.text(); // Abort signal remains active while reading the body.
     } catch (err) {
-      clearTimeout(timeoutId);
-      const isLastAttempt = attempt === retries;
-      if (isLastAttempt) {
-        throw new LawApiError(`법령 API 통신 실패 (${url}): ${err.message}`, {
-          code: 'API_FETCH_FAILED',
-          details: { url: maskLawSecrets(url), attempt }
-        });
-      }
-      await new Promise(r => setTimeout(r, LAW_CONFIG.RETRY_DELAY_MS * (attempt + 1)));
+      if (attempt === retries) throw new LawApiError(`법령 API 조회 실패: ${err.message}`, { code: 'API_FETCH_FAILED' });
+      await new Promise(resolve => setTimeout(resolve, LAW_CONFIG.RETRY_DELAY_MS * (attempt + 1)));
     }
   }
 }
 
-/**
- * 법령명 또는 키워드로 법령 목록 검색
- * @param {string} query 
- * @param {number} page 
- * @param {number} display 
- * @returns {Promise<Array<object>>}
- */
-export async function searchLaw(query, page = 1, display = 20) {
-  if (!query || !query.trim()) return [];
-  const trimmed = query.trim();
-  const cacheKey = `search:${trimmed}:${page}:${display}`;
+function apiUrl(base, params) {
+  return `${base}?${new URLSearchParams({ OC: ENV.LAW_OC, type: 'XML', ...params })}`;
+}
+const official = item => ({ ...item, source: 'OFFICIAL_API', retrievedAt: new Date().toISOString() });
 
+export async function searchLaw(query, page = 1, display = 20, options = {}) {
+  if (!String(query || '').trim()) return [];
+  const trimmed = String(query).trim();
+  page = Math.max(1, Number(page) || 1);
+  display = Math.min(100, Math.max(1, Number(display) || 20));
+  const nw = options.nw || '3';
+  const cacheKey = `v2:search:eflaw:${nw}:${options.lawId || ''}:${trimmed}:${page}:${display}`;
   const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    console.warn(`[LawApiClient] LAW_OC 미설정 - '${trimmed}' 검색을 목업 샘플로 대체합니다 (공식 법령 데이터 아님).`);
-    return getMockLawSearch(trimmed);
-  }
-
-  const url = `${LAW_CONFIG.LAW_DRF_BASE_URL}?OC=${oc}&target=law&type=XML&query=${encodeURIComponent(trimmed)}&page=${page}&display=${display}`;
-
+  if (Array.isArray(cached) && cached.every(isOfficial)) return cached;
+  if (!ENV.LAW_OC) return ENV.LAW_DEMO_MODE && nw === '3' ? getMockLawSearch(trimmed) : unavailableList('UNAVAILABLE', 'LAW_OC 미설정');
   try {
-    const rawXml = await fetchWithRetry(url);
-    const parsed = parseLawSearchList(rawXml);
-    if (parsed.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, 'search');
-    }
+    const xml = await fetchWithRetry(apiUrl(LAW_CONFIG.LAW_DRF_BASE_URL, {
+      target: 'eflaw', query: trimmed, nw, page: String(page), display: String(display),
+      ...(options.lawId ? { LID: options.lawId } : {})
+    }));
+    const parsed = parseLawSearchList(xml).map(official);
+    await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, 'search');
     return parsed;
   } catch (err) {
-    console.error(`[LawApiClient] searchLaw 실패, 목업 샘플로 대체합니다 (공식 법령 데이터 아님):`, err.message);
-    return getMockLawSearch(trimmed);
+    return unavailableList('ERROR', err.message);
   }
 }
 
-/**
- * 법령 ID/일련번호로 법령 전체 조문 및 상세 정보 조회
- * @param {string} lawId 
- * @param {string} lawSeq 
- * @returns {Promise<object|null>}
- */
-export async function getLawDetail(lawId, lawSeq = '') {
-  if (!lawId && !lawSeq) return null;
-  const cacheKey = `detail:${lawId || ''}:${lawSeq || ''}`;
-
+export async function getLawDetail(lawId, lawSeq = '', options = {}) {
+  if ((!lawId && !lawSeq) || (lawId && !/^\d+$/.test(lawId)) || (lawSeq && !/^\d+$/.test(lawSeq))) return null;
+  const enforceDate = options.enforceDate ? validDate(options.enforceDate) : '';
+  if (options.enforceDate && !enforceDate) throw new Error('올바른 시행일자가 필요합니다.');
+  const target = enforceDate || !lawSeq ? 'eflaw' : 'law';
+  const cacheKey = `v2:detail:${target}:${lawId || ''}:${lawSeq}:${enforceDate}`;
   const cached = await getCache(cacheKey);
-  if (cached) return cached;
-
-  const oc = ENV.LAW_OC;
-  if (!oc) {
-    console.warn(`[LawApiClient] LAW_OC 미설정 - 법령 본문(${lawId || lawSeq})을 목업으로 대체합니다 (공식 조문 아님).`);
-    return getMockLawDetail(lawId || 'sample');
-  }
-
-  const idParam = lawId ? `ID=${encodeURIComponent(lawId)}` : `MST=${encodeURIComponent(lawSeq)}`;
-  const url = `${LAW_CONFIG.LAW_SERVICE_BASE_URL}?OC=${oc}&target=law&type=XML&${idParam}`;
-
-  try {
-    const rawXml = await fetchWithRetry(url);
-    const parsed = parseLawDetail(rawXml);
-    if (parsed && parsed.articles && parsed.articles.length > 0) {
-      await setCache(cacheKey, parsed, LAW_CONFIG.CACHE_TTL.LAW_DETAIL, 'detail');
-    }
-    return parsed;
-  } catch (err) {
-    console.error(`[LawApiClient] getLawDetail 실패, 목업으로 대체합니다 (공식 조문 아님):`, err.message);
-    return getMockLawDetail(lawId || 'sample');
-  }
+  if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT') return cached;
+  if (!ENV.LAW_OC) return ENV.LAW_DEMO_MODE ? getMockLawDetail(lawId) : null;
+  const params = { target, ...(lawSeq ? { MST: lawSeq } : { ID: lawId }), ...(lawSeq && enforceDate ? { efYd: enforceDate } : {}) };
+  const parsed = parseLawDetail(await fetchWithRetry(apiUrl(LAW_CONFIG.LAW_SERVICE_BASE_URL, params)));
+  if (!parsed || !parsed.lawId || !parsed.lawName || !parsed.articles.length) throw new LawApiError('공식 법령 본문이 비어 있습니다.', { code: 'INVALID_LAW_BODY' });
+  if (lawId && Number(parsed.lawId) !== Number(lawId)) throw new LawApiError('요청과 다른 법령 본문입니다.', { code: 'LAW_ID_MISMATCH' });
+  if (enforceDate && parsed.enforceDate !== enforceDate) throw new LawApiError('요청과 다른 시행일의 본문입니다.', { code: 'LAW_VERSION_MISMATCH' });
+  const detail = { ...official(parsed), lawSeq: lawSeq || parsed.lawSeq, contentStatus: 'FULL_TEXT', requestTarget: target };
+  await setCache(cacheKey, detail, LAW_CONFIG.CACHE_TTL.LAW_DETAIL, 'detail');
+  return detail;
 }
 
-/**
- * 특정 법령의 특정 조문 조회
- * @param {string} lawIdOrName 
- * @param {string} articleNo 
- * @param {string} branchNo 
- * @returns {Promise<object|null>}
- */
 export async function getLawArticle(lawIdOrName, articleNo, branchNo = '') {
   if (!lawIdOrName || !articleNo) return null;
-
-  // 1. 법령 검색 또는 상세 조회
-  let detail = null;
-  if (/^\d+$/.test(lawIdOrName)) {
-    detail = await getLawDetail(lawIdOrName);
-  } else {
-    const searchResults = await searchLaw(lawIdOrName, 1, 5);
-    if (searchResults.length > 0) {
-      detail = await getLawDetail(searchResults[0].lawId, searchResults[0].lawSeq);
-    }
+  let detail;
+  if (/^\d+$/.test(lawIdOrName)) detail = await getLawDetail(lawIdOrName);
+  else {
+    const results = await searchLaw(lawIdOrName, 1, 100);
+    const match = results.find(l => matchesLaw(l, lawIdOrName));
+    if (match) detail = await getLawDetail(match.lawId, match.lawSeq, { enforceDate: match.enforceDate });
+    if (detail && !matchesLaw(detail, lawIdOrName)) return null;
   }
-
-  if (!detail || !detail.articles) return null;
-
-  const targetFullNo = branchNo ? `${articleNo}의${branchNo}` : String(articleNo);
-  const article = detail.articles.find(a => a.fullArticleNo === targetFullNo || a.articleNo === String(articleNo));
-
+  if (!detail) return null;
+  const fullNo = branchNo ? `${normalizeArticleNo(articleNo).split('의')[0]}의${branchNo}` : normalizeArticleNo(articleNo);
+  const article = exactArticle(detail.articles, fullNo);
   if (!article) return null;
-
-  return {
-    lawName: detail.lawName,
-    lawId: detail.lawId,
-    promulDate: detail.promulDate,
-    enforceDate: detail.enforceDate,
-    article
-  };
+  return { lawName: detail.lawName, lawId: detail.lawId, lawSeq: detail.lawSeq, promulDate: detail.promulDate,
+    enforceDate: detail.enforceDate, source: detail.source || 'MOCK', isMockData: Boolean(detail.isMockData), article };
 }
 
-// -------------------------------------------------------------
-// LAW_OC 미발급 시 개발 및 UI 테스트를 위한 고품질 Fallback 목업 데이터
-// -------------------------------------------------------------
+// Fetch all available versions of the exact law, without silently treating a partial list as complete.
+export async function getLawVersions(lawName) {
+  const candidates = await searchLaw(lawName, 1, 100, { nw: '1,2,3' });
+  if (candidates.fetchStatus) throw new LawApiError(candidates.unavailableReason, { code: 'HISTORY_UNAVAILABLE' });
+  const exact = candidates.find(l => matchesLaw(l, lawName));
+  if (!exact) return [];
+  const versions = [];
+  const seen = new Set();
+  for (let page = 1; page <= 100; page++) {
+    const items = await searchLaw(lawName, page, 100, { nw: '1,2,3', lawId: exact.lawId });
+    if (items.fetchStatus) throw new LawApiError(items.unavailableReason, { code: 'HISTORY_UNAVAILABLE' });
+    for (const item of items) {
+      if (Number(item.lawId) !== Number(exact.lawId)) continue;
+      const key = `${item.lawSeq}:${item.enforceDate}`;
+      if (!seen.has(key)) { seen.add(key); versions.push(item); }
+    }
+    if (items.length < 100) return versions;
+  }
+  throw new LawApiError('법령 이력이 조회 한도를 초과하여 일부 결과만 확보되었습니다.', { code: 'HISTORY_INCOMPLETE' });
+}
+
 function getMockLawSearch(query) {
   const samples = [
     {
@@ -306,8 +258,5 @@ function getMockLawDetail(lawId) {
   };
 }
 
-export default {
-  searchLaw,
-  getLawDetail,
-  getLawArticle
-};
+
+export default { searchLaw, getLawDetail, getLawArticle, getLawVersions };

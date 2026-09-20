@@ -1,3 +1,4 @@
+import './setup.js';
 // test/lawApi.test.js
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +37,8 @@ test('조문 Diff 비교 엔진 (lawDiff)', () => {
 test('19대 도구 실행 러너 (toolRunner)', async () => {
   const res = await runTool('searchLaw', { query: '개인정보 보호법' });
   assert.equal(res.ok, true);
-  assert.ok(res.result.items.length > 0);
+  assert.equal(res.result.items.length, 0, '자격증명 없는 일반 모드에서는 샘플을 반환하지 않는다.');
+  assert.equal(res.result.fetchStatus, 'UNAVAILABLE');
 
   const toolDiff = await runTool('articleDiff', {
     oldText: '제1조 목적',

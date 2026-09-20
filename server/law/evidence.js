@@ -1,0 +1,52 @@
+import { normalizeArticleNo } from './lawArticleRef.js';
+
+export const normalizedLawName = value => String(value || '').replace(/[\s「」『』]/g, '');
+export const sameLaw = (a, b) => Boolean(normalizedLawName(a)) && normalizedLawName(a) === normalizedLawName(b);
+export const matchesLaw = (record, name) => sameLaw(record?.lawName, name) || sameLaw(record?.lawNameShort, name);
+export const isOfficial = record => Boolean(record && record.source === 'OFFICIAL_API' && !record.isMockData);
+export const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Seoul' }).replaceAll('-', '');
+
+export function validDate(value) {
+  const raw = String(value || '');
+  if (!/^(?:\d{8}|\d{4}-\d{2}-\d{2})$/.test(raw)) return '';
+  const date = raw.replaceAll('-', '');
+  const iso = `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  const parsed = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(iso) ? date : '';
+}
+
+export function articleText(article) {
+  const parts = [article?.content || ''];
+  for (const p of article?.paragraphs || []) {
+    parts.push(p.content || '');
+    for (const item of p.items || []) {
+      parts.push(item.content || '');
+      for (const sub of item.subItems || []) parts.push(sub.content || '');
+    }
+  }
+  return [...new Set(parts.filter(Boolean))].join('\n');
+}
+
+export function exactArticle(articles, number) {
+  const key = normalizeArticleNo(number);
+  return key ? (articles || []).find(a => normalizeArticleNo(a.fullArticleNo || a.articleNo) === key) : undefined;
+}
+
+// Existence of an article does not establish existence of its cited paragraph/item.
+export function containsCitation(article, citation) {
+  if (!article || article.isDeleted || !articleText(article).trim()) return false;
+  const pNo = citation.match(/제?\s*(\d+)\s*항/)?.[1];
+  const iNo = citation.match(/제?\s*(\d+)\s*호/)?.[1];
+  const sNo = citation.match(/([가-힣])\s*목/)?.[1];
+  const number = value => String(value || '').match(/\d+/)?.[0];
+  const paragraphs = pNo ? (article.paragraphs || []).filter(p => number(p.paragraphNo) === pNo) : article.paragraphs || [];
+  if (pNo && !paragraphs.length) return false;
+  const items = paragraphs.flatMap(p => p.items || []).filter(i => !iNo || number(i.itemNo) === iNo);
+  if (iNo && !items.length) return false;
+  if (sNo && !items.some(i => (i.subItems || []).some(s => String(s.subItemNo).replace(/[.\s목]/g, '') === sNo))) return false;
+  return true;
+}
+
+export function unavailableList(status, reason) {
+  return Object.assign([], { fetchStatus: status, unavailableReason: reason });
+}

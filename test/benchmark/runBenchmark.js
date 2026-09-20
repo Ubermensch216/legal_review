@@ -1,3 +1,4 @@
+import { scoreCitations } from './scoring.js';
 // test/benchmark/runBenchmark.js - 20종 실무 법률 검토 벤치마크 평가 엔진
 //
 // 이 하네스는 '측정'을 목적으로 한다. 따라서 다음 원칙을 지킨다.
@@ -25,43 +26,6 @@ const PROVIDER = process.env.BENCH_PROVIDER || ENV.LLM_PROVIDER || 'ollama';
 const ALLOW_FALLBACK = process.env.BENCH_ALLOW_FALLBACK === '1';
 
 /**
- * '제15조', '15', '제15조의2' 등을 '15' / '15의2' 형태로 정규화한다.
- */
-function normalizeArticle(raw) {
-  if (!raw && raw !== 0) return '';
-  const m = String(raw).match(/(\d+)\s*(?:조)?\s*(?:의\s*(\d+))?/);
-  if (!m) return '';
-  return m[2] ? `${m[1]}의${m[2]}` : m[1];
-}
-
-/**
- * 조문 인용 정확도: 검토가 인용한 조문이 정답 조문 집합과 얼마나 겹치는가.
- * @returns {{ measurable: boolean, precision: number|null, recall: number|null, cited: string[], hit: string[], missed: string[] }}
- */
-function scoreCitations(review, expectedArticles) {
-  const expected = new Set(expectedArticles.map(normalizeArticle).filter(Boolean));
-  const cited = (review.legalBasis || [])
-    .map(b => normalizeArticle(b.articleNo))
-    .filter(Boolean);
-
-  if (cited.length === 0 || expected.size === 0) {
-    return { measurable: false, precision: null, recall: null, cited, hit: [], missed: [...expected] };
-  }
-
-  const hit = [...new Set(cited.filter(c => expected.has(c)))];
-  const missed = [...expected].filter(e => !cited.includes(e));
-
-  return {
-    measurable: true,
-    precision: Math.round((cited.filter(c => expected.has(c)).length / cited.length) * 100),
-    recall: Math.round((hit.length / expected.size) * 100),
-    cited,
-    hit,
-    missed
-  };
-}
-
-/**
  * 기준 법령이 데이터셋이 지정한 법령과 실제로 일치하는지 확인한다.
  * 과거에는 로그에 데이터셋의 targetLaw를 그대로 찍어, 시스템이 엉뚱한 법령을
  * 분석해도 화면에는 올바른 법령명이 출력됐다.
@@ -70,7 +34,7 @@ function scoreLawMatch(ctx, expectedLaw) {
   const actual = ctx.meta?.primaryLawName || '';
   const norm = (x) => (x || '').replace(/\s+/g, '');
   const matched = Boolean(actual) &&
-    (norm(actual).includes(norm(expectedLaw)) || norm(expectedLaw).includes(norm(actual)));
+    norm(actual) === norm(expectedLaw);
   return { matched, actual: actual || '(없음)' };
 }
 
@@ -90,7 +54,7 @@ async function runBenchmark() {
   console.log('='.repeat(80));
   console.log(`측정 조건:`);
   console.log(`  - 검토 엔진(provider): ${PROVIDER}`);
-  console.log(`  - LAW_OC(법령 API 인증): ${ENV.LAW_OC ? '설정됨' : '미설정 → 목업 데이터로 동작'}`);
+  console.log(`  - LAW_OC(법령 API 인증): ${ENV.LAW_OC ? '설정됨' : '미설정 → 공식 조회 불가'}`);
   console.log(`  - 폴백 결과 집계: ${ALLOW_FALLBACK ? '포함(진단 모드)' : '실격 처리'}`);
   console.log('');
 
@@ -128,10 +92,10 @@ async function runBenchmark() {
       const latencyMs = Date.now() - itemStart;
 
       const integrity = ctx.meta?.dataIntegrity || {};
-      const isFallback = Boolean(integrity.isFallback) || Boolean(review.isFallback);
+      const isFallback = Boolean(integrity.isFallback) || Boolean(review.isFallback) || review.reviewStatus !== 'COMPLETE';
 
       const lawMatch = scoreLawMatch(ctx, item.targetLaw);
-      const citations = scoreCitations(review, item.expectedArticles || []);
+      const citations = scoreCitations(review, item.expectedArticles || [], item.targetLaw);
       const redlines = scoreRedlines(review);
 
       const topPrec = (ctx.officialEvidence?.precedents || [])[0];
@@ -139,7 +103,7 @@ async function runBenchmark() {
         ? topPrec.relevanceScore
         : null; // 기본값을 채우지 않는다
 
-      // PASS 조건: 폴백이 아니고, 기준 법령이 일치하고, 조문 인용이 정답과 겹칠 것.
+      // PASS 조건: 폴백이 아니고, 기준 법령이 정확히 일치하고 검증된 인용이 정답 집합과 일치할 것. 법리 정확도 평가는 별도이다.
       let status;
       let statusReason = '';
       if (isFallback && !ALLOW_FALLBACK) {
@@ -151,9 +115,9 @@ async function runBenchmark() {
       } else if (!citations.measurable) {
         status = 'FAIL';
         statusReason = '인용 조문이 없어 정확도를 측정할 수 없음';
-      } else if (citations.recall === 0) {
+      } else if (citations.recall !== 100 || citations.precision !== 100) {
         status = 'FAIL';
-        statusReason = `정답 조문 미인용 (기대: ${(item.expectedArticles || []).join(', ')})`;
+        statusReason = `정답 조문 누락 또는 오인용 (기대: ${(item.expectedArticles || []).join(', ')})`;
       } else {
         status = 'PASS';
       }

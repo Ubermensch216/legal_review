@@ -1,3 +1,4 @@
+import './setup.js';
 // test/reRankerAndVerifier.test.js - 판례 Re-ranking 및 조문 실존성 검증기 단위 테스트
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -57,6 +58,7 @@ test('조문 실존성 검증 및 미검증 인용 표시 (factualityVerifier)',
   const mockContext = {
     meta: { primaryLawName: '개인정보 보호법' },
     officialEvidence: {
+      lawDetail: { lawName: '개인정보 보호법', lawId: '1552', lawSeq: '10', enforceDate: '20230101', source: 'OFFICIAL_API' },
       articles: [
         { articleNo: 25, fullArticleNo: '25', title: '영상정보처리기기의 설치ㆍ운영 제한', content: '...' },
         { articleNo: 15, fullArticleNo: '15', title: '개인정보의 수집ㆍ이용', content: '...' }
@@ -117,13 +119,21 @@ test('대조 기준이 목업이면 검증을 수행하지 않는다 (factuality
   assert.ok(verificationReport.unmeasurableReason, '측정 불가 사유가 있어야 함');
 });
 
-test('3단계 체계적 연쇄 검색 (cascadingRetriever)', async () => {
-  const cascade = await retrieveCascadingHierarchy({
-    lawName: '개인정보 보호법',
-    articleNos: ['제15조', '제25조']
+test('연쇄 검색은 주입한 본문의 인용 관계만 선택한다', async () => {
+  const laws = {
+    '개인정보 보호법': { lawId: '1', lawName: '개인정보 보호법', lawType: '법률', articles: [{ articleNo: '15', fullArticleNo: '15', content: '대통령령으로 정한다.' }] },
+    '개인정보 보호법 시행령': { lawId: '2', lawName: '개인정보 보호법 시행령', lawType: '대통령령', articles: [
+      { articleNo: '1', fullArticleNo: '1', content: '목적' },
+      { articleNo: '9', fullArticleNo: '9', content: '법 제15조에 따른 절차' }
+    ] }
+  };
+  const cascade = await retrieveCascadingHierarchy({ lawName: '개인정보 보호법', articleNos: ['제15조'] }, {
+    searchLaw: async name => laws[name] ? [laws[name]] : [],
+    getLawDetail: async id => ({ ...Object.values(laws).find(l => l.lawId === id), source: 'OFFICIAL_API' }),
+    searchAdminRules: async () => []
   });
-
-  assert.ok(cascade, '연쇄 검색 결과 객체가 반환되어야 함');
-  assert.ok(cascade.act, '모법(법률) 정보가 존재해야 함');
-  assert.ok(cascade.decree, '시행령 정보가 존재해야 함');
+  assert.deepEqual(cascade.decree.articles.map(a => a.articleNo), ['9']);
+  assert.equal(cascade.rule, null);
+  assert.equal(cascade.stageStatus.rule, 'NOT_FOUND');
+  assert.equal(cascade.isCompleteHierarchy, false);
 });

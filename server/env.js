@@ -18,10 +18,11 @@ if (!fs.existsSync(uploadDir)) {
 
 export const ENV = {
   PORT: parseInt(process.env.PORT || '3000', 10),
-  HOST: process.env.HOST || '0.0.0.0',
+  HOST: process.env.HOST || '127.0.0.1',
 
   // API Keys
   LAW_OC: process.env.LAW_OC || '',
+  LAW_DEMO_MODE: process.env.LAW_DEMO_MODE === 'true',
   DECISIONS_API_KEY: process.env.DECISIONS_API_KEY || '',
   HUNZAE_API_KEY: process.env.HUNZAE_API_KEY || '',
 

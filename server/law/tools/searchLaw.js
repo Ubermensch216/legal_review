@@ -8,6 +8,8 @@ export async function execute(params = {}) {
   const results = await searchLaw(query, page, display);
   return {
     total: results.length,
+    fetchStatus: results.fetchStatus || 'SUCCESS',
+    message: results.unavailableReason,
     page,
     items: results
   };

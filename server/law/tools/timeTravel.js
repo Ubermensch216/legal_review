@@ -1,49 +1,20 @@
-// server/law/tools/timeTravel.js
-import { searchLaw, getLawDetail } from '../lawApiClient.js';
+import { getLawVersions, getLawDetail } from '../lawApiClient.js';
+import { validDate, isOfficial, exactArticle } from '../evidence.js';
 
-export async function execute(params = {}) {
-  const { lawName, targetDate, articleNo = '' } = params;
+export async function execute({ lawName, targetDate, articleNo = '' } = {}, dependencies = {}) {
   if (!lawName) throw new Error('lawName 매개변수가 필요합니다.');
-  if (!targetDate) throw new Error('targetDate(YYYYMMDD) 매개변수가 필요합니다.');
-
-  const cleanDate = targetDate.replace(/[^0-9]/g, '');
-  const searchResults = await searchLaw(lawName, 1, 10);
-
-  // 대상 일자 이전에 공포/시행된 개정본 필터링
-  const applicable = searchResults
-    .filter(l => (l.enforceDate && l.enforceDate.replace(/[^0-9]/g, '') <= cleanDate) ||
-                 (l.promulDate && l.promulDate.replace(/[^0-9]/g, '') <= cleanDate))
-    .sort((a, b) => (b.enforceDate || '').localeCompare(a.enforceDate || ''));
-
-  if (applicable.length === 0) {
-    return {
-      found: false,
-      message: `지정하신 일자(${targetDate}) 시점의 [${lawName}] 유효 법령을 찾을 수 없습니다.`
-    };
-  }
-
-  const targetVersion = applicable[0];
-  const detail = await getLawDetail(targetVersion.lawId, targetVersion.lawSeq);
-
-  let targetArticle = null;
-  if (articleNo && detail && detail.articles) {
-    targetArticle = detail.articles.find(a => a.fullArticleNo === String(articleNo) || a.articleNo === String(articleNo));
-  }
-
-  return {
-    found: true,
-    targetDate: cleanDate,
-    appliedVersion: {
-      lawName: targetVersion.lawName,
-      lawId: targetVersion.lawId,
-      promulDate: targetVersion.promulDate,
-      promulNo: targetVersion.promulNo,
-      enforceDate: targetVersion.enforceDate,
-      ministry: targetVersion.ministry
-    },
-    targetArticle: targetArticle || null,
-    totalArticlesInVersion: detail && detail.articles ? detail.articles.length : 0
-  };
+  const date = validDate(targetDate);
+  if (!date) throw new Error('유효한 targetDate(YYYYMMDD 또는 YYYY-MM-DD)가 필요합니다.');
+  const versions = await (dependencies.getLawVersions || getLawVersions)(lawName);
+  const applicable = versions.filter(v => isOfficial(v) && validDate(v.enforceDate) && v.enforceDate <= date)
+    .sort((a, b) => b.enforceDate.localeCompare(a.enforceDate) || (b.promulDate || '').localeCompare(a.promulDate || '') || Number(b.lawSeq) - Number(a.lawSeq));
+  const version = applicable[0];
+  if (!version) return { found: false, targetDate: date, message: '해당 시점에 시행 중인 법령 버전을 확인하지 못했습니다.' };
+  const detail = await (dependencies.getLawDetail || getLawDetail)(version.lawId, version.lawSeq, { enforceDate: version.enforceDate });
+  if (!isOfficial(detail) || !detail.articles?.length || Number(detail.lawId) !== Number(version.lawId) || Number(detail.lawSeq) !== Number(version.lawSeq) || detail.enforceDate !== version.enforceDate) return { found: false, targetDate: date, message: '선택한 버전의 공식 본문을 확인하지 못했습니다.' };
+  const articles = detail.articles.filter(a => !a.isDeleted && (!a.enforceDate || a.enforceDate <= date));
+  const targetArticle = articleNo ? exactArticle(articles, articleNo) : null;
+  return { found: !articleNo || Boolean(targetArticle), targetDate: date, appliedVersion: version, targetArticle: targetArticle || null,
+    totalArticlesInVersion: articles.length, source: detail.source, limitations: ['부칙·경과조치에 따른 개별 사안 적용 여부는 별도 검토가 필요합니다.'] };
 }
-
 export default { execute };

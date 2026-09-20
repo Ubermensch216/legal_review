@@ -1,3 +1,4 @@
+import './setup.js';
 // test/lawHistory.test.js - 법령 검토 이력 저장, 조회, 복원, 삭제 단위 테스트
 import test from 'node:test';
 import assert from 'node:assert/strict';

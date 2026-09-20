@@ -1,5 +1,5 @@
 // server/law/lawApiParser.js - 국가법령정보센터(law.go.kr) DRF XML/JSON 응답 정규화 파서
-import { XMLParser } from 'fast-xml-parser';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -45,21 +45,24 @@ export function parseLawSearchList(rawResponse) {
       if (rawResponse.trim().startsWith('{')) {
         root = JSON.parse(rawResponse);
       } else {
+        if (XMLValidator.validate(rawResponse) !== true) throw new Error('유효한 XML이 아닙니다.');
         root = xmlParser.parse(rawResponse);
       }
     } catch (err) {
       console.warn('[LawApiParser] 법령 검색 파싱 실패:', err.message);
-      return [];
+      throw new Error('법령 목록 응답을 해석할 수 없습니다.');
     }
   }
 
   // XML 구조: LawSearch > law / lawSearch > law / Law > law
-  const searchRoot = root.LawSearch || root.lawSearch || root.Law || root;
+  const searchRoot = root.LawSearch || root.lawSearch;
+  if (!searchRoot || typeof searchRoot !== 'object') throw new Error('법령 목록 응답 루트가 올바르지 않습니다.');
   const lawList = ensureArray(searchRoot.law || searchRoot.Law || searchRoot.item || []);
 
   return lawList.map(item => ({
-    lawId: getText(item.법령ID || item.lawId || item['@_id']),
+    lawId: getText(item.법령ID || item.lawId),
     lawSeq: getText(item.법령일련번호 || item.lawSeq),
+    historyStatus: getText(item.현행연혁코드),
     lawName: getText(item.법령명한글 || item.법령명 || item.lawName || item.lawNm),
     lawNameShort: getText(item.법령약칭명 || item.lawNameShort),
     promulDate: getText(item.공포일자 || item.promulDate),
@@ -85,6 +88,7 @@ export function parseLawDetail(rawResponse) {
       if (rawResponse.trim().startsWith('{')) {
         root = JSON.parse(rawResponse);
       } else {
+        if (XMLValidator.validate(rawResponse) !== true) throw new Error('유효한 XML이 아닙니다.');
         root = xmlParser.parse(rawResponse);
       }
     } catch (err) {
@@ -93,7 +97,8 @@ export function parseLawDetail(rawResponse) {
     }
   }
 
-  const lawRoot = root.법령 || root.Law || root.lawService || root;
+  const lawRoot = root.법령 || root.Law || root.lawService;
+  if (!lawRoot || typeof lawRoot !== 'object') return null;
   const basicInfo = lawRoot.기본정보 || lawRoot.basicInfo || lawRoot;
 
   // 1. 기본 정보
@@ -122,7 +127,7 @@ export function parseLawDetail(rawResponse) {
     const artTitle = getText(art.조문제목 || art.title);
     const artContent = getText(art.조문내용 || art.content);
     const enforceDate = getText(art.조문시행일자 || art.enforceDate);
-    const isDeleted = getText(art.조문여부 || art.isDeleted) === '삭제';
+    const isDeleted = art.isDeleted === true || /삭제/.test(getText(art.조문제개정유형)) || /^제\s*\d+조(?:의\d+)?\s*삭제/.test(artContent);
 
     // 항 파싱
     const rawParagraphs = ensureArray(art.항 || art.paragraph || []);

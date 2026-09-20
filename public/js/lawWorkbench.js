@@ -424,14 +424,6 @@ function renderDraftTab(review, officialEvidence, meta) {
   const basisEl = document.getElementById('draft-basis-content');
   let basisList = review.legalBasis || [];
 
-  if (basisList.length === 0 && officialEvidence && officialEvidence.articles) {
-    basisList = officialEvidence.articles.map(a => ({
-      lawName,
-      articleNo: `제${a.fullArticleNo || a.articleNo}조`,
-      title: a.title,
-      relevance: '본 사안의 행위 요건 및 적법성 판단의 직접적 근거 조항임'
-    }));
-  }
 
   if (basisList.length > 0) {
     let tableHtml = `
@@ -475,6 +467,7 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   let officialDocHtml = `
     <div class="official-report-view">
+      <div class="report-warning">${escapeHtml((window.__reliability?.warnings || []).join(' / '))}</div>
       <div class="report-header-box">
         <h2 class="report-header-title">법 률 검 토 의 견 서</h2>
         <table class="report-meta-table">
@@ -705,17 +698,17 @@ function renderEvidenceTab(evidence, meta) {
   let rulesHtml = '';
 
   const cascade = evidence.cascadingHierarchy;
-  if (cascade && cascade.isCompleteHierarchy) {
+  if (cascade && (cascade.act || cascade.decree || cascade.rule)) {
     rulesHtml += `
       <div class="cascade-box" style="margin-bottom: 16px; padding: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px;">
         <div style="display:flex; align-items:center; gap:6px; font-weight:700; color:#1E3A8A; margin-bottom: 8px;">
           <span class="material-symbols-outlined" style="font-size:16px;">account_tree</span>
-          <span>3단계 연쇄 법령 체계 (모법 ➔ 시행령 ➔ 시행규칙)</span>
+          <span>확인된 조문 인용 연계 (부분 결과)</span>
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:8px; font-size:12.5px;">
           <span class="badge badge-gov">법률: ${escapeHtml(cascade.act?.lawName || lawName)}</span>
           <span class="material-symbols-outlined" style="font-size:14px; color:#94A3B8; align-self:center;">arrow_forward</span>
-          <span class="badge" style="background:#E0E7FF; color:#3730A3;">시행령: ${escapeHtml(cascade.decree?.lawName || '시행령')}</span>
+          <span class="badge" style="background:#E0E7FF; color:#3730A3;">시행령: ${escapeHtml(cascade.decree?.lawName || '미확인')}</span>
           ${cascade.rule ? `
             <span class="material-symbols-outlined" style="font-size:14px; color:#94A3B8; align-self:center;">arrow_forward</span>
             <span class="badge" style="background:#F1F5F9; color:#475569;">시행규칙: ${escapeHtml(cascade.rule.lawName)}</span>
