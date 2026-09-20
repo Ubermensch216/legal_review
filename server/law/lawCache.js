@@ -38,7 +38,11 @@ function initDatabase() {
     isDbReady = true;
     purgeExpired();
     // Remove only legacy synthetic records; official caches and review history are preserved.
-    db.exec("DELETE FROM law_cache WHERE category = 'prewarm' OR data LIKE '%PREWARM_%'");
+    db.exec(`DELETE FROM law_cache WHERE category = 'prewarm' OR
+      (json_valid(data) AND EXISTS (
+        SELECT 1 FROM json_tree(law_cache.data)
+        WHERE key = 'lawId' AND type = 'text' AND value GLOB 'PREWARM_*'
+      ))`);
   } catch (err) {
     console.warn('[LawCache] SQLite 초기화 실패, L1 인메모리 캐시 모드로 동작합니다:', err.message);
     isDbReady = false;

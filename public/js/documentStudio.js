@@ -110,7 +110,7 @@ function buildVisualReportHtml(data, reportTitle) {
   const query = meta?.query || '요청 사안에 관한 법적 검토';
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const basisList = review.legalBasis || [];
+  const basisList = (review.legalBasis || []).map(b => ({ ...b, relevance: `[${b.verificationStatus === 'VERIFIED' ? '조문 존재 확인' : '미검증'}] ${b.relevance || ''}${b.verificationNote ? ' — ' + b.verificationNote : ''}` }));
 
   const recommendations = review.recommendations || [];
 

@@ -27,5 +27,5 @@ test('공식 판례 목록과 본문 계약', { skip: !process.env.LAW_OC && 'LA
   const items = await searchPrecedents('손해배상', 1, 3);
   assert.equal(items.fetchStatus, undefined, items.unavailableReason);
   assert.ok(items.length > 0);
-  assert.ok(items.some(p => p.contentStatus === 'FULL_TEXT'), '본문 권한/필드 계약을 확인해야 한다');
+  assert.ok(items.some(p => p.contentStatus === 'FULL_TEXT'), `본문 권한/필드 계약 확인 실패: ${items.map(p => `${p.id}: ${p.detailError || p.contentStatus}`).join('; ')}`);
 });

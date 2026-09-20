@@ -114,9 +114,6 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const dataIntegrity = workbenchContext.meta?.dataIntegrity || {};
     const reviewIsFallback = Boolean(reviewResult?.isFallback);
     const warnings = reportWarnings({ meta: workbenchContext.meta, review: reviewResult });
-    if (reviewIsFallback && reviewResult.fallbackReason) {
-      warnings.push(reviewResult.fallbackReason);
-    }
 
     const responsePayload = {
       ok: true,

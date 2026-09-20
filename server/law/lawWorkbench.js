@@ -144,7 +144,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     primaryLawName ? clients.runTool('lawHistory', { lawName: primaryLawName }) : Promise.resolve(null)
   ]);
 
-  for (const [name, result] of Object.entries({ precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes, historyRes })) {
+  for (const [name, result] of Object.entries({ '판례': precRes, '해석례': expcRes, '행정규칙': admrulRes, '자치법규': ordinRes, '하위 법령': cascadingRes, '영향 분석': impactRes, '법령 연혁': historyRes })) {
     if (result.status === 'rejected' || result.value?.fetchStatus || result.value?.ok === false) collectionWarnings.push(`${name}: 공식 자료 조회 미완료`);
   }
 
@@ -190,7 +190,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   });
 
   if (dataIntegrity.isFallback) {
-    console.warn(`[LawWorkbench] 폴백 데이터 포함 응답: ${dataIntegrity.warnings.join(' / ')}`);
+    console.warn(`[LawWorkbench] 검토 제한 사항: ${dataIntegrity.warnings.join(' / ')}`);
   }
 
   return {

@@ -15,6 +15,7 @@ import { buildWorkbenchContext } from '../server/law/lawWorkbench.js';
 import { optimizeDocumentContext } from '../server/parsers/contextOptimizer.js';
 import { buildReviewInput } from '../server/law/reviewContext.js';
 import { execute as timeTravel } from '../server/law/tools/timeTravel.js';
+import { execute as articleAt } from '../server/law/tools/articleAt.js';
 import { retrieveCascadingHierarchy } from '../server/law/cascadingRetriever.js';
 import { generateDocx, generateHwpx, generatePdf } from '../server/export/exportFiles.js';
 import pdfParse from 'pdf-parse';
@@ -38,6 +39,17 @@ const llmStub = (value, capture = () => {}, finish_reason = 'stop') => {
   globalThis.fetch = async (_url, options) => { capture(JSON.parse(options.body)); return { ok: true, json: async () => ({ choices: [{ finish_reason, message: { content: typeof value === 'string' ? value : JSON.stringify(value) } }] }) }; };
 };
 const generate = (ctx, text = '') => generateLegalReview({ query: '면책', preset: 'contract_risk', documentText: text, workbenchContext: ctx, llmConfig: { provider: 'openai', apiKey: 'fixture-only' } });
+
+test('조문 조회는 중첩 본문을 보존하고 없는 항·호를 실패로 반환한다', async () => {
+  const deps = { getLawArticle: async () => ({ ...law, article }) };
+  const params = { lawName: law.lawName, articleNo: '15' };
+  const full = await articleAt(params, deps);
+  assert.match(full.fullContent, /NESTED_EXCEPTION/);
+  assert.equal(full.source, 'OFFICIAL_API');
+  assert.equal((await articleAt({ ...params, paragraphNo: '9' }, deps)).found, false);
+  assert.equal((await articleAt({ ...params, paragraphNo: '1', itemNo: '9' }, deps)).found, false);
+  assert.equal((await articleAt({ ...params, paragraphNo: '1', itemNo: '2' }, deps)).found, true);
+});
 
 test('법령 이름과 가지·항·호가 다른 인용은 검증하지 않는다', async () => {
   for (const item of [
@@ -131,6 +143,18 @@ test('시점 조회는 공포일 대신 시행일로 결정하고 본문 버전�
   await assert.rejects(timeTravel({ lawName: law.lawName, targetDate: '20250230' }, deps));
   const mismatch = { ...deps, getLawDetail: async () => ({ ...law, lawSeq: '999', articles: [article] }) };
   assert.equal((await timeTravel({ lawName: law.lawName, targetDate: '20250101' }, mismatch)).found, false);
+});
+
+test('병합 사건번호는 대표 사건을 대조하되 다른 사건번호는 제외한다', async () => {
+  ENV.LAW_OC = 'fixture';
+  for (const [number, expected] of [['2023다290355, 290362', 'FULL_TEXT'], ['2023다2903550', 'LIST_ONLY'], ['2023다999999', 'LIST_ONLY']]) {
+    await clearAllCache();
+    globalThis.fetch = async url => xmlResponse(String(url).includes('lawSearch.do')
+      ? '<PrecSearch><prec><판례일련번호>10</판례일련번호><사건번호>2023다290355</사건번호></prec></PrecSearch>'
+      : `<PrecService><판례정보일련번호>10</판례정보일련번호><사건번호>${number}</사건번호><판결요지>픽스처 본문</판결요지></PrecService>`);
+    const results = await searchPrecedents('병합 사건', 1, 1);
+    assert.equal(results[0].contentStatus, expected);
+  }
 });
 
 test('판례·해석례는 목록 ID로 본문을 조회하고 공식 상세 필드를 정규화한다', async () => {

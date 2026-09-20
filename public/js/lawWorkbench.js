@@ -223,7 +223,7 @@ function renderDraftTab(review, officialEvidence, meta) {
       parts.push(`
         <div class="badge-fallback-warning">
           <span class="material-symbols-outlined" style="font-size:14px;">warning</span>
-          <span>${review.isFallback ? '규칙 기반 점검 결과 (법리 검토 아님)' : '폴백 데이터 포함'}</span>
+          <span>${review.isFallback ? '규칙 기반 점검 결과 (법리 검토 아님)' : '검토 제한 사항'}</span>
         </div>
       `);
     }
@@ -422,7 +422,7 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   // 6. 관련 법령 및 조문 근거 테이블
   const basisEl = document.getElementById('draft-basis-content');
-  let basisList = review.legalBasis || [];
+  let basisList = (review.legalBasis || []).map(b => ({ ...b, relevance: `[${b.verificationStatus === 'VERIFIED' ? '조문 존재 확인' : '미검증'}] ${b.relevance || ''}${b.verificationNote ? ' — ' + b.verificationNote : ''}` }));
 
 
   if (basisList.length > 0) {
@@ -643,7 +643,7 @@ function renderEvidenceTab(evidence, meta) {
 
   if (precedents.length > 0 || interpretations.length > 0) {
     precedents.forEach((p, idx) => {
-      const scoreBadge = p.relevanceScore 
+      const scoreBadge = Number.isFinite(p.relevanceScore)
         ? `<span class="badge-rerank"><span class="material-symbols-outlined" style="font-size:13px; color:#2563EB;">star</span>관련도 ${p.relevanceScore}점 (${escapeHtml(p.matchReason || '핵심 판례')})</span>` 
         : '';
 
@@ -665,7 +665,7 @@ function renderEvidenceTab(evidence, meta) {
     });
 
     interpretations.forEach((interp, idx) => {
-      const scoreBadge = interp.relevanceScore 
+      const scoreBadge = Number.isFinite(interp.relevanceScore)
         ? `<span class="badge-rerank"><span class="material-symbols-outlined" style="font-size:13px; color:#16A34A;">verified</span>해석례 관련도 ${interp.relevanceScore}점</span>` 
         : '';
 

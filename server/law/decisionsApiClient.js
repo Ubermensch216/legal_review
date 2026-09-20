@@ -46,7 +46,10 @@ async function search(target, query, page, display, parse, mock, loadDetail) {
     enriched.push(...await Promise.all(items.slice(i, i + 3).map(async item => {
       try {
         const body = await loadDetail(item.id);
-        if (item.caseNo && body.caseNo !== item.caseNo) throw new Error('판례 사건번호 불일치');
+        // A detail may list consolidated cases while search exposes only the lead case.
+        // The detail loader has already checked the exact official record ID.
+        const leadCase = value => String(value || '').split(/[,，]/)[0].replace(/\s+/g, '');
+        if (item.caseNo && leadCase(body.caseNo) !== leadCase(item.caseNo)) throw new Error('판례 사건번호 불일치');
         return { ...item, ...body };
       } catch (err) { return { ...item, contentStatus: 'LIST_ONLY', summary: '', holding: '', answer: '', reason: '', detailError: err.message }; }
     })));
