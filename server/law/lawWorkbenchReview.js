@@ -17,10 +17,58 @@ const DEFAULT_REVIEW_SCHEMA = {
   risks: [],
   recommendations: [],
   redlineDiffs: [], // 실무형 수정 조문 대비표
+  opposingViews: [], // 사전 컨설팅감사 대립 견해(갑설/을설) 비교
+  auditConclusion: null, // 사전 컨설팅감사 처리 결과 (수용/반려/일부 수용)
   furtherChecks: [],
   draftOpinion: '',
   disclaimer: '본 검토의견서는 AI 법령검토 엔진에 의해 작성된 사전 분석 참고자료이며, 구체적인 행정처분, 소송 또는 계약 체결 시에는 법률전문가(변호사)의 최종 감수를 거치시기 바랍니다.'
 };
+
+// 제공자별 필요한 환경변수. 설정 누락 시 무엇을 채워야 하는지 그대로 알려준다.
+const PROVIDER_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' };
+
+/**
+ * LLM 호출이 불가능한 이유를 구체적으로 설명한다.
+ * "제공자 또는 API 키 설정을 확인하십시오"만으로는 무엇이 빠졌는지 알 수 없어,
+ * 폴백 검토가 나가는데도 원인을 못 찾는 일이 반복됐다.
+ */
+export function describeProviderMisconfiguration(provider, llmConfig = {}) {
+  const known = ['openai', 'anthropic', 'gemini', 'ollama', 'rule_based', 'local_rule'];
+  if (!known.includes(provider)) {
+    return `알 수 없는 LLM 제공자 '${provider}'입니다. LLM_PROVIDER를 ${known.slice(0, 4).join(', ')} 중 하나로 설정하십시오.`;
+  }
+  const envName = PROVIDER_KEY_ENV[provider];
+  if (envName && !(llmConfig.apiKey || ENV[envName])) {
+    return `${provider} 제공자를 선택했지만 ${envName}가 비어 있습니다. .env에 ${envName}를 설정하거나 LLM_PROVIDER를 ollama로 바꾸십시오.`;
+  }
+  return `${provider} 제공자를 호출할 수 없습니다. 설정을 확인하십시오.`;
+}
+
+/**
+ * 구성된 LLM이 실제로 응답하는지 사전 점검한다. (검토 실행 전 진단용)
+ * @returns {Promise<{provider: string, model: string, ok: boolean, detail: string}>}
+ */
+export async function checkLlmReadiness(llmConfig = {}) {
+  const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
+  const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider] || '';
+
+  const envName = PROVIDER_KEY_ENV[provider];
+  if (envName && !(llmConfig.apiKey || ENV[envName])) {
+    return { provider, model, ok: false, detail: `${envName} 미설정` };
+  }
+  if (provider === 'ollama') {
+    try {
+      const response = await fetch(`${ENV.OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      if (!response.ok) return { provider, model, ok: false, detail: `Ollama 응답 HTTP ${response.status}` };
+      const names = (await response.json()).models?.map(m => m.name) || [];
+      if (!names.includes(model)) return { provider, model, ok: false, detail: `모델 '${model}' 미설치 (설치됨: ${names.join(', ') || '없음'})` };
+      return { provider, model, ok: true, detail: '로컬 Ollama 응답 확인' };
+    } catch (err) {
+      return { provider, model, ok: false, detail: `Ollama 연결 실패 (${ENV.OLLAMA_URL})` };
+    }
+  }
+  return { provider, model, ok: true, detail: 'API 키 설정 확인 (실제 호출은 검토 시점에 검증)' };
+}
 
 /**
  * 워크벤치 데이터와 질의를 기반으로 LLM 검토의견서 생성
@@ -37,6 +85,9 @@ export async function generateLegalReview({ query, preset, documentText, workben
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
 
   let input = buildReviewInput(workbenchContext, documentText, query);
+  // 조문 특정 1단계는 입력이 짧아 축소 대상이 아니다.
+  // 축소된 발췌를 쓰면 결정적 단서가 잘려 나가 엉뚱한 조항을 고르게 된다.
+  const fullKeyProvisionsText = input.keyProvisionsText;
   let inputBudget = null;
   let tokenUsage = null;
   const coverage = () => ({ omittedEvidence: input.omittedEvidence, omittedChunks: input.document.omittedCount,
@@ -89,12 +140,81 @@ export async function generateLegalReview({ query, preset, documentText, workben
       "riskLevel": "HIGH"
     }
   ],
+  "opposingViews": [
+    {
+      "label": "갑설",
+      "holder": "견해를 제시한 주체 (예: 신청기관)",
+      "position": "해당 견해의 주장 요지",
+      "citedBasis": ["근거로 든 법령 조문"],
+      "assessment": "법령 문언·체계·입법취지에 비춘 타당성 검토",
+      "verdict": "타당 | 부당 | 조건부 타당"
+    }
+  ],
+  "auditConclusion": {
+    "result": "수용 | 반려 | 일부 수용",
+    "reason": "해당 결론에 이른 핵심 근거",
+    "basis": "반려 시 근거가 되는 사전 컨설팅감사 운영 조례 조항",
+    "guidance": "신청기관이 후속으로 취해야 할 조치"
+  },
   "furtherChecks": ["추가 확인 필요 증빙 또는 소관 부처 유권해석 질의 사항"],
   "draftOpinion": "공식 공문서 표준 서식의 완성형 법률검토의견서 본문",
   "disclaimer": "본 검토의견서는 사전 분석 참고자료이며, 최종 법적 결정 시에는 법률전문가의 자문을 받으시기 바랍니다."
 }`;
 
+  // 사전 컨설팅감사는 "위법 조항을 찾아 고치는" 검토가 아니라
+  // "대립하는 두 견해 중 어느 쪽이 타당한가"를 가리고 수용/반려를 정하는 절차다.
+  // 따라서 Redline(수정 조문)이 아니라 견해 비교와 처리 의견이 산출물이다.
+  const PRESET_GUIDANCE = {
+    pre_consulting_audit: `[사전 컨설팅감사 검토 지침]:
+1. 신청서에 제시된 대립 견해(갑설/을설 등)를 각각 그대로 정리하고, 각 견해가 근거로 든 조문을 명시하십시오.
+2. 각 견해를 법령 문언·체계·입법취지 및 상위법 위임관계에 따라 검토하여 어느 견해가 타당한지 판단하십시오.
+   원칙 규정과 예외(단서) 규정이 있으면, 예외의 적용 요건이 충족되는지를 반드시 따로 판단하십시오.
+3. 재량이 인정되는지, 인정된다면 그 한계가 무엇인지 판례·유권해석으로 뒷받침하십시오.
+4. 결론은 다음 중 하나로 명확히 제시하십시오:
+   - "수용": 컨설팅 의견을 제시할 사안
+   - "반려": 법령에 이미 명확히 규정되어 있거나 신청기관이 자체 검토·소관부서 협의로 해결 가능한 사안
+   - "일부 수용": 쟁점 일부만 의견 제시가 필요한 사안
+   반려 판단 시에는 그 근거가 되는 사전 컨설팅감사 운영 조례의 조항을 함께 제시하십시오.
+5. 수정할 조문 원문이 없으므로 redlineDiffs는 빈 배열로 두고, 결론은 opposingViews와 auditConclusion에 담으십시오.`
+  };
+  const presetGuidance = PRESET_GUIDANCE[preset] || '';
+
+  // 소형 모델은 2만 자 규모의 입력에서 특정 단서를 찾아내지 못한다.
+  // (같은 모델이 짧은 선택지 목록에서는 같은 조항을 정확히 고른다)
+  // 조문 특정만 떼어 좁은 질문으로 먼저 확정하고, 그 결과를 본 호출에 사실로 주입한다.
+  const resolveGoverningProvisions = async (callProvider) => {
+    if (preset !== 'pre_consulting_audit' || !fullKeyProvisionsText) return { text: '', rows: [] };
+    const focusedPrompt = `아래는 이 사안에 관련된 법령 조문의 원칙(본문)·예외(단서) 구조다.
+
+${fullKeyProvisionsText}
+
+[검토 사안]
+${query}
+
+질문: 위 구조에서, 대립하는 각 견해가 근거로 삼는 조항을 찾아 정확한 조·항·호로 특정하라.
+확실하지 않으면 articleNo를 빈 문자열로 두어라. 추측하지 마라.
+JSON만 출력하라:
+{"provisions":[{"view":"갑설","lawName":"법령명","articleNo":"제O조 제O항 제O호","type":"원칙|예외(단서)"}]}`;
+
+    try {
+      const completion = await callProvider('당신은 법령 조문을 정확히 특정하는 도구입니다. JSON만 출력합니다.', focusedPrompt);
+      const parsed = parseReviewJson(completion.content);
+      const rows = Array.isArray(parsed?.provisions) ? parsed.provisions.filter(p => p && p.articleNo) : [];
+      if (!rows.length) return { text: '', rows: [] };
+      return {
+        text: rows.map(p => `- ${p.view || '견해'}: ${p.lawName || ''} ${p.articleNo}${p.type ? ` (${p.type})` : ''}`).join('\n'),
+        rows
+      };
+    } catch (err) {
+      console.warn('[LawWorkbenchReview] 조문 특정 1단계 실패, 본 검토만 진행합니다:', err.message);
+      return { text: '', rows: [] };
+    }
+  };
+  let resolvedProvisionsText = '';
+  let resolvedProvisionRows = [];
+
   const renderPrompt = input => `[검토 유형]: ${preset}
+${presetGuidance}
 [주요 기준 법령]: ${primaryLaw}
 [수집·분석 제한]: ${input.warnings.join(' / ') || '없음'}
 [검토 질의 / 요청 사안]:
@@ -111,6 +231,19 @@ ${input.precedentsText || '(판례 정보 없음)'}
 
 [수집된 부처 유권해석례]:
 ${input.interpretationsText || '(해석례 정보 없음)'}
+
+[수집된 자치법규(조례) 조문 본문]:
+${input.ordinanceArticlesText || '(자치법규 조문 없음)'}
+
+[수집된 행정규칙(고시·훈령) 조문 및 별표 목록]:
+${input.adminRuleText || '(행정규칙 정보 없음)'}
+
+[쟁점 조문의 원칙(본문)·예외(단서) 구조 — 시스템이 조문 원문에서 기계적으로 분해한 것]:
+${input.keyProvisionsText || '(단서 구조가 있는 조문 없음)'}
+※ 어떤 주장이 "예외적으로 ~할 수 있다"에 기대고 있다면, 위 [예외·단서] 항목에서 그 근거를 찾아 정확한 조·항·호로 특정하고, 그 예외의 적용 요건이 충족되는지 따로 판단하십시오.
+${resolvedProvisionsText ? `
+[조문 특정 결과 — 1단계에서 확정한 사실이므로 그대로 사용하십시오]:
+${resolvedProvisionsText}` : ''}
 
 위 사실관계와 법령/판례를 바탕으로 제공된 근거의 범위 안에서 IRAC 법리 포섭 및 실무형 수정 조문(Redline Diff)을 포함한 심층 검토의견서 JSON을 작성하십시오.`;
 
@@ -131,7 +264,9 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
         scale *= 0.7;
         input = buildReviewInput(workbenchContext, documentText, query, {
           document: Math.floor(4500 * scale), articles: Math.floor(9000 * scale),
-          precedents: Math.floor(5000 * scale), interpretations: Math.floor(4000 * scale)
+          precedents: Math.floor(5000 * scale), interpretations: Math.floor(4000 * scale),
+          ordinanceArticles: Math.floor(4000 * scale), adminRules: Math.floor(5000 * scale),
+          keyProvisions: Math.floor(3000 * scale)
         });
         userPrompt = renderPrompt(input);
       }
@@ -147,6 +282,19 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
       tokenizerFamily: counted.tokenizerFamily, calibrationSamples: counted.calibrationSamples ?? null,
       tokenCountError: counted.countError || null, reduced: scale < 1 };
     if (counted.tokens > budget.inputLimit) throw new Error('질의와 필수 지시문이 입력 예산을 초과합니다. 질의 범위를 줄이거나 모델에 맞는 컨텍스트 예산을 설정하십시오.');
+    // 1단계: 조문 특정만 좁은 질문으로 먼저 확정한다. 실패해도 본 검토는 그대로 진행한다.
+    const callProvider = (sys, user) => {
+      if (provider === 'openai' && (llmConfig.apiKey || ENV.OPENAI_API_KEY)) return callOpenAi(sys, user, callConfig);
+      if (provider === 'anthropic' && (llmConfig.apiKey || ENV.ANTHROPIC_API_KEY)) return callAnthropic(sys, user, callConfig);
+      if (provider === 'gemini' && (llmConfig.apiKey || ENV.GEMINI_API_KEY)) return callGemini(sys, user, callConfig);
+      if (provider === 'ollama') return callOllama(sys, user, callConfig);
+      throw new Error(describeProviderMisconfiguration(provider, llmConfig));
+    };
+    const resolvedProvisions = await resolveGoverningProvisions(callProvider);
+    resolvedProvisionsText = resolvedProvisions.text;
+    resolvedProvisionRows = resolvedProvisions.rows;
+    if (resolvedProvisionsText) userPrompt = renderPrompt(input);
+
     let completion;
 
 
@@ -158,7 +306,7 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
       completion = await callGemini(systemPrompt, userPrompt, callConfig);
     } else if (provider === 'ollama') {
       completion = await callOllama(systemPrompt, userPrompt, callConfig);
-    } else throw new Error('선택한 LLM 제공자 또는 API 키 설정을 확인하십시오.');
+    } else throw new Error(describeProviderMisconfiguration(provider, llmConfig));
 
     const rawContent = completion.content;
     tokenUsage = completion.tokenUsage;
@@ -174,7 +322,19 @@ ${input.interpretationsText || '(해석례 정보 없음)'}
       );
     }
     const normalized = normalizeReviewResult(parsed, workbenchContext, query, preset, documentText);
-    
+
+    // 1단계에서 좁은 질문으로 특정한 조항을 코드로 병합한다.
+    // 본 호출은 입력이 길어 1단계 결과를 지시해도 자기 판단으로 덮어쓰는 일이 잦다.
+    // 1단계 선택지는 공식 조문 본문에서 기계적으로 뽑은 것이므로 근거가 보장된다.
+    if (resolvedProvisionRows.length && normalized.opposingViews?.length) {
+      for (const view of normalized.opposingViews) {
+        const matched = resolvedProvisionRows.filter(p => String(p.view || '').includes(String(view.label || '')) && String(view.label || ''));
+        if (!matched.length) continue;
+        view.citedBasis = matched.map(p => `${p.lawName || ''} ${p.articleNo}${p.type ? ` (${p.type})` : ''}`.trim());
+        view.basisSource = 'STAGE1_PROVISION_MATCH';
+      }
+    }
+
     normalized.inputBudget = inputBudget;
     normalized.tokenUsage = tokenUsage;
     normalized.inputCoverage = coverage();
@@ -450,6 +610,9 @@ function normalizeReviewResult(parsed, workbenchContext, query, preset, document
     risks: Array.isArray(parsed.risks) ? parsed.risks : [],
     recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [],
     redlineDiffs,
+    // 사전 컨설팅감사 전용 산출물. 해당 프리셋이 아니면 비어 있다.
+    opposingViews: Array.isArray(parsed.opposingViews) ? parsed.opposingViews : [],
+    auditConclusion: parsed.auditConclusion && typeof parsed.auditConclusion === 'object' ? parsed.auditConclusion : null,
     furtherChecks: Array.isArray(parsed.furtherChecks) ? parsed.furtherChecks : [],
     draftOpinion: parsed.draftOpinion || '',
     disclaimer: parsed.disclaimer || DEFAULT_REVIEW_SCHEMA.disclaimer

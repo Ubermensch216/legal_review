@@ -56,6 +56,11 @@ export const LAW_CONFIG = {
       id: 'labor_hr',
       name: '인사/노무/근로기준 검토',
       description: '근로계약, 취업규칙, 해고/징계, 주52시간제, 포괄임금 등 근로기준법 및 노동관계법 준수 검토'
+    },
+    PRE_CONSULTING_AUDIT: {
+      id: 'pre_consulting_audit',
+      name: '사전 컨설팅감사 의견 검토',
+      description: '적극행정 사전 컨설팅감사 신청에 대하여 대립하는 견해(갑설·을설)의 타당성을 비교하고 수용/반려 의견을 제시'
     }
   }
 };

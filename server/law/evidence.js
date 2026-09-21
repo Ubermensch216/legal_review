@@ -15,6 +15,22 @@ export function validDate(value) {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(iso) ? date : '';
 }
 
+// 조문·법령이 기준 시점에 효력을 가지는지 판단한다. 기준일을 주지 않으면 오늘이다.
+export const inForceAt = (record, asOf) =>
+  Boolean(record) && !record.isDeleted && (!record.enforceDate || record.enforceDate <= (validDate(asOf) || today()));
+
+// 기준 시점에 시행 중이던 법령 버전을 고른다.
+// 공포일이 아니라 시행일로 결정한다. 같은 날 시행된 버전이 여럿이면 나중에 공포된 것을 쓴다.
+export function selectVersionAt(versions, asOf) {
+  const date = validDate(asOf);
+  if (!date) return null;
+  return (versions || [])
+    .filter(v => isOfficial(v) && validDate(v.enforceDate) && v.enforceDate <= date)
+    .sort((a, b) => b.enforceDate.localeCompare(a.enforceDate)
+      || String(b.promulDate || '').localeCompare(String(a.promulDate || ''))
+      || Number(b.lawSeq) - Number(a.lawSeq))[0] || null;
+}
+
 export function articleText(article) {
   const parts = [article?.content || ''];
   for (const p of article?.paragraphs || []) {

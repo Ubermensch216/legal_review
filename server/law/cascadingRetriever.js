@@ -3,12 +3,26 @@ import { searchAdminRules } from './decisionsApiClient.js';
 import { matchesLaw, isOfficial, articleText } from './evidence.js';
 import { normalizeArticleNo } from './lawArticleRef.js';
 
+/** 하위 법령 본문이 인용한 상위 조문 번호를 수집한다. ("법 제22조제1항에 따른 ..." → 22) */
+function citedParentArticles(articles, marker) {
+  const numbers = new Set();
+  for (const article of articles || []) {
+    for (const match of articleText(article).matchAll(/(법|영)\s*제\s*(\d+)\s*조(?:\s*의\s*(\d+))?/g)) {
+      if (match[1] === marker) numbers.add(match[3] ? `${match[2]}의${match[3]}` : match[2]);
+    }
+  }
+  return numbers;
+}
+
 /** Collect explicit textual references to the selected parent articles. Not a complete delegation graph. */
-export async function retrieveCascadingHierarchy({ lawName = '', articleNos = [] }, dependencies = {}) {
+export async function retrieveCascadingHierarchy({ lawName = '', articleNos = [], actArticleNos = [] }, dependencies = {}) {
   if (!lawName) return null;
   const api = { searchLaw, getLawDetail, searchAdminRules, ...dependencies };
   const baseName = lawName.replace(/\s*(시행령|시행규칙)$/, '').trim();
   const selected = new Set(articleNos.map(normalizeArticleNo));
+  // articleNos가 어느 단계의 조문 번호인지 구분한다.
+  // 시행령 제31조를 기준으로 삼았는데 모법 제31조를 골라오면 전혀 다른 조문이 나온다.
+  const tier = /시행규칙$/.test(lawName) ? 'rule' : (/시행령$/.test(lawName) ? 'decree' : 'act');
   const warnings = [];
   const load = async name => {
     try {
@@ -32,14 +46,32 @@ export async function retrieveCascadingHierarchy({ lawName = '', articleNos = []
     return { lawId: result.law.lawId, lawSeq: result.law.lawSeq, lawName: result.law.lawName, lawType: result.law.lawType, source: result.law.source, articles,
       relationStatus: articles.length ? 'TEXT_REFERENCE_FOUND' : 'UNCONFIRMED' };
   };
-  const decree = related(decreeResult, selected, '법');
+  // 기준이 시행령이면 selected는 시행령 조문 번호다.
+  // 이때 모법 조문은 번호 일치가 아니라 시행령 본문의 "법 제N조" 인용을 따라가 찾는다.
+  const selectedDecreeArticles = tier === 'decree'
+    ? (decreeResult.law?.articles || []).filter(a => selected.has(normalizeArticleNo(a.fullArticleNo || a.articleNo)))
+    : [];
+  // 하위 조문이 인용한 모법 조문 + 지식베이스가 지정한 모법 주요 조문을 합친다.
+  const actNumbers = tier === 'act'
+    ? selected
+    : new Set([...citedParentArticles(selectedDecreeArticles, '법'), ...actArticleNos.map(normalizeArticleNo)]);
+
+  const decree = tier === 'decree'
+    ? (decreeResult.law ? {
+        lawId: decreeResult.law.lawId, lawSeq: decreeResult.law.lawSeq, lawName: decreeResult.law.lawName,
+        lawType: decreeResult.law.lawType, source: decreeResult.law.source,
+        articles: selectedDecreeArticles.map(a => ({ ...a, relationEvidence: '기준 법령으로 지정된 조문', source: decreeResult.law.source })),
+        relationStatus: selectedDecreeArticles.length ? 'SELECTED' : 'UNCONFIRMED'
+      } : null)
+    : related(decreeResult, actNumbers, '법');
   const decreeNumbers = new Set((decree?.articles || []).map(a => normalizeArticleNo(a.fullArticleNo || a.articleNo)));
-  const ruleFromAct = related(ruleResult, selected, '법');
+  const ruleFromAct = related(ruleResult, actNumbers, '법');
   const ruleFromDecree = related(ruleResult, decreeNumbers, '영');
   const rule = ruleFromAct && { ...ruleFromAct, articles: [...new Map([...ruleFromAct.articles, ...(ruleFromDecree?.articles || [])].map(a => [a.fullArticleNo || a.articleNo, a])).values()] };
   if (rule) rule.relationStatus = rule.articles.length ? 'TEXT_REFERENCE_FOUND' : 'UNCONFIRMED';
   const adminRules = await api.searchAdminRules(baseName, 1, 3).catch(() => []);
-  const selectedAct = actResult.law?.articles.filter(a => selected.has(normalizeArticleNo(a.fullArticleNo || a.articleNo))) || [];
+  const selectedAct = actResult.law?.articles.filter(a => actNumbers.has(normalizeArticleNo(a.fullArticleNo || a.articleNo)))
+    .map(a => ({ ...a, relationEvidence: tier === 'act' ? '기준 법령으로 지정된 조문' : '시행령 본문이 인용한 모법 조문' })) || [];
   return { baseName, act: actResult.law ? { lawId: actResult.law.lawId, lawName: actResult.law.lawName, lawType: actResult.law.lawType, source: actResult.law.source, articles: selectedAct } : null,
     decree, rule, adminRules, stageStatus: { act: actResult.status, decree: decreeResult.status, rule: ruleResult.status },
     isCompleteHierarchy: false, // Textual references are not proof of exhaustive statutory delegation.

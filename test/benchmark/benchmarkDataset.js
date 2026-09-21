@@ -202,6 +202,26 @@ export const BENCHMARK_20_DATASET = [
     expectedArticles: ['제4조', '제5조', '제6조'],
     keyRisks: ['경영책임자 1년 이상 징역 또는 10억원 이하 벌금', '5배 징벌적 손해배상'],
     hasRedlineExpected: true
+  },
+  {
+    // 실제 사건 기반 정답 케이스.
+    // 부산광역시 사전 컨설팅감사 의견서(접수번호 2026-24)의 결론을 정답으로 삼는다.
+    // 자치법규·행정규칙 조문이 수집되지 않으면 이 사안은 답할 수 없으므로,
+    // 조례/고시 조회 경로의 회귀를 잡아내는 케이스이기도 하다.
+    id: 'BENCH-21',
+    category: 'public_property',
+    title: '영화의전당 국제영화제 사무공간 행정재산 사용료 산정방식 (사전 컨설팅감사)',
+    query: '관리위탁 중인 행정재산을 사용허가받은 단체에 사용료를 부과할 때 감정평가법인등의 감정평가액으로 산출해야 하는지(갑설), 공유재산법령·조례의 공용면적 산정방식으로 산출해야 하는지(을설)',
+    targetLaw: '공유재산 및 물품 관리법 시행령',
+    expectedArticles: ['제14조', '제31조'],
+    expectedOrdinances: ['부산광역시 공유재산 및 물품 관리 조례', '부산광역시 사전 컨설팅감사 운영 조례'],
+    expectedOrdinanceArticles: ['제22조'],
+    expectedAdminRules: ['지방자치단체 공유재산 운영기준'],
+    keyRisks: ['감정평가액 적용은 시행령 제31조제2항제1호 단서의 예외 요건을 충족할 때만 가능', '지방자치단체장의 자유재량 사항이 아님'],
+    expectedPrecedentCourt: '서울고등법원',
+    expectedConclusion: '반려',
+    expectedPrevailingView: '을설',
+    hasRedlineExpected: false
   }
 ];
 

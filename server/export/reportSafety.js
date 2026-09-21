@@ -1,3 +1,4 @@
+import { buildConsultingAuditOpinion } from './consultingAuditReport.js';
 export function reportWarnings(data = {}) {
   const review = data.review || {};
   const warnings = [...(data.reliability?.warnings || []), ...(data.meta?.dataIntegrity?.warnings || []), ...(review.warnings || [])];
@@ -14,6 +15,11 @@ export function reportWarnings(data = {}) {
 
 export function reportText(data = {}, content = '') {
   const warnings = reportWarnings(data);
-  const body = content || data.review?.draftOpinion || data.review?.legalOpinion || '';
+  // 사전 컨설팅감사 결과가 있으면 해당 서식으로 조립한다.
+  // (범용 검토의견서 본문은 갑설/을설과 수용·반려 결과를 담지 못한다)
+  const auditBody = data.review?.auditConclusion
+    ? buildConsultingAuditOpinion(data, data.documentText || '')
+    : '';
+  const body = content || auditBody || data.review?.draftOpinion || data.review?.legalOpinion || '';
   return [warnings.length ? `[검토 제한 및 출처 안내]\n${warnings.map(w => `- ${w}`).join('\n')}` : '', body].filter(Boolean).join('\n\n');
 }

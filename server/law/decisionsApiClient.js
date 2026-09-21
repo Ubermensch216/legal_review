@@ -1,8 +1,8 @@
 import { ENV } from '../env.js';
 import { LAW_CONFIG } from './lawConfig.js';
-import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parsePrecedentDetail, parseInterpretationDetail } from './decisionsApiParser.js';
+import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parseOrdinanceDetail, parseAdminRuleDetail, parsePrecedentDetail, parseInterpretationDetail } from './decisionsApiParser.js';
 import { getCache, setCache } from './lawCache.js';
-import { isOfficial, unavailableList } from './evidence.js';
+import { isOfficial, unavailableList, normalizedLawName } from './evidence.js';
 import { DecisionDataError } from './decisionDiagnostics.js';
 
 async function fetchXml(base, params) {
@@ -33,18 +33,22 @@ async function detail(target, id, parse) {
 export const getPrecedentDetail = id => detail('prec', id, parsePrecedentDetail);
 export const getInterpretationDetail = id => detail('expc', id, parseInterpretationDetail);
 
-async function search(target, query, page, display, parse, mock, loadDetail) {
+async function search(target, query, page, display, parse, mock, loadDetail, extraParams = {}) {
   if (!String(query || '').trim()) return [];
   display = Math.min(100, Math.max(1, Number(display) || 10));
   page = Math.max(1, Number(page) || 1);
   const trimmed = String(query).trim();
-  const key = `v2:${target}:list:${trimmed}:${page}:${display}`;
+  const scope = extraParams.search ? `:s${extraParams.search}` : '';
+  const key = `v2:${target}:list:${trimmed}:${page}:${display}${scope}`;
   let items = await getCache(key);
-  if (!Array.isArray(items) || !items.every(isOfficial)) {
+  // 빈 배열은 캐시 적중으로 취급하지 않는다. []는 .every()가 항상 참이므로
+  // 과거의 파싱 실패나 일시적 장애로 저장된 빈 결과가 TTL 내내 재조회를 막았다.
+  if (!Array.isArray(items) || items.length === 0 || !items.every(isOfficial)) {
     if (!ENV.LAW_OC) return ENV.LAW_DEMO_MODE ? mock(trimmed) : unavailableList('UNAVAILABLE', 'LAW_OC 미설정');
     try {
-      items = parse(await fetchXml(LAW_CONFIG.LAW_DRF_BASE_URL, { target, query: trimmed, page, display })).map(item => ({ ...item, source: 'OFFICIAL_API', contentStatus: 'LIST_ONLY', retrievedAt: new Date().toISOString() }));
-      await setCache(key, items, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, target);
+      items = parse(await fetchXml(LAW_CONFIG.LAW_DRF_BASE_URL, { target, query: trimmed, page, display, ...extraParams })).map(item => ({ ...item, source: 'OFFICIAL_API', contentStatus: 'LIST_ONLY', retrievedAt: new Date().toISOString() }));
+      // 빈 결과는 저장하지 않는다. (다음 호출에서 정상적으로 재조회되도록)
+      if (items.length) await setCache(key, items, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, target);
     } catch (err) { return unavailableList('ERROR', err.message); }
   }
   if (!loadDetail) return items;
@@ -63,10 +67,74 @@ async function search(target, query, page, display, parse, mock, loadDetail) {
   }
   return enriched;
 }
-export const searchPrecedents = (q, p = 1, d = 10) => search('prec', q, p, d, parsePrecedents, getMockPrecedents, getPrecedentDetail);
+/**
+ * 판례 검색. DRF 기본 검색(search=1)은 '사건명'만 대조하므로
+ * "공유재산 대부료 감정평가" 같은 주제어 질의는 사실상 항상 0건이 된다.
+ * 결과가 없으면 본문검색(search=2)으로 재시도한다.
+ */
+export async function searchPrecedents(q, p = 1, d = 10) {
+  const byCaseName = await search('prec', q, p, d, parsePrecedents, getMockPrecedents, getPrecedentDetail);
+  if (Array.isArray(byCaseName) && byCaseName.length > 0) return byCaseName;
+  const byFullText = await search('prec', q, p, d, parsePrecedents, getMockPrecedents, getPrecedentDetail, { search: 2 });
+  // 본문검색도 비었으면 원래 결과(상태 플래그 포함)를 그대로 돌려준다.
+  return Array.isArray(byFullText) && byFullText.length > 0 ? byFullText : byCaseName;
+}
 export const searchInterpretations = (q, p = 1, d = 10) => search('expc', q, p, d, parseInterpretations, getMockInterpretations, getInterpretationDetail);
 export const searchAdminRules = (q, p = 1, d = 10) => search('admrul', q, p, d, parseAdminRules, getMockAdminRules);
 export const searchOrdinances = (q, p = 1, d = 10) => search('ordin', q, p, d, parseOrdinances, getMockOrdinances);
+
+/**
+ * 행정규칙 본문(조문 + 별표 목록) 조회.
+ * 별표 본문은 국가법령정보센터가 첨부파일로만 제공하므로 링크를 함께 돌려준다.
+ */
+export async function getAdminRuleDetail(id, { expectedName = '' } = {}) {
+  if (!/^\d+$/.test(String(id || ''))) throw new DecisionDataError('INVALID_ID', '유효한 행정규칙 일련번호가 필요합니다.');
+  const verify = record => {
+    if (String(record.id) !== String(id)) throw new DecisionDataError('RECORD_ID_MISMATCH', '목록과 본문 일련번호가 일치하지 않습니다.');
+    if (expectedName && normalizedLawName(record.name) !== normalizedLawName(expectedName)) {
+      throw new DecisionDataError('ADMIN_RULE_NAME_MISMATCH', `요청한 행정규칙(${expectedName})과 본문(${record.name})이 일치하지 않습니다.`);
+    }
+    return record;
+  };
+
+  const key = `v2:admrul:detail:${id}`;
+  const cached = await getCache(key);
+  if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT' && cached.articles?.length) return verify(cached);
+  if (!ENV.LAW_OC) throw new DecisionDataError('UNAVAILABLE', 'LAW_OC 미설정으로 본문 조회 불가');
+
+  const result = verify(parseAdminRuleDetail(await fetchXml(LAW_CONFIG.LAW_SERVICE_BASE_URL, { target: 'admrul', ID: id })));
+  const value = { ...result, source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', retrievedAt: new Date().toISOString() };
+  if (value.articles.length) await setCache(key, value, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, 'admrul');
+  return value;
+}
+
+/**
+ * 자치법규 본문(조문) 조회. 목록의 일련번호(MST)를 사용한다.
+ * 요청한 자치법규와 응답이 일치할 때만 반환한다. (다른 자치법규의 조문이 섞이는 것을 방지)
+ */
+export async function getOrdinanceDetail(seq, { expectedName = '' } = {}) {
+  if (!/^\d+$/.test(String(seq || ''))) throw new DecisionDataError('INVALID_ID', '유효한 자치법규 일련번호가 필요합니다.');
+
+  // 이름 대조는 캐시 적중 경로에도 반드시 적용한다.
+  // (다른 자치법규의 조문이 요청한 이름으로 표기되는 교차 오표기 방지)
+  const verify = record => {
+    if (String(record.id) !== String(seq)) throw new DecisionDataError('RECORD_ID_MISMATCH', '목록과 본문 일련번호가 일치하지 않습니다.');
+    if (expectedName && normalizedLawName(record.lawName) !== normalizedLawName(expectedName)) {
+      throw new DecisionDataError('ORDINANCE_NAME_MISMATCH', `요청한 자치법규(${expectedName})와 본문(${record.lawName})이 일치하지 않습니다.`);
+    }
+    return record;
+  };
+
+  const key = `v2:ordin:detail:${seq}`;
+  const cached = await getCache(key);
+  if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT' && cached.articles?.length) return verify(cached);
+  if (!ENV.LAW_OC) throw new DecisionDataError('UNAVAILABLE', 'LAW_OC 미설정으로 본문 조회 불가');
+
+  const result = verify(parseOrdinanceDetail(await fetchXml(LAW_CONFIG.LAW_SERVICE_BASE_URL, { target: 'ordin', MST: seq })));
+  const value = { ...result, source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', retrievedAt: new Date().toISOString() };
+  if (value.articles.length) await setCache(key, value, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, 'ordin');
+  return value;
+}
 
 function markMock(items) {
   return items.map(item => ({ ...item, isMockData: true }));
@@ -145,4 +213,4 @@ function getMockOrdinances(query) {
 }
 
 
-export default { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getPrecedentDetail, getInterpretationDetail };
+export default { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getOrdinanceDetail, getAdminRuleDetail, getPrecedentDetail, getInterpretationDetail };
