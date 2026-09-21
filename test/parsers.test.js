@@ -24,3 +24,14 @@ test('생성된 HWPX 파일의 역파싱 무결성 검증', async () => {
   assert.equal(parsed.ext, 'hwpx');
   assert.ok(parsed.text.includes('공공데이터') || parsed.text.length > 0);
 });
+
+test('CSV/Excel 파일 파싱 무결성 검증', async () => {
+  const csvText = '조항,내용\n제1조,목적 규정입니다.\n제2조,정의 규정입니다.';
+  const buf = Buffer.from(csvText, 'utf8');
+  const res = await parseDocument(buf, 'sample.csv');
+
+  assert.equal(res.ext, 'csv');
+  assert.ok(res.text.includes('제1조'));
+  assert.ok(res.text.includes('목적 규정'));
+});
+
