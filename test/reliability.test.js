@@ -280,6 +280,102 @@ test('워크벤치 확보 통계는 재정렬 전 전체 후보와 실패 경고
   assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes('본문 1건 확보, 3건 미확보')));
 });
 
+test('기준 시점을 지정하면 그 시점 버전의 조문을 쓰고 현행 본문으로 대체하지 않는다', async () => {
+  const past = { ...law, lawSeq: '10', enforceDate: '20200101' };
+  const current = { ...law, lawSeq: '11', enforceDate: '20240101' };
+  const bodies = {
+    '10': [{ ...article, content: 'PAST_TEXT' }],
+    // 이 버전에는 기준일 뒤에 시행된 조문이 하나 더 있다.
+    '11': [{ ...article, content: 'CURRENT_TEXT' }, { articleNo: '16', fullArticleNo: '16', title: '신설', content: 'FUTURE_TEXT', enforceDate: '20240101' }]
+  };
+  const deps = services({
+    searchLaw: async () => [current],
+    getLawVersions: async () => [past, current],
+    getLawDetail: async (lawId, seq, options) => ({ ...law, lawSeq: seq, enforceDate: options.enforceDate, articles: structuredClone(bodies[seq]) })
+  });
+
+  const asOf2021 = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조', targetDate: '2021-01-01' }, deps);
+  assert.equal(asOf2021.meta.targetDate, '20210101');
+  assert.equal(asOf2021.meta.asOfDate, '20210101');
+  assert.equal(asOf2021.officialEvidence.lawDetail.lawSeq, '10');
+  assert.deepEqual(asOf2021.officialEvidence.articles.map(a => a.content), ['PAST_TEXT']);
+
+  // 시점을 지정하지 않으면 종전대로 검색 결과(현행) 본문을 쓴다.
+  const currentReview = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조' }, deps);
+  assert.equal(currentReview.meta.targetDate, '');
+  assert.equal(currentReview.officialEvidence.lawDetail.lawSeq, '11');
+  assert.deepEqual(currentReview.officialEvidence.articles.map(a => a.content), ['CURRENT_TEXT']);
+
+  // 기준일 뒤에 시행된 조문은 LLM 입력에서도 빠지고, 시점 검토임이 제한 사항으로 남는다.
+  const input = buildReviewInput(asOf2021, '', '제15조');
+  assert.ok(input.articlesText.includes('PAST_TEXT'));
+  assert.ok(!input.articlesText.includes('FUTURE_TEXT'));
+  assert.ok(input.warnings.some(w => w.includes('20210101 시점에 시행 중이던')));
+});
+
+test('시점 버전을 확인하지 못하면 현행 본문으로 대체하지 않고 제한으로 표시한다', async () => {
+  const deps = services({
+    searchLaw: async () => [law],
+    getLawVersions: async () => [],                       // 그 시점에 시행 중이던 버전 없음
+    getLawDetail: async () => ({ ...law, articles: [structuredClone(article)] })
+  });
+  const result = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조', targetDate: '19990101' }, deps);
+  assert.equal(result.officialEvidence.articles.length, 0);
+  assert.equal(result.meta.dataIntegrity.hasOfficialArticles, false);
+  assert.equal(result.meta.dataIntegrity.isFallback, true);
+  assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes('19990101 시점에 시행 중이던 버전을 확인하지 못했습니다')));
+});
+
+test('형식이 잘못된 기준일은 조용히 오늘로 떨어지지 않는다', async () => {
+  const deps = services({ searchLaw: async () => [law], getLawDetail: async () => ({ ...law, articles: [structuredClone(article)] }) });
+  const result = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조', targetDate: '2021-13-45' }, deps);
+  assert.equal(result.meta.targetDate, '');               // 시점 검토로 표시하지 않는다
+  assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes("'2021-13-45'의 형식이 올바르지 않아")));
+});
+
+test('시점 검토는 인용 검증 기준일도 그 시점으로 바꾼다', async () => {
+  const historical = context();
+  historical.meta.targetDate = '20210101';
+  historical.meta.asOfDate = '20210101';
+  historical.officialEvidence.lawDetail.enforceDate = '20200101';
+  historical.officialEvidence.articles[0].enforceDate = '20200101';
+
+  const inForce = await verifyOne({ lawName: law.lawName, articleNo: '15' }, historical);
+  assert.equal(inForce.verificationReport.validCount, 1);
+
+  // 기준일 뒤에 시행된 조문은 그 시점 근거가 될 수 없다.
+  const later = structuredClone(historical);
+  later.officialEvidence.articles[0].enforceDate = '20240101';
+  assert.equal((await verifyOne({ lawName: law.lawName, articleNo: '15' }, later)).verificationReport.validCount, 0);
+
+  // 과거 시점 검토에서는 현행 조문 엔드포인트로 되묻지 않는다.
+  let lookups = 0;
+  const lookup = async () => { lookups++; return { ...law, article: structuredClone(article) }; };
+  await verifyOne({ lawName: law.lawName, articleNo: '99' }, historical, lookup);
+  assert.equal(lookups, 0);
+  await verifyOne({ lawName: law.lawName, articleNo: '99' }, context(), lookup);
+  assert.equal(lookups, 1);
+});
+
+test('연쇄 체계도 기준 시점 버전으로 맞추고 확인 못 한 단계는 싣지 않는다', async () => {
+  const past = { ...law, lawSeq: '10', enforceDate: '20200101' };
+  const current = { ...law, lawSeq: '11', enforceDate: '20240101' };
+  const deps = services({
+    searchLaw: async name => [{ ...current, lawName: name }],
+    // 시행령만 그 시점 버전이 확인되고, 모법·시행규칙은 확인되지 않는다.
+    getLawVersions: async name => (/시행령$/.test(name) ? [past, current] : []),
+    getLawDetail: async (lawId, seq, options) => ({ ...law, lawName: '개인정보 보호법 시행령', lawSeq: seq, enforceDate: options.enforceDate,
+      articles: [{ articleNo: '31', fullArticleNo: '31', title: '위임', content: '법 제15조에 따른 사항' }] }),
+    searchAdminRules: async () => []
+  });
+  const cascade = await retrieveCascadingHierarchy({ lawName: `${law.lawName} 시행령`, articleNos: ['31'], asOfDate: '20210101' }, deps);
+  assert.equal(cascade.asOfDate, '20210101');
+  assert.equal(cascade.decree.lawSeq, '10');
+  assert.equal(cascade.stageStatus.act, 'VERSION_UNAVAILABLE');
+  assert.equal(cascade.act, null);
+  assert.ok(cascade.warnings.some(w => w.includes('20210101 시점에 시행 중이던 버전으로')));
+});
+
 test('직접 실행한 이력 테스트도 외부의 기존 DB를 건드리지 않는다', () => {
   const seed = saveHistoryItem({ query: 'PRESERVE_TEST_SEED' });
   const child = spawnSync(process.execPath, ['--test', 'test/lawHistory.test.js'], { env: process.env, encoding: 'utf8' });

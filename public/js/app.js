@@ -175,6 +175,7 @@ function initReviewForm() {
   const form = document.getElementById('form-review');
   const queryInput = document.getElementById('input-query');
   const targetLawInput = document.getElementById('input-target-law');
+  const targetDateInput = document.getElementById('input-target-date');
   const btnRun = document.getElementById('btn-run-review');
   const spinner = document.getElementById('review-spinner');
   const btnText = btnRun.querySelector('.btn-text');
@@ -183,6 +184,8 @@ function initReviewForm() {
     e.preventDefault();
     const query = queryInput.value.trim();
     const targetLaw = targetLawInput.value.trim();
+    // <input type="date">는 YYYY-MM-DD로 준다. 서버가 두 형식을 모두 받는다.
+    const targetDate = targetDateInput ? targetDateInput.value.trim() : '';
 
     if (!query && !state.selectedFile) {
       alert('검토 질의를 입력하거나 검토 대상 문서(HWPX, PDF 등)를 첨부해주세요.');
@@ -199,6 +202,7 @@ function initReviewForm() {
     formData.append('query', query);
     formData.append('preset', state.currentPreset || 'compliance');
     formData.append('targetLaw', targetLaw);
+    formData.append('targetDate', targetDate);
     formData.append('llmProvider', state.settings.provider);
     formData.append('llmModel', state.settings.modelName);
     formData.append('llmApiKey', state.settings.apiKey);

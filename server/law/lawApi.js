@@ -7,6 +7,7 @@ import { buildWorkbenchContext } from './lawWorkbench.js';
 import { generateLegalReview } from './lawWorkbenchReview.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
+import { validDate } from './evidence.js';
 import { generateHwpx, generateDocx, generatePdf } from '../export/exportFiles.js';
 import { saveHistoryItem, getHistoryList, getHistoryById, deleteHistoryItem, clearAllHistory } from './lawHistoryDb.js';
 import { formatErrorResponse } from './lawErrors.js';
@@ -69,6 +70,12 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const query = req.body.query || '';
     const preset = req.body.preset || 'compliance';
     const targetLaw = req.body.targetLaw || '';
+    // 검토 기준 시점(선택). 형식이 틀렸을 때 조용히 오늘로 떨어뜨리면
+    // 사용자는 과거 시점을 검토했다고 믿게 되므로 여기서 거절한다.
+    const targetDate = String(req.body.targetDate || '').trim();
+    if (targetDate && !validDate(targetDate)) {
+      return res.status(400).json({ ok: false, error: '검토 기준일은 YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다.' });
+    }
     let documentText = req.body.documentText || '';
     let documentName = '';
 
@@ -91,7 +98,8 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       query,
       preset,
       documentText,
-      targetLaw
+      targetLaw,
+      targetDate
     });
 
     // 2. LLM 10대 검토의견서 생성

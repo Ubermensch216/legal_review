@@ -1,6 +1,7 @@
-import { searchLaw, getLawDetail } from './lawApiClient.js';
+import { searchLaw, getLawDetail, getLawVersions } from './lawApiClient.js';
+import { getLawDetailAt } from './lawVersionAt.js';
 import { searchAdminRules } from './decisionsApiClient.js';
-import { matchesLaw, isOfficial, articleText } from './evidence.js';
+import { matchesLaw, isOfficial, articleText, validDate } from './evidence.js';
 import { normalizeArticleNo } from './lawArticleRef.js';
 
 /** 하위 법령 본문이 인용한 상위 조문 번호를 수집한다. ("법 제22조제1항에 따른 ..." → 22) */
@@ -15,9 +16,12 @@ function citedParentArticles(articles, marker) {
 }
 
 /** Collect explicit textual references to the selected parent articles. Not a complete delegation graph. */
-export async function retrieveCascadingHierarchy({ lawName = '', articleNos = [], actArticleNos = [] }, dependencies = {}) {
+export async function retrieveCascadingHierarchy({ lawName = '', articleNos = [], actArticleNos = [], asOfDate = '' }, dependencies = {}) {
   if (!lawName) return null;
-  const api = { searchLaw, getLawDetail, searchAdminRules, ...dependencies };
+  const api = { searchLaw, getLawDetail, getLawVersions, searchAdminRules, ...dependencies };
+  // 기준 시점이 지정되면 법·영·규칙 모두 그 시점 버전으로 맞춘다.
+  // 한 단계만 현행 본문이면 법 → 영 → 규칙의 위임 체계가 서로 다른 시점으로 섞인다.
+  const asOf = validDate(asOfDate);
   const baseName = lawName.replace(/\s*(시행령|시행규칙)$/, '').trim();
   const selected = new Set(articleNos.map(normalizeArticleNo));
   // articleNos가 어느 단계의 조문 번호인지 구분한다.
@@ -30,8 +34,12 @@ export async function retrieveCascadingHierarchy({ lawName = '', articleNos = []
       if (results.fetchStatus) return { status: results.fetchStatus, law: null };
       const match = results.find(l => matchesLaw(l, name));
       if (!match) return { status: 'NOT_FOUND', law: null };
-      const detail = await api.getLawDetail(match.lawId, match.lawSeq, { enforceDate: match.enforceDate });
-      if (!isOfficial(detail) || !matchesLaw(detail, name) || !detail.articles?.length) return { status: 'BODY_UNAVAILABLE', law: null };
+      const detail = asOf
+        ? (await getLawDetailAt(match, asOf, api)).detail
+        : await api.getLawDetail(match.lawId, match.lawSeq, { enforceDate: match.enforceDate });
+      if (!isOfficial(detail) || !matchesLaw(detail, name) || !detail.articles?.length) {
+        return { status: asOf ? 'VERSION_UNAVAILABLE' : 'BODY_UNAVAILABLE', law: null };
+      }
       return { status: 'COLLECTED', law: detail };
     } catch (err) { warnings.push(`${name}: ${err.message}`); return { status: 'ERROR', law: null }; }
   };
@@ -76,6 +84,8 @@ export async function retrieveCascadingHierarchy({ lawName = '', articleNos = []
     decree, rule, adminRules, stageStatus: { act: actResult.status, decree: decreeResult.status, rule: ruleResult.status },
     isCompleteHierarchy: false, // Textual references are not proof of exhaustive statutory delegation.
     relationStatus: decree?.articles.length || rule?.articles.length ? 'PARTIAL_TEXT_LINKS' : 'UNCONFIRMED',
-    warnings: [...warnings, '명시적 조문 인용으로 확인한 연계만 제공합니다. 위임 관계 전체 및 하위 규정 부존재는 확정하지 않습니다.'] };
+    asOfDate: asOf || '',
+    warnings: [...warnings, '명시적 조문 인용으로 확인한 연계만 제공합니다. 위임 관계 전체 및 하위 규정 부존재는 확정하지 않습니다.',
+      ...(asOf ? [`${asOf} 시점에 시행 중이던 버전으로 법·영·규칙을 맞췄습니다. 확인하지 못한 단계는 제외했습니다.`] : [])] };
 }
 export default { retrieveCascadingHierarchy };

@@ -1,7 +1,11 @@
 import { buildConsultingAuditOpinion } from './consultingAuditReport.js';
+import { historicalReviewNotice } from '../law/evidence.js';
 export function reportWarnings(data = {}) {
   const review = data.review || {};
   const warnings = [...(data.reliability?.warnings || []), ...(data.meta?.dataIntegrity?.warnings || []), ...(review.warnings || [])];
+  // 시점 검토 표식은 meta에서 직접 읽는다. 룰베이스 폴백은 review.warnings를 채우지 않으므로
+  // 검토 본문에만 의존하면 과거 시점 검토라는 사실이 보고서에서 빠진다.
+  if (data.meta?.targetDate) warnings.push(historicalReviewNotice(data.meta.targetDate));
   if (review.isFallback) warnings.push('규칙 기반 점검입니다. 법리 검토를 완료하지 못했습니다.');
   if (review.fallbackReason) warnings.push(review.fallbackReason);
   if (review.reviewStatus && review.reviewStatus !== 'COMPLETE') warnings.push(`검토 상태: ${review.reviewStatus} (미완료 또는 부분 결과)`);

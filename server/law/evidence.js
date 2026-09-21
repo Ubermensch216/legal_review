@@ -31,6 +31,11 @@ export function selectVersionAt(versions, asOf) {
       || Number(b.lawSeq) - Number(a.lawSeq))[0] || null;
 }
 
+// 과거·미래 시점 검토임을 알리는 문구. LLM 프롬프트와 출력 보고서가 같은 문장을 써야
+// 중복 제거가 되고, 어느 경로로 나가든 같은 사실이 같은 표현으로 남는다.
+export const historicalReviewNotice = date =>
+  `${date} 시점에 시행 중이던 법령을 기준으로 검토했습니다. 현행 법령과 다를 수 있으며, 부칙·경과조치에 따른 개별 사안 적용 여부는 별도 검토가 필요합니다.`;
+
 export function articleText(article) {
   const parts = [article?.content || ''];
   for (const p of article?.paragraphs || []) {

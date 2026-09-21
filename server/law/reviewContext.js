@@ -1,5 +1,5 @@
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
-import { articleText, isOfficial, today, sameLaw, normalizedLawName } from './evidence.js';
+import { articleText, isOfficial, today, sameLaw, normalizedLawName, inForceAt, historicalReviewNotice } from './evidence.js';
 
 export function buildReviewInput(context, documentText = '', query = '', budgets = {}) {
   const evidence = context.officialEvidence || {};
@@ -11,7 +11,14 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     document.omittedCount += cachedDocument.omittedCount || 0;
     document.truncatedCount += cachedDocument.truncatedCount || 0;
   }
+  // 조문 효력은 워크벤치가 확정한 기준일로 판단한다. 지정이 없으면 오늘이다.
+  const asOf = context.meta?.asOfDate || today();
   const warnings = [...(context.meta?.dataIntegrity?.warnings || [])];
+  // 과거·미래 시점 검토임을 LLM 프롬프트와 출력 보고서 양쪽에 남긴다.
+  // 이 문장이 없으면 검토문이 현행 법령을 말하는지 그 시점 법령을 말하는지 구분되지 않는다.
+  if (context.meta?.targetDate) {
+    warnings.push(historicalReviewNotice(context.meta.targetDate));
+  }
   let omittedEvidence = 0;
   const pack = (items, render, budget) => {
     let text = '';
@@ -22,7 +29,7 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     }
     return text;
   };
-  const articles = (evidence.articles || []).filter(a => !a.isDeleted && (!a.enforceDate || a.enforceDate <= today()) && (isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData)));
+  const articles = (evidence.articles || []).filter(a => inForceAt(a, asOf) && (isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData)));
   // 모법(act)이 빠져 있었다. 시행령을 기준으로 검토할 때 위임의 출발점인 법률 조문이
   // LLM 입력에 들어가지 않아, 법 → 영 → 조례로 이어지는 체계를 설명할 수 없었다.
   const cascading = ['act', 'decree', 'rule'].flatMap(kind => {

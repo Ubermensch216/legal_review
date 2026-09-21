@@ -36,5 +36,15 @@ test('워크벤치 HTTP 응답·이력·다운로드가 제한 상태를 유지�
     const report = await request('/report', { format: 'md', content: '검토문', reviewData: payload });
     assert.ok(report.text.includes('법리 검토를 완료하지 못했습니다'));
     assert.equal((await request('/history', null, 'https://external.example')).status, 403);
+    // 시점 검토 표식은 룰베이스 폴백 보고서에도 남는다.
+    const dated = JSON.parse((await request('/workbench', { query: '검토', targetLaw: '개인정보 보호법', targetDate: '2021-01-01', llmProvider: 'rule_based' })).text);
+    assert.equal(dated.meta.targetDate, '20210101');
+    assert.ok(dated.reliability.warnings.some(w => w.includes('20210101 시점에 시행 중이던')));
+    const datedReport = await request('/report', { format: 'md', content: '검토문', reviewData: dated });
+    assert.ok(datedReport.text.includes('20210101 시점에 시행 중이던'));
+    // 형식이 틀린 기준일을 조용히 오늘로 바꾸지 않고 거절한다.
+    const badDate = await request('/workbench', { query: '검토', targetLaw: '개인정보 보호법', targetDate: '21-1-1', llmProvider: 'rule_based' });
+    assert.equal(badDate.status, 400);
+    assert.ok(JSON.parse(badDate.text).error.includes('검토 기준일'));
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
