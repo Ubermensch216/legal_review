@@ -1,0 +1,17 @@
+import './server/env.js';
+import fs from 'fs';
+import { createRequire } from 'module';
+import { buildWorkbenchContext } from './server/law/lawWorkbench.js';
+import { generateLegalReview } from './server/law/lawWorkbenchReview.js';
+const pdf = createRequire(import.meta.url)('pdf-parse');
+const documentText = (await pdf(fs.readFileSync('./test/docs/test_mobility_ordinance.pdf'))).text;
+const query = 'OO시 개인형 이동장치 규제 조례안 검토요청서';
+const t0 = Date.now();
+const ctx = await buildWorkbenchContext({ query, preset: 'compliance', documentText });
+console.log('[수집] 기준법령:', ctx.meta.primaryLawName, '| 조문', ctx.officialEvidence.articles.length, '건');
+console.log('[수집] 경고:', ctx.meta.dataIntegrity.warnings.length ? ctx.meta.dataIntegrity.warnings : '없음');
+const review = await generateLegalReview({ query, preset: 'compliance', documentText, workbenchContext: ctx });
+console.log('[검토] 소요:', ((Date.now()-t0)/1000).toFixed(0), 's');
+console.log('[검토] reviewStatus:', review.reviewStatus);
+console.log('[검토] fallbackReason:', review.fallbackReason || '(없음 — LLM 검토 수행됨)');
+console.log('[검토] tokenUsage:', JSON.stringify(review.tokenUsage));

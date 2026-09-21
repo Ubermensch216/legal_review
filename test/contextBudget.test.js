@@ -71,14 +71,25 @@ test('제공자별 실제 출력 제한과 사용량을 전달하고 누락값�
       if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [] }) };
       body = JSON.parse(options.body);
       const text = JSON.stringify(review);
-      const data = provider === 'ollama' ? { message: { content: text }, prompt_eval_count: 111, eval_count: 222 }
-        : provider === 'anthropic' ? { content: [{ text }], usage: { input_tokens: 111, output_tokens: 222 } }
+      // Ollama는 스트리밍(NDJSON)으로 받는다. 한 줄이 청크 경계에 걸쳐 쪼개져도 조립되어야 한다.
+      if (provider === 'ollama') {
+        const line = `${JSON.stringify({ message: { content: text }, done: true, done_reason: 'stop', prompt_eval_count: 111, eval_count: 222 })}\n`;
+        const bytes = new TextEncoder().encode(line);
+        const cut = Math.floor(bytes.length / 2);
+        return { ok: true, body: (async function* () { yield bytes.slice(0, cut); yield bytes.slice(cut); })() };
+      }
+      const data = provider === 'anthropic' ? { content: [{ text }], usage: { input_tokens: 111, output_tokens: 222 } }
         : { candidates: [{ content: { parts: [{ text }] } }], usageMetadata: { promptTokenCount: 111, candidatesTokenCount: 222, thoughtsTokenCount: 50 } };
       return { ok: true, json: async () => data };
     };
     const result = await run(provider, { contextTokens: 32000, outputTokens: 900 });
     assert.equal(body.options?.num_predict ?? body.max_tokens ?? body.generationConfig?.maxOutputTokens, 900);
-    if (provider === 'ollama') assert.equal(body.options.num_ctx, 32000);
+    if (provider === 'ollama') {
+      assert.equal(body.options.num_ctx, 32000);
+      // stream:false로 되돌리면 생성이 끝나야 응답 헤더가 오고, Node fetch(undici)의
+      // 300초 헤더 타임아웃에 걸려 'fetch failed'로 떨어진다. LLM_TIMEOUT은 무력해진다.
+      assert.equal(body.stream, true, 'Ollama 호출은 스트리밍이어야 한다');
+    }
     assert.equal(result.tokenUsage.inputTokens, 111);
     assert.equal(result.tokenUsage.outputTokens, 222);
   }
