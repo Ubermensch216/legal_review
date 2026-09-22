@@ -5,6 +5,7 @@ import { ENV } from '../env.js';
 import { maskLawSecrets } from './lawErrors.js';
 import { verifyAndCorrectReviewCitations } from './factualityVerifier.js';
 import { findLearningKnowledge } from './manualLearningMemory.js';
+import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
 
 /**
  * 근거와 제한 사항을 구분하는 법률 검토 출력 스키마
@@ -81,7 +82,7 @@ export async function checkLlmReadiness(llmConfig = {}) {
  * @param {object} params.llmConfig - 모델/프로바이더 오버라이드 설정 (선택)
  * @returns {Promise<object>}
  */
-export async function generateLegalReview({ query, preset, documentText, workbenchContext, llmConfig = {}, sourceHistoryId = null }) {
+export async function generateLegalReview({ query, preset, documentText, workbenchContext, llmConfig = {}, sourceHistoryId = null, progress = NOOP_PROGRESS }) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
 
@@ -93,12 +94,18 @@ export async function generateLegalReview({ query, preset, documentText, workben
   // 두 장만 반영되면 "모든 답변이 충족되면 최종 답변서"라는 흐름이 성립하지 않는다.
   const learningBudgets = sourceHistoryId ? { learningKnowledge: 6000 } : {};
   if (provider === 'ollama') {
+    progress.start('learning', '승인된 외부 참고 지식 조회', sourceHistoryId ? '같은 사건의 재검토' : '', '준비');
     try {
       const found = findLearningKnowledge(workbenchContext, query, undefined,
         { historyId: sourceHistoryId, limit: sourceHistoryId ? 6 : 2 });
       learningKnowledge = found.used;
       learningExcluded = found.excluded;
-    } catch { learningWarning = '학습 지식 저장소를 읽지 못해 이번 검토에는 사용하지 않았습니다.'; }
+      progress.done('learning', `참고 지식 ${countLabel(learningKnowledge.length, '장')} 반영`
+        + `${learningExcluded.length ? ` · 제외 ${countLabel(learningExcluded.length, '장')}` : ''}`);
+    } catch {
+      learningWarning = '학습 지식 저장소를 읽지 못해 이번 검토에는 사용하지 않았습니다.';
+      progress.fail('learning', '학습 지식 저장소를 읽지 못했습니다');
+    }
   }
   workbenchContext = { ...workbenchContext, learningKnowledge, learningExcluded, learningWarning };
 
@@ -271,10 +278,14 @@ ${resolvedProvisionsText}` : ''}
 
   try {
     if (provider === 'rule_based' || provider === 'local_rule') {
+      progress.mark('llm', 'AI 검토 생성', '규칙 기반 점검으로 실행 (LLM 미사용)', '작성');
+      progress.start('verify', '인용 조문 실존성 검증', '', '검증');
       const { verifiedReview } = await verifyAndCorrectReviewCitations({ review: generateRuleBasedReview(query, preset, documentText, workbenchContext), workbenchContext });
+      progress.done('verify', describeVerification(verifiedReview));
       return verifiedReview;
     }
     const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
+    progress.start('budget', '프롬프트 입력 예산 계산', `${provider} / ${model}`, '분석');
     const budget = resolveBudget(provider, { ...llmConfig, model });
     const callConfig = { ...llmConfig, budget };
     const counter = createTokenCounter(provider, { model, apiKey: llmConfig.apiKey || ENV[`${provider.toUpperCase()}_API_KEY`] });
@@ -304,8 +315,18 @@ ${resolvedProvisionsText}` : ''}
     inputBudget = { ...budget, estimatedInputTokens: counted.tokens, exact: counted.exact, tokenCountSource: counted.source,
       tokenizerFamily: counted.tokenizerFamily, calibrationSamples: counted.calibrationSamples ?? null,
       tokenCountError: counted.countError || null, reduced: scale < 1 };
+    progress.done('budget', `입력 ${counted.tokens.toLocaleString()} / 한도 ${budget.inputLimit.toLocaleString()} 토큰`
+      + `${counted.exact ? ' (정확 계수)' : ' (추정)'}`
+      + `${scale < 1 ? ` · 근거 발췌 ${Math.round(scale * 100)}%로 축소` : ''}`);
+    if (scale < 1) progress.warn('budget', '입력 한도에 맞추기 위해 근거 발췌를 축소했습니다. 일부 조문·판례 본문이 프롬프트에서 빠졌습니다.');
     if (counted.tokens > budget.inputLimit) throw new Error('질의와 필수 지시문이 입력 예산을 초과합니다. 질의 범위를 줄이거나 모델에 맞는 컨텍스트 예산을 설정하십시오.');
     // 1단계: 조문 특정만 좁은 질문으로 먼저 확정한다. 실패해도 본 검토는 그대로 진행한다.
+    // 생성 중 누적 글자 수를 그대로 흘려보낸다. 모든 제공자를 스트리밍으로 호출하므로
+    // 1단계(조문 특정)와 본 검토 모두 실시간으로 진행을 알릴 수 있다.
+    // 로컬 모델에서는 1단계만 수 분이 걸리므로, 이 계측이 없으면 화면이 멈춘 것처럼 보인다.
+    let llmStepKey = 'stage1';
+    callConfig.onToken = (chars) => progress.tick(llmStepKey, `생성 중 · ${chars.toLocaleString()}자`);
+
     const callProvider = (sys, user) => {
       if (provider === 'openai' && (llmConfig.apiKey || ENV.OPENAI_API_KEY)) return callOpenAi(sys, user, callConfig);
       if (provider === 'anthropic' && (llmConfig.apiKey || ENV.ANTHROPIC_API_KEY)) return callAnthropic(sys, user, callConfig);
@@ -313,13 +334,29 @@ ${resolvedProvisionsText}` : ''}
       if (provider === 'ollama') return callOllama(sys, user, callConfig);
       throw new Error(describeProviderMisconfiguration(provider, llmConfig));
     };
+    const runsStage1 = preset === 'pre_consulting_audit' && Boolean(fullKeyProvisionsText);
+    if (runsStage1) {
+      progress.start('stage1', '쟁점 조문 특정 (1단계 좁은 질문)', '원칙·예외 구조에서 각 견해의 근거 조항 확정', '분석');
+    }
     const resolvedProvisions = await resolveGoverningProvisions(callProvider);
+    if (runsStage1) {
+      progress.done('stage1', resolvedProvisions.rows.length
+        ? `조항 ${countLabel(resolvedProvisions.rows.length, '개')} 확정: ${resolvedProvisions.rows.map(r => `${r.view || ''} ${r.articleNo}`).join(' / ')}`
+        : '확정하지 못해 본 검토만 진행', resolvedProvisions.rows.length ? 'DONE' : 'SKIPPED');
+    }
     resolvedProvisionsText = resolvedProvisions.text;
     resolvedProvisionRows = resolvedProvisions.rows;
     if (resolvedProvisionsText) userPrompt = renderPrompt(input);
 
     let completion;
 
+    progress.start('llm', 'AI 법리 검토 생성 (IRAC)',
+      `${provider} / ${model} · 최대 출력 ${budget.outputTokens.toLocaleString()} 토큰`, '작성');
+    llmStepKey = 'llm';
+    // 로컬 모델은 프롬프트를 먼저 다 읽은 뒤에야 첫 토큰을 낸다. 그 사이 수 분간
+    // 아무 이벤트도 없으면 화면이 멈춘 것처럼 보이므로, 무엇을 기다리는지 밝혀 둔다.
+    progress.note('llm', `입력 ${counted.tokens.toLocaleString()} 토큰을 모델이 먼저 처리합니다.`
+      + `${provider === 'ollama' ? ' 로컬 모델에서는 첫 응답까지 수 분이 걸릴 수 있습니다.' : ''}`);
 
     if (provider === 'openai' && (llmConfig.apiKey || ENV.OPENAI_API_KEY)) {
       completion = await callOpenAi(systemPrompt, userPrompt, callConfig);
@@ -333,8 +370,11 @@ ${resolvedProvisionsText}` : ''}
 
     const rawContent = completion.content;
     tokenUsage = completion.tokenUsage;
+    progress.done('llm', `${rawContent.length.toLocaleString()}자 생성`
+      + `${tokenUsage?.outputTokens ? ` · 출력 ${tokenUsage.outputTokens.toLocaleString()} 토큰` : ''}`);
     // 사전 계수와 제공자가 보고한 실제 입력 토큰의 오차를 남기고 다음 추정에 반영한다.
     inputBudget = { ...inputBudget, accuracy: counter.observe(counted, tokenUsage) };
+    progress.start('json', '응답 JSON 파싱 및 스키마 정규화', '', '작성');
     const parsed = parseReviewJson(rawContent);
     if (!parsed) {
       // 파싱 실패 시 normalizeReviewResult가 조용히 룰베이스 결과를 돌려주므로,
@@ -343,6 +383,14 @@ ${resolvedProvisionsText}` : ''}
         `[LawWorkbenchReview] LLM 응답을 JSON으로 파싱하지 못해 룰베이스 결과로 대체합니다. ` +
         `(응답 길이: ${rawContent.length}자, 앞부분: ${rawContent.slice(0, 200).replace(/\s+/g, ' ')})`
       );
+    }
+    if (parsed) {
+      progress.done('json', `쟁점 ${countLabel((parsed.coreIssues || []).length, '개')}`
+        + ` · 인용 근거 ${countLabel((parsed.legalBasis || []).length, '개')}`
+        + ` · 리스크 ${countLabel((parsed.risks || []).length, '개')}`
+        + ` · 수정 조문 ${countLabel((parsed.redlineDiffs || []).length, '개')}`);
+    } else {
+      progress.fail('json', 'JSON 파싱 실패 — 규칙 기반 결과로 대체');
     }
     const normalized = normalizeReviewResult(parsed, workbenchContext, query, preset, documentText);
 
@@ -366,14 +414,18 @@ ${resolvedProvisionsText}` : ''}
     normalized.learningExcluded = input.learningExcluded;
     if (normalized.reviewStatus === 'COMPLETE' && (input.omittedEvidence || input.document.omittedCount || input.document.truncatedCount)) normalized.reviewStatus = 'PARTIAL';
     // 공식 인용 존재 확인
+    progress.start('verify', '인용 조문 실존성 검증', `인용 ${countLabel((normalized.legalBasis || []).length, '개')} 대조`, '검증');
     const { verifiedReview } = await verifyAndCorrectReviewCitations({
       review: normalized,
       workbenchContext
     });
+    progress.done('verify', describeVerification(verifiedReview));
+    for (const w of (verifiedReview.factualityVerification?.warnings || []).slice(0, 5)) progress.warn('verify', w);
 
     return verifiedReview;
   } catch (err) {
     console.warn('[LawWorkbenchReview] LLM 호출 실패, 규칙 기반 점검으로 대체합니다:', maskLawSecrets(err.message || ''));
+    progress.fail('llm', `LLM 검토 실패 — 규칙 기반 점검으로 대체 (${maskLawSecrets(err.message || '원인 미상')})`);
     const ruleBased = generateRuleBasedReview(query, preset, documentText, workbenchContext);
     ruleBased.inputBudget = inputBudget;
     ruleBased.tokenUsage = err.tokenUsage || tokenUsage;
@@ -381,13 +433,26 @@ ${resolvedProvisionsText}` : ''}
     ruleBased.warnings = input.warnings;
     ruleBased.fallbackReason = `LLM 검토를 실행하지 못했습니다 (${maskLawSecrets(err.message || '원인 미상')}). 규칙 기반 점검 결과만 제공됩니다.`;
     
+    progress.start('verify', '인용 조문 실존성 검증', '규칙 기반 결과 대조', '검증');
     const { verifiedReview } = await verifyAndCorrectReviewCitations({
       review: ruleBased,
       workbenchContext
     });
+    progress.done('verify', describeVerification(verifiedReview));
 
     return verifiedReview;
   }
+}
+
+/** 인용 검증 결과를 진행 표시용 한 줄로 요약한다. */
+function describeVerification(review) {
+  const v = review?.factualityVerification || {};
+  const confidence = typeof v.citationConfidence === 'number' ? `${Math.round(v.citationConfidence * 100)}%` : '측정 불가';
+  return `인용 일치도 ${confidence}`
+    + `${v.verifiedCount != null ? ` · 확인 ${countLabel(v.verifiedCount, '개')}` : ''}`
+    + `${v.correctedCount ? ` · 수정 ${countLabel(v.correctedCount, '개')}` : ''}`
+    + `${v.removedCount ? ` · 제거 ${countLabel(v.removedCount, '개')}` : ''}`
+    + ` · 검토 상태 ${review?.reviewStatus || 'UNKNOWN'}`;
 }
 
 // ── LLM 전송 계층 공통 ────────────────────────────────────────────
@@ -459,8 +524,9 @@ async function* readSseData(body) {
  * @param {ReadableStream} args.body
  * @param {ReturnType<createCallGuard>} args.guard
  * @param {(chunk: object, state: {content: string, usage: object, truncated: boolean}) => void} args.onChunk
+ * @param {((chars: number) => void)} [args.onToken] 누적 생성 글자 수 통지 (진행 표시용, 실패해도 무시)
  */
-async function collectSseStream({ body, guard, onChunk }) {
+async function collectSseStream({ body, guard, onChunk, onToken }) {
   const state = { content: '', usage: {}, truncated: false };
   try {
     for await (const payload of readSseData(body)) {
@@ -468,6 +534,7 @@ async function collectSseStream({ body, guard, onChunk }) {
       try { chunk = JSON.parse(payload); } catch { continue; } // 하트비트 등 JSON이 아닌 줄은 건너뛴다
       if (chunk.error) throw new Error(`제공자 오류: ${chunk.error.message || JSON.stringify(chunk.error)}`);
       onChunk(chunk, state);
+      if (onToken) { try { onToken(state.content.length); } catch { /* 진행 표시 실패는 생성을 막지 않는다 */ } }
     }
   } catch (err) {
     throw guard.describe(err);
@@ -554,6 +621,7 @@ async function callOllama(systemPrompt, userPrompt, config = {}) {
       if (part.error) throw new Error(`Ollama Error: ${part.error}`);
       content += part.message?.content || '';
       last = part;
+      if (config.onToken) { try { config.onToken(content.length); } catch { /* 진행 표시 실패는 생성을 막지 않는다 */ } }
     }
   } catch (err) {
     throw guard.describe(err);
@@ -606,7 +674,7 @@ async function callOpenAi(systemPrompt, userPrompt, config = {}) {
     s.content += choice?.delta?.content || '';
     if (choice?.finish_reason === 'length') s.truncated = true;
     if (chunk.usage) s.usage = chunk.usage;
-  } });
+  }, onToken: config.onToken });
 
   const usage = readTokenUsage('openai', { usage: state.usage });
   if (state.truncated) throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: usage });
@@ -649,7 +717,7 @@ async function callAnthropic(systemPrompt, userPrompt, config = {}) {
       if (chunk.usage) s.usage = { ...s.usage, ...chunk.usage };
       if (chunk.delta?.stop_reason === 'max_tokens') s.truncated = true;
     }
-  } });
+  }, onToken: config.onToken });
 
   const usage = readTokenUsage('anthropic', { usage: state.usage });
   if (state.truncated) throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: usage });
@@ -690,7 +758,7 @@ async function callGemini(systemPrompt, userPrompt, config = {}) {
     for (const part of candidate?.content?.parts || []) s.content += part.text || '';
     if (candidate?.finishReason === 'MAX_TOKENS') s.truncated = true;
     if (chunk.usageMetadata) s.usage = chunk.usageMetadata;
-  } });
+  }, onToken: config.onToken });
 
   const usage = readTokenUsage('gemini', { usageMetadata: state.usage });
   if (state.truncated) throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: usage });

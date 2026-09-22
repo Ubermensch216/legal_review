@@ -10,6 +10,7 @@ import { retrieveCascadingHierarchy } from './cascadingRetriever.js';
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { runTool } from './tools/toolRunner.js';
 import { summarizeAvailability } from './decisionDiagnostics.js';
+import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
 
 // 준용·위임 추적 깊이와 조문 수집 상한.
 // 법령 조문은 서로를 광범위하게 인용하므로, 제한 없이 따라가면 법령 전체를 끌어오게 된다.
@@ -40,9 +41,10 @@ function extractSameLawReferences(text) {
  * @param {string} options.documentText - 첨부문서에서 추출된 텍스트
  * @param {string} options.targetLaw - 특정 지정 법령명 (선택)
  * @param {string} options.targetDate - 검토 기준 시점 (YYYYMMDD, 선택). 미지정 시 현행 법령 기준
+ * @param {object} [options.progress] - 진행 상황 리포터 (createProgressReporter). 없으면 계측하지 않는다.
  * @returns {Promise<object>}
  */
-export async function buildWorkbenchContext({ query = '', preset = 'compliance', documentText = '', targetLaw = '', targetDate = '' }, dependencies = {}) {
+export async function buildWorkbenchContext({ query = '', preset = 'compliance', documentText = '', targetLaw = '', targetDate = '', progress = NOOP_PROGRESS }, dependencies = {}) {
   const clients = { searchLaw, getLawDetail, getLawVersions, searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getOrdinanceDetail, getAdminRuleDetail, retrieveCascadingHierarchy, runTool, ...dependencies };
   const collectionWarnings = [];
   const startTime = Date.now();
@@ -70,15 +72,33 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   };
 
   // 1. 대용량 첨부문서 컨텍스트 최적화
+  progress.start('doc', '첨부문서 조항 선별', documentText ? `${documentText.length.toLocaleString()}자 분석` : '첨부문서 없음', '준비');
   const optimizedDoc = optimizeDocumentContext({
     documentText,
     query,
     maxChars: 4500
   });
+  if (!documentText) {
+    progress.done('doc', '첨부문서 없이 질의만으로 검토');
+  } else {
+    const riskCount = (optimizedDoc.selectedChunks || []).filter(c => c.isRiskClause).length;
+    progress.done('doc', `조항 ${countLabel((optimizedDoc.selectedChunks || []).length, '개')} 선별`
+      + `${optimizedDoc.omittedCount ? `, ${countLabel(optimizedDoc.omittedCount, '개')} 생략` : ''}`
+      + `${riskCount ? ` · 위험 조항 ${countLabel(riskCount, '개')} 탐지` : ''}`);
+    if (optimizedDoc.omittedCount || optimizedDoc.truncatedCount) {
+      progress.warn('doc', `문서가 커서 일부 조항을 생략(${optimizedDoc.omittedCount})·축약(${optimizedDoc.truncatedCount})했습니다.`);
+    }
+  }
 
   // 2. 키워드 및 도메인 지식베이스 다중 확장
+  progress.start('keywords', '쟁점어 확장 및 인용 조문 추출', '', '준비');
   const kbResult = expandQueryKeywords(fullContextText);
   const explicitRefs = extractArticleReferences(fullContextText, targetLaw);
+  progress.done('keywords', `쟁점어 ${countLabel(kbResult.matchedKeywords.length, '개')}`
+    + `${kbResult.matchedKeywords.length ? ` (${kbResult.matchedKeywords.slice(0, 4).join(', ')})` : ''}`
+    + ` · 인용 조문 ${countLabel(explicitRefs.filter(isCitationReference).length, '개')}`
+    + ` · 추천 법령 ${countLabel(kbResult.suggestedLaws.length, '개')}`);
+  progress.note('keywords', `기준 시점: ${isHistorical ? `${asOfDate} (과거 시점 검토)` : `${asOfDate} (현행 법령)`}`);
 
   // 3. 검색 대상 주요 법령 결정
   // 자치법규(조례/자치규칙)는 법령 API(searchLaw)가 제공하지 않으므로 별도 채널로 보낸다.
@@ -105,9 +125,14 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     ? [targetLaw]
     : [...new Set([...citedStatuteNames, ...kbResult.suggestedLaws.map(l => l.name)])];
 
+  progress.start('law', '기준 법령 확정', primaryCandidates.length
+    ? `후보 ${primaryCandidates.slice(0, 5).join(', ')}`
+    : (query ? '질의어로 법령 검색' : '후보 없음'), '수집');
+
   if (primaryCandidates.length > 0) {
     const unresolved = [];
     for (const candidate of primaryCandidates.slice(0, 5)) {
+      progress.note('law', `${candidate} 조회 중`);
       const searchRes = await clients.searchLaw(candidate, 1, 100);
       const exactMatch = Array.isArray(searchRes) ? searchRes.find(l => matchesLaw(l, candidate)) : null;
       if (!exactMatch) { unresolved.push(candidate); continue; }
@@ -118,6 +143,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
 
       primaryLawName = exactMatch.lawName;
       mainLawDetail = detail;
+      progress.note('law', `${exactMatch.lawName} 본문 확보 (조문 ${countLabel(detail.articles.length, '개')})`);
       break;
     }
 
@@ -145,7 +171,13 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
 
   if (!mainLawDetail?.articles?.length || !sameLaw(mainLawDetail.lawName, primaryLawName)) lawLookupFailed = true;
 
+  progress.done('law', mainLawDetail
+    ? `${primaryLawName} · 시행 ${mainLawDetail.enforceDate || '일자 미확인'}`
+    : `조회 실패 — 공식 조문 없이 진행 (${primaryLawName || '기준 법령 미확정'})`,
+    mainLawDetail ? 'DONE' : 'FAILED');
+
   // 5. 관련 조문 핀포인트 추출
+  progress.start('articles', '적용 조문 수집 및 준용 지시 추적', '', '수집');
   const targetArticleNos = new Set();
   // 문서 자신의 조문(SELF)과 서식 빈칸(PLACEHOLDER)은 기준 법령 조문으로 끌어오지 않는다.
   // 조례안의 '제8조'가 상위법 제8조로 둔갑해 공식 근거로 실리던 경로다.
@@ -236,6 +268,12 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       collectedArticles.push(...detail.articles.filter(a => numbers.has(a.fullArticleNo || String(a.articleNo))).map(a => tagArticle(a, detail)));
     } catch { collectionWarnings.push(`${name} 본문 수집 실패`); }
   }
+  progress.done('articles', collectedArticles.length
+    ? `조문 ${countLabel(collectedArticles.length, '개')} 확보`
+      + `${targetArticleNos.size ? ` (인용·지식베이스 지정 ${countLabel(targetArticleNos.size, '개')})` : ' (인용 없음 — 앞부분 주요 조문)'}`
+      + `${otherNames.length ? ` · 타 법령 ${countLabel(Math.min(otherNames.length, 5), '개')} 병행 수집` : ''}`
+    : '공식 조문을 확보하지 못했습니다', collectedArticles.length ? 'DONE' : 'FAILED');
+
   const targetArticleList = Array.from(targetArticleNos);
 
   // 6. 병렬 조회: 판례, 유권해석례, 행정규칙, 자치법규, 3단계 연쇄 체계, 영향 분석, 개정 이력
@@ -271,6 +309,10 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   };
   const textToAnalyze = `${documentText}\n${query}`.trim();
 
+  // 7개 채널을 동시에 호출한다. 어느 채널이 무엇을 가져왔는지 개별로 알린다.
+  progress.start('search', '판례·해석례·행정규칙·자치법규 동시 조회',
+    `질의 ${[...new Set([...decisionQueries, ...adminRuleQueries])].slice(0, 5).join(' / ')}`, '수집');
+
   const [precRes, expcRes, admrulRes, ordinRes, cascadingRes, impactRes, historyRes] = await Promise.allSettled([
     multiSearch(clients.searchPrecedents, decisionQueries, 4),
     multiSearch(clients.searchInterpretations, decisionQueries, 4),
@@ -282,9 +324,28 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     primaryLawName ? clients.runTool('lawHistory', { lawName: primaryLawName }) : Promise.resolve(null)
   ]);
 
-  for (const [name, result] of Object.entries({ '판례': precRes, '해석례': expcRes, '행정규칙': admrulRes, '자치법규': ordinRes, '하위 법령': cascadingRes, '영향 분석': impactRes, '법령 연혁': historyRes })) {
+  const channels = { '판례': precRes, '해석례': expcRes, '행정규칙': admrulRes, '자치법규': ordinRes, '하위 법령': cascadingRes, '영향 분석': impactRes, '법령 연혁': historyRes };
+  for (const [name, result] of Object.entries(channels)) {
     if (result.status === 'rejected' || result.value?.fetchStatus || result.value?.ok === false) collectionWarnings.push(`${name}: 공식 자료 조회 미완료`);
   }
+
+  // 채널별 수확량을 개별 줄로 남긴다. '없음'과 '못 가져옴'을 화면에서도 구분한다.
+  for (const [name, result] of Object.entries(channels)) {
+    if (result.status === 'rejected') { progress.warn('search', `${name}: 조회 실패 (${result.reason?.message || '원인 미상'})`); continue; }
+    const value = result.value;
+    if (value?.fetchStatus || value?.ok === false) { progress.warn('search', `${name}: 조회 미완료`); continue; }
+    if (Array.isArray(value)) { progress.note('search', `${name} ${countLabel(value.length)}`); continue; }
+    if (name === '하위 법령') {
+      const tiers = value?.hierarchy ? Object.keys(value.hierarchy).length : 0;
+      progress.note('search', value ? `법–시행령–시행규칙 연쇄 ${countLabel(tiers, '단')} 확인` : '하위 법령 연쇄: 해당 없음');
+      continue;
+    }
+    progress.note('search', `${name} 확보`);
+  }
+  progress.done('search', `판례 ${countLabel((precRes.status === 'fulfilled' ? precRes.value : []).length)}`
+    + ` · 해석례 ${countLabel((expcRes.status === 'fulfilled' ? expcRes.value : []).length)}`
+    + ` · 행정규칙 ${countLabel((admrulRes.status === 'fulfilled' ? admrulRes.value : []).length)}`
+    + ` · 자치법규 ${countLabel((ordinRes.status === 'fulfilled' ? ordinRes.value : []).length)}`);
 
   const rawPrecedents = precRes.status === 'fulfilled' ? precRes.value : [];
   const rawInterpretations = expcRes.status === 'fulfilled' ? expcRes.value : [];
@@ -309,19 +370,28 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   // 어느 고시가 결정적 근거인지는 휴리스틱으로 확정할 수 없다.
   // 후보 수가 적으므로 본문을 모두 확보하고, 선택은 검토자에게 맡긴다.
   const adminRuleDetails = [];
-  for (const rule of rankedAdminRules.slice(0, 5)) {
-    if (!rule?.id) continue;
+  const adminRuleTargets = rankedAdminRules.slice(0, 5).filter(r => r?.id);
+  if (adminRuleTargets.length) progress.start('adminrule', '행정규칙 본문·별표 확보', `대상 ${countLabel(adminRuleTargets.length)}`, '수집');
+  for (const rule of adminRuleTargets) {
     try {
       adminRuleDetails.push(await clients.getAdminRuleDetail(rule.id, { expectedName: rule.name }));
+      progress.note('adminrule', `${rule.name} 본문 확보`);
     } catch (err) {
       collectionWarnings.push(`${rule.name} 본문 수집 실패: ${err.message}`);
+      progress.warn('adminrule', `${rule.name} 본문 수집 실패`);
     }
+  }
+  if (adminRuleTargets.length) {
+    progress.done('adminrule', `본문 ${countLabel(adminRuleDetails.length)} 확보`,
+      adminRuleDetails.length ? 'DONE' : 'FAILED');
   }
 
   // 6-1. 문서가 명시 인용한 자치법규의 조문 본문을 확보한다.
   // 목록만으로는 조례 조문을 근거로 쓸 수 없어 과거에는 '조문 확인 필요'로 남았다.
   const ordinanceArticles = [];
-  for (const ordinanceName of citedOrdinanceNames.slice(0, 3)) {
+  const ordinanceTargets = citedOrdinanceNames.slice(0, 3);
+  if (ordinanceTargets.length) progress.start('ordinance', '인용 자치법규 조문 확보', ordinanceTargets.join(', '), '수집');
+  for (const ordinanceName of ordinanceTargets) {
     try {
       // 조례마다 제명으로 직접 조회한다. (병렬 조회 목록에는 첫 번째 조례만 반영되어 있다)
       let listed = ordinances.find(o => sameLaw(o.name, ordinanceName));
@@ -340,9 +410,15 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       if (wanted.size > 0 && picked.length === 0) collectionWarnings.push(`${ordinanceName}의 인용 조문을 본문에서 확인하지 못했습니다.`);
       ordinanceArticles.push(...picked.map(a => ({ ...a, lawName: detail.lawName, lawId: detail.ordinanceId,
         lawType: detail.lawType, orgName: detail.orgName, source: detail.source, isMockData: false })));
+      progress.note('ordinance', `${ordinanceName} 조문 ${countLabel(picked.length, '개')} 확보`);
     } catch (err) {
       collectionWarnings.push(`${ordinanceName} 본문 수집 실패: ${err.message}`);
+      progress.warn('ordinance', `${ordinanceName} 본문 수집 실패`);
     }
+  }
+  if (ordinanceTargets.length) {
+    progress.done('ordinance', `조문 ${countLabel(ordinanceArticles.length, '개')} 확보`,
+      ordinanceArticles.length ? 'DONE' : 'FAILED');
   }
   const impactMap = impactRes.status === 'fulfilled' && impactRes.value ? impactRes.value.result : null;
   const lawHistory = historyRes.status === 'fulfilled' && historyRes.value ? historyRes.value.result : null;
@@ -355,6 +431,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   }
 
   // 7. 시맨틱 Re-ranking 적용 (Top 3 판례, Top 2 해석례 엄선)
+  progress.start('rerank', '판례·해석례 시맨틱 재순위',
+    `후보 판례 ${countLabel(rawPrecedents.length)} · 해석례 ${countLabel(rawInterpretations.length)}`, '분석');
   const rankedPrecedents = reRankPrecedents({
     precedents: rawPrecedents,
     query: `${query} ${kbResult.matchedKeywords.join(' ')}`,
@@ -369,6 +447,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     targetLaw: primaryLawName,
     expandedTerms: kbResult.expandedTerms
   });
+
+  progress.done('rerank', `상위 판례 ${countLabel(rankedPrecedents.length)} · 해석례 ${countLabel(rankedInterpretations.length)} 채택`);
 
   const annexes = (mainLawDetail && mainLawDetail.annexes) ? mainLawDetail.annexes : [];
   const durationMs = Date.now() - startTime;
@@ -390,6 +470,12 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   if (dataIntegrity.isFallback) {
     console.warn(`[LawWorkbench] 검토 제한 사항: ${dataIntegrity.warnings.join(' / ')}`);
   }
+
+  progress.mark('integrity', '수집 자료 출처 검증',
+    `공식 조문 ${dataIntegrity.hasOfficialArticles ? '확보' : '미확보'}`
+    + ` · 제한 사항 ${countLabel(dataIntegrity.warnings.length)}`
+    + (dataIntegrity.isFallback ? ' · 폴백/목업 포함' : ''), '검증');
+  for (const w of dataIntegrity.warnings.slice(0, 8)) progress.warn('integrity', w);
 
   return {
     meta: {

@@ -17,6 +17,7 @@ import { createManualLearningRouter } from './manualLearningApi.js';
 import { localLearningEndpoint } from './manualLearningLocal.js';
 import { getLearningStore } from './manualLearningStore.js';
 import { inquiryCoverage } from './manualLearning.js';
+import { createProgressReporter, NOOP_PROGRESS } from './progressReporter.js';
 
 const router = express.Router();
 router.use('/learning', createManualLearningRouter());
@@ -70,12 +71,67 @@ router.post('/parse-document', upload.single('file'), async (req, res) => {
 /**
  * POST /api/law/workbench - 종합 워크벤치 분석 및 법령 검토 실행 (이력 자동 저장)
  */
+/**
+ * 진행 상황 스트리밍 채널.
+ *
+ * 검토는 수 분이 걸리는데 단일 JSON 응답으로는 그 사이 아무것도 보낼 수 없다.
+ * stream=1로 요청하면 같은 POST 응답에 NDJSON(한 줄에 JSON 한 개)을 흘려보낸다.
+ *   {"type":"progress","event":{...}}  진행 이벤트 (여러 줄)
+ *   {"type":"result","payload":{...}}  최종 검토 결과 (마지막 줄)
+ *   {"type":"error","error":"..."}     실패
+ * stream 미지정 시에는 종전과 동일한 단일 JSON 응답을 준다. (기존 클라이언트 호환)
+ */
+function createStreamChannel(req, res) {
+  const wants = String(req.body?.stream || '') === '1'
+    || String(req.headers['accept'] || '').includes('application/x-ndjson');
+  if (!wants) return { streaming: false, progress: NOOP_PROGRESS, write() {}, end() {} };
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no'); // 리버스 프록시 버퍼링 방지
+  res.flushHeaders?.();
+
+  let closed = false;
+  res.on('close', () => { closed = true; });
+
+  const trace = [];
+  const write = (obj) => {
+    if (closed || res.writableEnded) return;
+    try { res.write(`${JSON.stringify(obj)}\n`); } catch { closed = true; }
+  };
+
+  const progress = createProgressReporter((event) => {
+    // tick(실시간 수치)은 이력에 남기지 않는다. 남기면 같은 줄이 수백 개 쌓인다.
+    if (event.kind !== 'tick') trace.push(event);
+    write({ type: 'progress', event });
+  });
+
+  return {
+    streaming: true,
+    progress,
+    trace,
+    isClosed: () => closed,
+    write,
+    end(obj) {
+      if (obj) write(obj);
+      if (!closed && !res.writableEnded) res.end();
+    }
+  };
+}
+
 router.post('/workbench', upload.single('file'), async (req, res) => {
+  const channel = createStreamChannel(req, res);
+  const progress = channel.progress;
+  const fail = (statusCode, body) => {
+    if (!channel.streaming) return res.status(statusCode).json(body);
+    channel.end({ type: 'error', ...body });
+  };
   try {
     // Following a manually imported answer is always a local operation.
     const sourceHistoryId = String(req.body.sourceHistoryId || '').trim().slice(0, 100) || null;
     if (sourceHistoryId && !getHistoryById(sourceHistoryId)) {
-      return res.status(404).json({ ok: false, error: '원 검토 이력을 찾을 수 없습니다. 검토를 다시 실행한 뒤 시도하십시오.' });
+      return fail(404, { ok: false, error: '원 검토 이력을 찾을 수 없습니다. 검토를 다시 실행한 뒤 시도하십시오.' });
     }
     const manualLearning = req.body.learningMode === 'manual' || Boolean(sourceHistoryId);
     if (manualLearning) localLearningEndpoint();
@@ -86,7 +142,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     // 사용자는 과거 시점을 검토했다고 믿게 되므로 여기서 거절한다.
     const targetDate = String(req.body.targetDate || '').trim();
     if (targetDate && !validDate(targetDate)) {
-      return res.status(400).json({ ok: false, error: '검토 기준일은 YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다.' });
+      return fail(400, { ok: false, error: '검토 기준일은 YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다.' });
     }
     let documentText = req.body.documentText || '';
     let documentName = '';
@@ -94,12 +150,17 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     // 파일이 직접 업로드된 경우 파싱
     if (req.file) {
       documentName = req.file.originalname;
+      progress.start('parse', '첨부문서 파싱', `${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`, '준비');
       const parsedDoc = await parseDocument(req.file.buffer, req.file.originalname);
       documentText = `${documentText}\n\n[첨부문서: ${req.file.originalname}]\n${parsedDoc.text}`.trim();
+      progress.done('parse', `${parsedDoc.format} · ${parsedDoc.text.length.toLocaleString()}자`
+        + ` · 조항 ${parsedDoc.chunks.length}개`
+        + `${parsedDoc.tables.length ? ` · 표 ${parsedDoc.tables.length}개` : ''}`
+        + `${parsedDoc.riskClauses.length ? ` · 위험 조항 ${parsedDoc.riskClauses.length}개` : ''}`);
     }
 
     if (!query && !documentText) {
-      return res.status(400).json({
+      return fail(400, {
         ok: false,
         error: '검토 요청 질의 또는 첨부문서가 필요합니다.'
       });
@@ -111,7 +172,8 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       preset,
       documentText,
       targetLaw,
-      targetDate
+      targetDate,
+      progress
     });
 
     // 2. LLM 10대 검토의견서 생성
@@ -140,7 +202,8 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       documentText,
       workbenchContext,
       llmConfig,
-      sourceHistoryId
+      sourceHistoryId,
+      progress
     });
     if (unmet.length && reviewResult.reviewStatus === 'COMPLETE') reviewResult.reviewStatus = 'PARTIAL';
 
@@ -171,7 +234,21 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       impactAndRevisions: workbenchContext.impactAndRevisions // Tab 3: 개정/영향
     };
 
+    // 검토 추론 과정을 결과에 동봉한다. 이력에서 다시 불러올 때도 같은 타임라인을 볼 수 있어야 한다.
+    if (channel.streaming) {
+      const warnCount = channel.trace.filter(e => e.kind === 'warn').length;
+      const stepCount = channel.trace.filter(e => e.kind === 'step' && e.state !== 'RUNNING').length;
+      progress.finish(`${stepCount}단계 완료${warnCount ? ` · 제한 사항 ${warnCount}건` : ''}`);
+      responsePayload.progressTrace = {
+        events: channel.trace,
+        stepCount,
+        warnCount,
+        totalMs: progress.elapsedMs()
+      };
+    }
+
     // 3. 검토 이력 DB 자동 저장
+    progress.start('save', '검토 이력 저장', '', '검증');
     const historyTitle = query || (documentName ? `[문서검토] ${documentName}` : '법령 검토');
     const historyId = saveHistoryItem({
       query: historyTitle,
@@ -182,10 +259,16 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     });
 
     responsePayload.historyId = historyId;
+    progress.done('save', `이력 ID ${historyId}`);
 
+    if (channel.streaming) return channel.end({ type: 'result', payload: responsePayload });
     res.json(responsePayload);
   } catch (err) {
     console.error('[LawApi] workbench 에러:', err);
+    if (channel.streaming) {
+      progress.fail('__pipeline__', err.message || '검토 실행 실패');
+      return channel.end({ type: 'error', ...formatErrorResponse(err) });
+    }
     res.status(err.statusCode || 500).json(formatErrorResponse(err));
   }
 });

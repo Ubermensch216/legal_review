@@ -5,11 +5,13 @@ import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio } from './documentStudio.js';
 import { initHistoryDrawer, refreshHistoryList, addHistoryRecord } from './history.js';
 import { initLearningTab } from './learningTab.js';
+import { initReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, showTraceFallback } from './reviewTrace.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 모듈 초기화
   initWorkbenchTabs();
   initLearningTab();
+  initReviewTrace();
   initDocumentViewer();
   initDocumentStudio();
   initHistoryDrawer();
@@ -211,6 +213,9 @@ function initReviewForm() {
     formData.append('preset', state.currentPreset || 'compliance');
     formData.append('targetLaw', targetLaw);
     formData.append('targetDate', targetDate);
+    // 진행 상황을 NDJSON으로 받는다. 스트림을 읽을 수 없는 환경이면 서버가 단일 JSON으로 답한다.
+    const canStream = typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined';
+    if (canStream) formData.append('stream', '1');
     if (manualLearning) formData.append('learningMode', 'manual');
     else {
       formData.append('llmProvider', state.settings.provider);
@@ -225,6 +230,15 @@ function initReviewForm() {
       formData.append('file', state.selectedFile);
     }
 
+    if (canStream) {
+      startReviewTrace({
+        provider: manualLearning ? 'ollama' : state.settings.provider,
+        model: manualLearning ? '' : state.settings.modelName
+      });
+    } else {
+      showTraceFallback();
+    }
+
     try {
       const res = await fetch('/api/law/workbench', {
         method: 'POST',
@@ -236,13 +250,18 @@ function initReviewForm() {
         throw new Error(errJson.error || errJson.message || `HTTP ${res.status}`);
       }
 
-      const data = await res.json();
+      const data = (res.headers.get('content-type') || '').includes('application/x-ndjson')
+        ? await consumeReviewStream(res)
+        : await res.json();
+
+      finishReviewTrace({ totalMs: data.progressTrace?.totalMs ?? null });
       renderWorkbench(data);
       await addHistoryRecord(data);
 
       // 워크벤치 섹션으로 부드럽게 스크롤
       document.getElementById('workbench-section').scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
+      finishReviewTrace({ summary: err.message, failed: true });
       alert(`검토 실행 중 오류가 발생했습니다: ${err.message}`);
     } finally {
       // 한 번의 실행에만 적용한다. 남겨두면 이후 일반 검토에 엉뚱한 사건의 지식이 실린다.
@@ -254,6 +273,45 @@ function initReviewForm() {
       btnText.textContent = '종합 법령검토 실행';
     }
   });
+}
+
+/**
+ * 검토 진행 스트림(NDJSON) 소비.
+ * 한 줄에 JSON 한 개가 온다. progress는 타임라인으로 흘리고, result를 최종 결과로 돌려준다.
+ * 줄이 청크 경계에서 잘릴 수 있으므로 개행 단위로만 파싱한다.
+ */
+async function consumeReviewStream(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+  let result = null;
+  let streamError = null;
+
+  const handleLine = (line) => {
+    const text = line.trim();
+    if (!text) return;
+    let msg;
+    try { msg = JSON.parse(text); } catch { return; } // 불완전한 줄은 버린다
+    if (msg.type === 'progress') pushTraceEvent(msg.event);
+    else if (msg.type === 'result') result = msg.payload;
+    else if (msg.type === 'error') streamError = msg.error || msg.message || '검토 실행 실패';
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf('\n')) >= 0) {
+      handleLine(buffer.slice(0, idx));
+      buffer = buffer.slice(idx + 1);
+    }
+  }
+  handleLine(buffer);
+
+  if (streamError) throw new Error(streamError);
+  if (!result) throw new Error('검토 결과를 받지 못했습니다. 서버 연결이 끊겼을 수 있습니다.');
+  return result;
 }
 
 /**

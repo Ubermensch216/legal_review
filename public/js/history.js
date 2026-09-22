@@ -1,5 +1,6 @@
 // public/js/history.js - 브라우저 IndexedDB 기반 영구 검토 이력 관리 모듈
 import { renderWorkbench } from './lawWorkbench.js';
+import { renderTraceFromHistory } from './reviewTrace.js';
 import {
   saveReviewToIndexedDB,
   getAllReviewsFromIndexedDB,
@@ -240,6 +241,8 @@ async function restoreHistory(id) {
     // 서버가 이력 ID를 payload에 넣기 전에 직렬화한 기록도 있다. 그때는 행 ID가 곧 서버 이력 ID다.
     // 이 값이 없으면 외부 전문가 질의 탭이 어느 검토를 대상으로 할지 알 수 없다.
     renderWorkbench({ ...data, historyId: data.historyId || id });
+    // 그 검토가 어떤 추론 과정을 거쳤는지도 같은 폴딩 패널에 되살린다.
+    renderTraceFromHistory(data.progressTrace);
     closeHistoryDrawer();
 
     // 워크벤치 영역으로 스크롤
