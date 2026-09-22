@@ -1,6 +1,7 @@
 import './setup.js';
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { openAiStream } from './llmStreamStub.js';
 import { spawnSync } from 'node:child_process';
 import JSZip from 'jszip';
 import { ENV } from '../server/env.js';
@@ -36,7 +37,8 @@ const lawXml = (id = '1552', date = '20200101') => `<법령><기본정보><법�
 const listXml = items => `<LawSearch>${items.map(i => `<law><법령ID>${i.lawId}</법령ID><법령일련번호>${i.lawSeq}</법령일련번호><법령명한글>${i.lawName}</법령명한글><시행일자>${i.enforceDate}</시행일자></law>`).join('')}</LawSearch>`;
 const xmlResponse = text => ({ ok: true, text: async () => text });
 const llmStub = (value, capture = () => {}, finish_reason = 'stop') => {
-  globalThis.fetch = async (_url, options) => { capture(JSON.parse(options.body)); return { ok: true, json: async () => ({ choices: [{ finish_reason, message: { content: typeof value === 'string' ? value : JSON.stringify(value) } }] }) }; };
+  globalThis.fetch = async (_url, options) => { capture(JSON.parse(options.body));
+    return openAiStream(typeof value === 'string' ? value : JSON.stringify(value), { finishReason: finish_reason }); };
 };
 const generate = (ctx, text = '') => generateLegalReview({ query: '면책', preset: 'contract_risk', documentText: text, workbenchContext: ctx, llmConfig: { provider: 'openai', apiKey: 'fixture-only' } });
 

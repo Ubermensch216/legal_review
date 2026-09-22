@@ -77,6 +77,74 @@ export function trimLawNamePrefix(rawName) {
 // 앞서 언급한 법령을 가리키는 대용 표현. 직전에 확정된 법령명으로 해석한다.
 const ANAPHORIC_LAW_REGEX = /(?:^|[\s)\]」』])(?:동법|본법|같은\s*법률|같은\s*법|이\s*법률|이\s*법|그\s*법)$/;
 
+// 문서 자신을 가리키는 제명 표현. 검토 대상인 조례안·규칙 그 자체이므로 외부 법령이 아니다.
+// ('이 법'·'같은 법'은 직전에 인용한 '다른' 법률을 가리키므로 대용 표현으로 따로 다룬다)
+const SELF_LAW_REGEX = /(?:^|[\s)\]」』])(?:이|본|당해|해당)\s*(?:조례안|조례|규칙|예규|훈령|지침)$/;
+
+// 제명이 아니라 법형식을 가리키는 일반명사. 이것만 남았다면 법령을 특정하지 못한 것이다.
+// (예: "이 조례" -> 앞말을 떼면 "조례"만 남는데, 그런 이름의 법령은 없다)
+const GENERIC_LAW_FORM_TOKENS = new Set([
+  '법', '법률', '조례', '조례안', '시행령', '시행규칙', '규칙', '정관', '규정', '령', '예규', '훈령'
+]);
+
+// ── 인용의 성격(scope) 판정 ────────────────────────────────────
+// 법령명 없는 "제N조"는 문맥이 가리키는 대상을 정한다. 직전에 인용한 법령일 수도 있지만,
+// 문서 자신의 조문이거나 서식의 빈칸일 수도 있다. 이 셋을 구분하지 않고 전부
+// '직전 법령'으로 메우면, 조례안의 제8조가 상위법 제8조로 둔갑해 공식 근거로 실린다.
+//
+//  EXPLICIT    : 본문에 법령명이 있다
+//  ANAPHORIC   : 동법·같은 법 등 대용 표현 (직전 법령으로 승계하는 것이 맞다)
+//  SELF        : 문서 자신의 조문 (조회 대상이 아니다)
+//  PLACEHOLDER : '관련 법령' 같은 서식 빈칸 (지정 법령이 있을 때만 해석한다)
+//  CARRY       : 위 어디에도 걸리지 않는 맨 조문번호 (직전 법령으로 승계)
+export const REFERENCE_SCOPE = Object.freeze({
+  EXPLICIT: 'EXPLICIT', ANAPHORIC: 'ANAPHORIC', SELF: 'SELF', PLACEHOLDER: 'PLACEHOLDER', CARRY: 'CARRY'
+});
+
+// 조회해서는 안 되는 인용. (문서 자신의 조문·서식 빈칸)
+const NON_CITATION_SCOPES = new Set([REFERENCE_SCOPE.SELF, REFERENCE_SCOPE.PLACEHOLDER]);
+
+/** 이 인용이 외부 법령을 가리키는 '진짜 인용'인지. 수집·검증은 이것만 대상으로 한다. */
+export function isCitationReference(ref) {
+  return Boolean(ref) && !NON_CITATION_SCOPES.has(ref.scope);
+}
+
+// 규칙1: 줄머리(불릿 허용)에서 시작하고 뒤에 괄호 제목이 붙는 "제N조(제목)"은
+//        조문의 '정의'이지 인용이 아니다. (예: "■ 제8조 (무인대여사업자의 등록 취소)")
+const SELF_HEADING_BEFORE_REGEX = /(?:^|\n)[ \t]*(?:[■□▪▫●○◆◇※=·•\-*]+[ \t]*)*$/;
+const SELF_HEADING_AFTER_REGEX = /^[ \t]*[（(]/;
+
+// 규칙2: '상기·위·본 조례안' 등은 이 문서 안의 앞부분을 가리킨다.
+//        앞 글자가 한글이면 어절 중간이므로("규정이", "상위") 마커로 보지 않는다.
+const SELF_MARKER_BEFORE_REGEX =
+  /(?:^|[\s(（\[「『.,·])(?:상기|위|앞서|전술한|본|이)[ \t]*(?:조례안?|규정|조항|건)?[ \t]*$/;
+
+// 규칙3: '관련 법령 제1조'의 '관련 법령'은 제명이 아니라 서식의 빈칸이다.
+const PLACEHOLDER_BEFORE_REGEX =
+  /(?:^|[\s(（\[「『.,·])(?:관련|해당|상위|근거|소관|본건)[ \t]*법령[ \t]*$/;
+
+// 규칙4: "제8조 및 제14조"처럼 접속사로 이어진 인용은 앞 인용의 성격을 물려받는다.
+//        이것이 없으면 "상기 제8조 및 제14조"에서 뒤쪽만 새어나간다.
+const ENUM_LINK_BEFORE_REGEX =
+  /제[ \t]*\d+[ \t]*조(?:[ \t]*의[ \t]*\d+)?(?:[ \t]*제[ \t]*\d+[ \t]*[항호])*[ \t]*(?:[,、·]|및|또는|과|와|내지)[ \t]*$/;
+
+/**
+ * 법령명이 캡처되지 않은 인용의 성격을 주변 문맥으로 판정한다.
+ * @param {string} text 전체 원문
+ * @param {number} start 조문 표기가 시작하는 위치
+ * @param {number} end 조문 표기가 끝나는 위치
+ * @param {string} previousScope 직전 인용의 성격 (열거 상속용)
+ */
+function classifyBareReference(text, start, end, previousScope) {
+  const before = text.slice(Math.max(0, start - 64), start);
+  const after = text.slice(end, end + 4);
+  if (SELF_HEADING_BEFORE_REGEX.test(before) && SELF_HEADING_AFTER_REGEX.test(after)) return REFERENCE_SCOPE.SELF;
+  if (SELF_MARKER_BEFORE_REGEX.test(before)) return REFERENCE_SCOPE.SELF;
+  if (PLACEHOLDER_BEFORE_REGEX.test(before)) return REFERENCE_SCOPE.PLACEHOLDER;
+  if (previousScope && ENUM_LINK_BEFORE_REGEX.test(before)) return previousScope;
+  return REFERENCE_SCOPE.CARRY;
+}
+
 /**
  * 텍스트 내에서 언급된 모든 조문 인용 추출
  * @param {string} text 
@@ -91,6 +159,8 @@ export function extractArticleReferences(text, defaultLawName = '') {
   let match;
   // 대용 표현("동법", "같은 법")은 직전에 확정된 법령명으로 해석한다.
   let lastResolvedLawName = '';
+  // 열거("제8조 및 제14조")에서 뒤쪽 인용이 앞쪽의 성격을 물려받도록 직전 성격을 들고 간다.
+  let previousScope = '';
 
   const regex = new RegExp(ARTICLE_REF_REGEX.source, 'g');
   while ((match = regex.exec(text)) !== null) {
@@ -98,16 +168,39 @@ export function extractArticleReferences(text, defaultLawName = '') {
     const rawPlainName = (match[2] || '').trim().replace(LEADING_CONJUNCTION_REGEX, '').trim();
     // 평문 표기는 제명 앞 문장까지 딸려오므로 경계를 다시 잡는다.
     // 다만 대용 표현("없으면 같은 법")은 앞 어절까지 있어야 대용인지 알 수 있으므로 원형을 유지한다.
-    const plainLawName = ANAPHORIC_LAW_REGEX.test(rawPlainName) ? rawPlainName : trimLawNamePrefix(rawPlainName);
+    const isSelfLawName = !bracketLawName && SELF_LAW_REGEX.test(rawPlainName);
+    const trimmedPlainName = ANAPHORIC_LAW_REGEX.test(rawPlainName) ? rawPlainName : trimLawNamePrefix(rawPlainName);
+    // 법형식 일반명사만 남았으면 제명을 특정하지 못한 것이므로 맨 조문번호와 동일하게 문맥으로 판정한다.
+    const plainLawName = (isSelfLawName || GENERIC_LAW_FORM_TOKENS.has(trimmedPlainName)) ? '' : trimmedPlainName;
     // 「」로 묶인 표기는 법령명 경계가 확정적이므로 가공하지 않고 그대로 사용한다.
     const rawLawName = bracketLawName || plainLawName;
 
+    let scope;
     let lawName = rawLawName;
-    if (!lawName || ANAPHORIC_LAW_REGEX.test(lawName)) {
+    if (lawName && !ANAPHORIC_LAW_REGEX.test(lawName)) {
+      scope = REFERENCE_SCOPE.EXPLICIT;
+      lastResolvedLawName = lawName;
+    } else if (lawName) {
+      // 대용 표현. 직전에 확정된 법령으로 해석한다.
+      scope = REFERENCE_SCOPE.ANAPHORIC;
       lawName = lastResolvedLawName || defaultLawName;
     } else {
-      lastResolvedLawName = lawName;
+      // 법령명이 없는 맨 조문번호. 문맥으로 성격을 가른다.
+      // '이 조례'처럼 문서 자신을 가리키는 표현은 문맥을 보지 않고 바로 자기 조문으로 확정한다.
+      scope = isSelfLawName
+        ? REFERENCE_SCOPE.SELF
+        : classifyBareReference(text, match.index, match.index + match[0].length, previousScope);
+      if (scope === REFERENCE_SCOPE.SELF) {
+        // 문서 자신의 조문이므로 어떤 법령에도 귀속시키지 않는다.
+        lawName = '';
+      } else if (scope === REFERENCE_SCOPE.PLACEHOLDER) {
+        // 서식 빈칸. 직전 법령으로 메우면 엉뚱한 조문이 붙으므로, 지정 법령이 있을 때만 해석한다.
+        lawName = defaultLawName;
+      } else {
+        lawName = lastResolvedLawName || defaultLawName;
+      }
     }
+    previousScope = scope;
 
     const mainNo = match[3];
     const branchNo = match[4] || match[5] || '';
@@ -123,7 +216,7 @@ export function extractArticleReferences(text, defaultLawName = '') {
     if (itemNo) fullRef += ` 제${itemNo}호`;
     if (subItemNo) fullRef += ` ${subItemNo}목`;
 
-    const key = `${lawName}|${articleNoStr}|${paragraphNo}|${itemNo}|${subItemNo}`;
+    const key = `${scope}|${lawName}|${articleNoStr}|${paragraphNo}|${itemNo}|${subItemNo}`;
     if (!seen.has(key)) {
       seen.add(key);
       refs.push({
@@ -135,7 +228,8 @@ export function extractArticleReferences(text, defaultLawName = '') {
         paragraphNo,
         itemNo,
         subItemNo,
-        fullRef
+        fullRef,
+        scope
       });
     }
   }
@@ -242,6 +336,8 @@ export function linkifyArticleReferences(text, lawName = '') {
 
 export default {
   extractArticleReferences,
+  isCitationReference,
+  REFERENCE_SCOPE,
   extractOrdinanceNames,
   trimLawNamePrefix,
   normalizeArticleNo,

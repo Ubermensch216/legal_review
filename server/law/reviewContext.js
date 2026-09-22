@@ -1,9 +1,43 @@
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { articleText, isOfficial, today, sameLaw, normalizedLawName, inForceAt, historicalReviewNotice } from './evidence.js';
 
+// 섹션별 입력 예산(문자 수). 토큰 예산(num_ctx)과는 별개로, 어떤 근거를 몇 자까지
+// 프롬프트에 실을지 정한다. 여기서 넘친 항목이 omittedEvidence로 집계되고
+// 검토 상태를 PARTIAL로 만든다.
+// 판례·해석례는 한 건이 3,000자 안팎이라 기본값으로는 상위 1~2건만 실린다.
+const DEFAULT_SECTION_BUDGETS = Object.freeze({
+  document: 4500, articles: 9000, precedents: 5000, interpretations: 4000,
+  ordinanceArticles: 4000, adminRules: 5000, keyProvisions: 3000, learningKnowledge: 2000
+});
+
+/**
+ * 섹션별 문자 예산. LLM_SECTION_BUDGETS(JSON)로 항목별 덮어쓰기가 가능하다.
+ * 예: LLM_SECTION_BUDGETS={"precedents":12000,"interpretations":9000}
+ * 잘못된 값은 조용히 무시하지 않고 즉시 알린다. 예산이 조용히 되돌아가면
+ * 근거가 왜 빠졌는지 추적할 수 없기 때문이다.
+ * @returns {Record<string, number>}
+ */
+export function resolveSectionBudgets() {
+  let overrides;
+  try { overrides = JSON.parse(process.env.LLM_SECTION_BUDGETS || '{}'); }
+  catch { throw new Error('LLM_SECTION_BUDGETS 값이 올바른 JSON이 아닙니다.'); }
+  const merged = { ...DEFAULT_SECTION_BUDGETS };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!Object.hasOwn(DEFAULT_SECTION_BUDGETS, key)) {
+      throw new Error(`LLM_SECTION_BUDGETS에 알 수 없는 섹션 '${key}'이(가) 있습니다. ` +
+        `사용 가능: ${Object.keys(DEFAULT_SECTION_BUDGETS).join(', ')}`);
+    }
+    const n = Number(value);
+    if (!Number.isSafeInteger(n) || n <= 0) throw new Error(`LLM_SECTION_BUDGETS.${key}는 양의 정수여야 합니다.`);
+    merged[key] = n;
+  }
+  return merged;
+}
+
 export function buildReviewInput(context, documentText = '', query = '', budgets = {}) {
   const evidence = context.officialEvidence || {};
-  const maxDocument = budgets.document ?? 4500;
+  const limits = resolveSectionBudgets();
+  const maxDocument = budgets.document ?? limits.document;
   const cachedDocument = context.reviewContext?.document;
   const document = cachedDocument && cachedDocument.optimizedText.length <= maxDocument ? cachedDocument
     : optimizeDocumentContext({ documentText: documentText || cachedDocument?.optimizedText || '', query, maxChars: maxDocument });
@@ -14,6 +48,16 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   // 조문 효력은 워크벤치가 확정한 기준일로 판단한다. 지정이 없으면 오늘이다.
   const asOf = context.meta?.asOfDate || today();
   const warnings = [...(context.meta?.dataIntegrity?.warnings || [])];
+  if (context.learningWarning) warnings.push(context.learningWarning);
+  let learningKnowledgeText = '';
+  const learningReferences = [];
+  for (const item of context.learningKnowledge || []) {
+    const text = JSON.stringify({ title: item.title, ...item.card });
+    if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) continue;
+    learningKnowledgeText += `${text}\n\n`;
+    learningReferences.push({ id: item.id, title: item.title, source: item.source });
+  }
+  if (learningReferences.length) warnings.push(`사용자 승인 외부 AI 참고 지식 ${learningReferences.length}건을 입력에 포함했습니다. 공식 근거나 법리 검증을 대신하지 않습니다.`);
   // 과거·미래 시점 검토임을 LLM 프롬프트와 출력 보고서 양쪽에 남긴다.
   // 이 문장이 없으면 검토문이 현행 법령을 말하는지 그 시점 법령을 말하는지 구분되지 않는다.
   if (context.meta?.targetDate) {
@@ -48,20 +92,20 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     seenArticles.add(identity);
     orderedArticles.push(article);
   }
-  const articlesText = pack(orderedArticles, a => `[${a.lawName || context.meta?.primaryLawName} ${a.fullArticleNo || a.articleNo} (${a.title || ''})]\n${articleText(a)}`, budgets.articles ?? 9000);
+  const articlesText = pack(orderedArticles, a => `[${a.lawName || context.meta?.primaryLawName} ${a.fullArticleNo || a.articleNo} (${a.title || ''})]\n${articleText(a)}`, budgets.articles ?? limits.articles);
   const precedentsText = pack((evidence.precedents || []).filter(p => isOfficial(p) && p.contentStatus === 'FULL_TEXT' && (p.summary || p.holding || p.content)), p =>
-    `[판례 관련도: ${Number.isFinite(p.relevanceScore) ? p.relevanceScore : '미측정'}점 ${p.courtName || ''} ${p.caseNo || ''} ${p.caseName || ''}]\n${p.holding || ''}\n${p.summary || p.content || ''}`, budgets.precedents ?? 5000);
+    `[판례 관련도: ${Number.isFinite(p.relevanceScore) ? p.relevanceScore : '미측정'}점 ${p.courtName || ''} ${p.caseNo || ''} ${p.caseName || ''}]\n${p.holding || ''}\n${p.summary || p.content || ''}`, budgets.precedents ?? limits.precedents);
   const interpretationsText = pack((evidence.interpretations || []).filter(e => isOfficial(e) && e.contentStatus === 'FULL_TEXT' && (e.answer || e.reason)), e =>
-    `[유권해석 ${e.orgName || ''} ${e.title || ''}]\n${e.answer || ''}\n${e.reason || ''}`, budgets.interpretations ?? 4000);
+    `[유권해석 ${e.orgName || ''} ${e.title || ''}]\n${e.answer || ''}\n${e.reason || ''}`, budgets.interpretations ?? limits.interpretations);
   // 자치법규(조례) 조문 — 지자체 사무에서는 조례가 직접 근거가 되는 경우가 많다.
   const ordinanceArticlesText = pack((evidence.ordinanceArticles || []).filter(a => isOfficial(a) && !a.isDeleted), a =>
-    `[${a.lawName} 제${a.fullArticleNo}조 (${a.title || ''}) · ${a.orgName || ''}]\n${articleText(a)}`, budgets.ordinanceArticles ?? 4000);
+    `[${a.lawName} 제${a.fullArticleNo}조 (${a.title || ''}) · ${a.orgName || ''}]\n${articleText(a)}`, budgets.ordinanceArticles ?? limits.ordinanceArticles);
 
   // 행정규칙(고시·훈령) 조문 및 별표 목록. 별표 본문은 첨부파일로만 제공되므로 링크를 함께 넘긴다.
   // 운영기준처럼 조문이 수십 개인 고시는 전문을 실으면 예산을 넘겨 통째로 탈락한다.
   // 사안 주제어에 걸리는 조문을 우선 싣고, 분량은 고시마다 따로 제한한다.
   const topicWords = (query || '').split(/\s+/).filter(w => w.length >= 2);
-  const perRuleBudget = Math.max(800, Math.floor((budgets.adminRules ?? 5000) / 2));
+  const perRuleBudget = Math.max(800, Math.floor((budgets.adminRules ?? limits.adminRules) / 2));
   // 제명이 아니라 본문 내용으로 순위를 매긴다.
   // 제명만 보면 모법 이름을 길게 나열한 무관한 고시가 앞자리를 차지해,
   // 정작 산정 기준을 담은 고시가 예산에 밀려 탈락한다.
@@ -87,7 +131,7 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     const annexList = (d.annexes || []).map(x => `  - [별표 ${String(x.no).replace(/^0+/, '')}] ${x.title}${x.fileUrl ? ` (첨부: ${x.fileUrl})` : ''}`).join('\n');
     const note = dropped ? `\n(이 고시의 조문 ${dropped}개는 분량 제한으로 제외했습니다. 제외분에 관한 판단은 보류하십시오.)` : '';
     return `[행정규칙 ${d.name} · ${d.ruleType || ''} · ${d.ministry || ''}]\n${body}${note}${annexList ? `\n[별표 목록 — 본문은 첨부파일로만 제공됨]\n${annexList}` : ''}`;
-  }, budgets.adminRules ?? 5000);
+  }, budgets.adminRules ?? limits.adminRules);
 
   // 원칙(본문) / 예외(단서) 구조를 기계적으로 분해해 따로 제시한다.
   // 소형 모델은 긴 조문 안에 묻힌 "다만 ~" 단서를 찾아내지 못해,
@@ -127,9 +171,10 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     });
   }
   provisionEntries.sort((a, b) => Number(b.cited) - Number(a.cited));
-  const keyProvisionsText = pack(provisionEntries, entry => entry.text, budgets.keyProvisions ?? 3000);
+  const keyProvisionsText = pack(provisionEntries, entry => entry.text, budgets.keyProvisions ?? limits.keyProvisions);
 
   if (omittedEvidence) warnings.push(`입력 예산 때문에 근거 ${omittedEvidence}건을 제외했습니다. 제외한 자료에 관한 판단은 보류하십시오.`);
   if (document.omittedCount || document.truncatedCount) warnings.push('첨부문서는 부분 발췌입니다. 문서 전체를 검토했다고 표현하지 마십시오.');
-  return { document, articlesText, precedentsText, interpretationsText, ordinanceArticlesText, adminRuleText, keyProvisionsText, warnings, omittedEvidence };
+  return { document, articlesText, precedentsText, interpretationsText, ordinanceArticlesText, adminRuleText, keyProvisionsText,
+    learningKnowledgeText, learningReferences, warnings, omittedEvidence };
 }

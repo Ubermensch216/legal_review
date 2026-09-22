@@ -1,4 +1,4 @@
-import { extractArticleReferences, normalizeArticleNo } from './lawArticleRef.js';
+import { extractArticleReferences, normalizeArticleNo, isCitationReference } from './lawArticleRef.js';
 // server/law/reRanker.js - 판례·법령해석례 시맨틱 Re-ranking 및 관련도 스코어링 엔진
 
 /**
@@ -30,7 +30,8 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
     const summary = prec.summary || '';
     const fullText = `${caseName} ${holding} ${summary}`.toLowerCase();
 
-    const mentionedArticles = new Set(extractArticleReferences(fullText).map(r => r.fullArticleNo));
+    // 문서 자신의 조문번호로 판례 관련도가 매겨지지 않도록 진짜 인용만 센다.
+    const mentionedArticles = new Set(extractArticleReferences(fullText).filter(isCitationReference).map(r => r.fullArticleNo));
     // 1. 조문 및 법령 일치도 검증 (최대 45점)
     let articleMatched = false;
     for (const art of targetArticles) {

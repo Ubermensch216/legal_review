@@ -13,8 +13,12 @@ import { saveHistoryItem, getHistoryList, getHistoryById, deleteHistoryItem, cle
 import { formatErrorResponse } from './lawErrors.js';
 import { LAW_CONFIG } from './lawConfig.js';
 import { ENV } from '../env.js';
+import { createManualLearningRouter } from './manualLearningApi.js';
+import { localLearningEndpoint } from './manualLearningLocal.js';
+import { getLearningStore } from './manualLearningStore.js';
 
 const router = express.Router();
+router.use('/learning', createManualLearningRouter());
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 } // 25MB
@@ -67,6 +71,8 @@ router.post('/parse-document', upload.single('file'), async (req, res) => {
  */
 router.post('/workbench', upload.single('file'), async (req, res) => {
   try {
+    const manualLearning = req.body.learningMode === 'manual';
+    if (manualLearning) localLearningEndpoint();
     const query = req.body.query || '';
     const preset = req.body.preset || 'compliance';
     const targetLaw = req.body.targetLaw || '';
@@ -104,11 +110,12 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
 
     // 2. LLM 10대 검토의견서 생성
     const llmConfig = {
-      provider: req.body.llmProvider,
-      model: req.body.llmModel,
-      apiKey: req.body.llmApiKey
+      provider: manualLearning ? 'ollama' : req.body.llmProvider,
+      model: manualLearning ? ENV.OLLAMA_MODEL : req.body.llmModel,
+      apiKey: manualLearning ? undefined : req.body.llmApiKey
     };
 
+    if (manualLearning) workbenchContext.meta.learningMode = 'manual';
     const reviewResult = await generateLegalReview({
       query,
       preset,
@@ -197,6 +204,7 @@ router.get('/history/:id', (req, res) => {
  */
 router.delete('/history/:id', (req, res) => {
   try {
+    getLearningStore().deleteHistory(req.params.id);
     const success = deleteHistoryItem(req.params.id);
     res.json({ ok: success });
   } catch (err) {
@@ -209,6 +217,7 @@ router.delete('/history/:id', (req, res) => {
  */
 router.delete('/history', (req, res) => {
   try {
+    getLearningStore().clear();
     const success = clearAllHistory();
     res.json({ ok: success });
   } catch (err) {

@@ -1,7 +1,7 @@
 import { matchesLaw, sameLaw, isOfficial, today, articleText, validDate, inForceAt } from './evidence.js';
 // server/law/lawWorkbench.js - 종합 법령 워크벤치 오케스트레이터 (Re-ranking & Cascading 통합)
 import { expandQueryKeywords } from './lawTermKb.js';
-import { extractArticleReferences, extractOrdinanceNames, normalizeArticleNo } from './lawArticleRef.js';
+import { extractArticleReferences, extractOrdinanceNames, normalizeArticleNo, isCitationReference } from './lawArticleRef.js';
 import { searchLaw, getLawDetail, getLawArticle, getLawVersions } from './lawApiClient.js';
 import { getLawDetailAt } from './lawVersionAt.js';
 import { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getOrdinanceDetail, getAdminRuleDetail } from './decisionsApiClient.js';
@@ -84,7 +84,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   // 자치법규(조례/자치규칙)는 법령 API(searchLaw)가 제공하지 않으므로 별도 채널로 보낸다.
   // 인용 순서상 첫 항목이 조례이면 과거에는 여기서 조회가 끝나버렸다.
   const isOrdinanceName = name => /(?:조례|자치법규)(?:\s*시행규칙)?$/.test(String(name || '').trim());
-  const citedLawNames = [...new Set(explicitRefs.map(r => r.lawName).filter(Boolean))];
+  const citedLawNames = [...new Set(explicitRefs.filter(isCitationReference).map(r => r.lawName).filter(Boolean))];
   const citedStatuteNames = citedLawNames.filter(n => !isOrdinanceName(n));
   // 조문 인용이 붙은 조례 + 제명만 언급된 조례를 합친다.
   // 신청 서식의 근거가 되는 절차 조례(예: 사전 컨설팅감사 운영 조례)는
@@ -147,7 +147,11 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
 
   // 5. 관련 조문 핀포인트 추출
   const targetArticleNos = new Set();
-  explicitRefs.filter(r => !r.lawName || sameLaw(r.lawName, primaryLawName)).forEach(r => targetArticleNos.add(r.fullArticleNo));
+  // 문서 자신의 조문(SELF)과 서식 빈칸(PLACEHOLDER)은 기준 법령 조문으로 끌어오지 않는다.
+  // 조례안의 '제8조'가 상위법 제8조로 둔갑해 공식 근거로 실리던 경로다.
+  explicitRefs.filter(isCitationReference)
+    .filter(r => !r.lawName || sameLaw(r.lawName, primaryLawName))
+    .forEach(r => targetArticleNos.add(r.fullArticleNo));
 
   // 도메인 지식베이스의 주요 조문을 인용 조문과 '합집합'으로 수집한다.
   // 신청인이 인용한 조문만 모으면, 인용하지 않은 핵심 조문(예: 관리위탁 의제 조항)에
@@ -228,7 +232,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       const match = (await clients.searchLaw(name, 1, 100)).find(l => matchesLaw(l, name));
       const detail = match && await resolveDetail(match);
       if (!detail || !sameLaw(detail.lawName, match.lawName)) { collectionWarnings.push(`${name} 본문 수집 실패`); continue; }
-      const numbers = new Set(explicitRefs.filter(r => sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
+      const numbers = new Set(explicitRefs.filter(r => isCitationReference(r) && sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
       collectedArticles.push(...detail.articles.filter(a => numbers.has(a.fullArticleNo || String(a.articleNo))).map(a => tagArticle(a, detail)));
     } catch { collectionWarnings.push(`${name} 본문 수집 실패`); }
   }
@@ -328,7 +332,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       if (!listed?.id) { collectionWarnings.push(`${ordinanceName}: 자치법규 목록에서 확인하지 못했습니다.`); continue; }
 
       const detail = await clients.getOrdinanceDetail(listed.id, { expectedName: ordinanceName });
-      const wanted = new Set(explicitRefs.filter(r => sameLaw(r.lawName, ordinanceName)).map(r => r.fullArticleNo));
+      const wanted = new Set(explicitRefs.filter(r => isCitationReference(r) && sameLaw(r.lawName, ordinanceName)).map(r => r.fullArticleNo));
       const live = detail.articles.filter(a => inForceAt(a, asOfDate));
       // 특정 조문이 인용된 경우 해당 조문만, 제명만 언급된 경우 앞부분 주요 조문을 확보한다.
       // (절차 조례는 신청·처리·반려 요건이 앞쪽 조문에 모여 있다)
