@@ -20,23 +20,44 @@ export function privateTerms(value = []) {
     .filter(x => x.length >= 2 && x.length <= 200).sort((a, b) => b.length - a.length);
 }
 
-export function redactLearningText(value, terms = []) {
-  let text = String(value || '').normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+function redactor(value, terms) {
   const identities = new Map();
   const counts = {};
+  // Editing an already redacted document must not assign a new party an existing pseudonym.
+  let next = Math.max(0, ...Array.from(String(value).matchAll(/\[[^\]\n]+_(\d+)\]/g), m => Number(m[1])));
   const substitute = (kind, raw) => {
     const key = `${kind}:${raw}`;
-    if (!identities.has(key)) identities.set(key, `[${kind}_${identities.size + 1}]`);
+    if (!identities.has(key)) identities.set(key, `[${kind}_${++next}]`);
     counts[kind] = (counts[kind] || 0) + 1;
     return identities.get(key);
   };
-  for (const term of privateTerms(terms)) text = text.split(term).join(substitute('비공개', term));
-  // Count only actual replacements for custom terms.
-  if (terms.length) counts['비공개'] = [...text.matchAll(/\[비공개_\d+\]/g)].length;
-  for (const [kind, pattern] of RULES) text = text.replace(pattern, raw =>
-    kind === '계좌번호' && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : substitute(kind, raw));
-  return { text, counts: Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0)),
-    changed: text !== String(value || '') };
+  const custom = privateTerms(terms).map(t => t.normalize('NFKC'));
+  const redact = raw => {
+    let text = String(raw || '').normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '');
+    for (const term of custom) {
+      const parts = text.split(term);
+      if (parts.length > 1) text = parts.map((p, i) => i ? substitute('비공개', term) + p : p).join('');
+    }
+    for (const [kind, pattern] of RULES) text = text.replace(pattern, found =>
+      kind === '계좌번호' && /^\d{4}-\d{2}-\d{2}$/.test(found) ? found : substitute(kind, found));
+    return text;
+  };
+  return { redact, counts };
+}
+
+export function redactLearningText(value, terms = []) {
+  const { redact, counts } = redactor(value, terms);
+  const text = redact(value);
+  return { text, counts, changed: text !== String(value || '') };
+}
+
+// Redact values rather than serialized JSON: identifiers containing quotes must not corrupt the schema.
+export function redactLearningValue(value, terms = []) {
+  const { redact, counts } = redactor(JSON.stringify(value), terms);
+  const walk = v => typeof v === 'string' ? redact(v) : Array.isArray(v) ? v.map(walk)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)])) : v;
+  const result = walk(value);
+  return { value: result, counts, changed: JSON.stringify(result) !== JSON.stringify(value) };
 }
 
 export function assertNoDetectedIdentifiers(text) {

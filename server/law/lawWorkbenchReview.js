@@ -81,20 +81,28 @@ export async function checkLlmReadiness(llmConfig = {}) {
  * @param {object} params.llmConfig - 모델/프로바이더 오버라이드 설정 (선택)
  * @returns {Promise<object>}
  */
-export async function generateLegalReview({ query, preset, documentText, workbenchContext, llmConfig = {} }) {
+export async function generateLegalReview({ query, preset, documentText, workbenchContext, llmConfig = {}, sourceHistoryId = null }) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
 
   // Human-imported knowledge stays on the local model path and is never official evidence.
   let learningKnowledge = [];
+  let learningExcluded = [];
   let learningWarning = '';
+  // 같은 사건의 재검토에서는 그 사건에서 만든 지식을 더 싣는다. 질문마다 답을 받아 승인했는데
+  // 두 장만 반영되면 "모든 답변이 충족되면 최종 답변서"라는 흐름이 성립하지 않는다.
+  const learningBudgets = sourceHistoryId ? { learningKnowledge: 6000 } : {};
   if (provider === 'ollama') {
-    try { learningKnowledge = findLearningKnowledge(workbenchContext, query); }
-    catch { learningWarning = '학습 지식 저장소를 읽지 못해 이번 검토에는 사용하지 않았습니다.'; }
+    try {
+      const found = findLearningKnowledge(workbenchContext, query, undefined,
+        { historyId: sourceHistoryId, limit: sourceHistoryId ? 6 : 2 });
+      learningKnowledge = found.used;
+      learningExcluded = found.excluded;
+    } catch { learningWarning = '학습 지식 저장소를 읽지 못해 이번 검토에는 사용하지 않았습니다.'; }
   }
-  workbenchContext = { ...workbenchContext, learningKnowledge, learningWarning };
+  workbenchContext = { ...workbenchContext, learningKnowledge, learningExcluded, learningWarning };
 
-  let input = buildReviewInput(workbenchContext, documentText, query);
+  let input = buildReviewInput(workbenchContext, documentText, query, learningBudgets);
   // 조문 특정 1단계는 입력이 짧아 축소 대상이 아니다.
   // 축소된 발췌를 쓰면 결정적 단서가 잘려 나가 엉뚱한 조항을 고르게 된다.
   const fullKeyProvisionsText = input.keyProvisionsText;
@@ -271,7 +279,9 @@ ${resolvedProvisionsText}` : ''}
     const callConfig = { ...llmConfig, budget };
     const counter = createTokenCounter(provider, { model, apiKey: llmConfig.apiKey || ENV[`${provider.toUpperCase()}_API_KEY`] });
     let userPrompt = renderPrompt(input);
-    const sectionBudgets = resolveSectionBudgets();
+    // 사건 내 재검토의 참고 지식 예산도 축소 대상에 포함시킨다.
+    // 여기서 기본값으로 되돌리면 첫 축소에서 승인된 지식이 조용히 빠진다.
+    const sectionBudgets = { ...resolveSectionBudgets(), ...learningBudgets };
     let scale = 1;
     // 축소 반복은 동기 추정으로 돌리고, 정확한 계수는 완성된 프롬프트에 한 번만 적용한다.
     const shrinkToFit = () => {
@@ -353,6 +363,7 @@ ${resolvedProvisionsText}` : ''}
     normalized.inputCoverage = coverage();
     normalized.warnings = input.warnings;
     normalized.learningReferences = input.learningReferences;
+    normalized.learningExcluded = input.learningExcluded;
     if (normalized.reviewStatus === 'COMPLETE' && (input.omittedEvidence || input.document.omittedCount || input.document.truncatedCount)) normalized.reviewStatus = 'PARTIAL';
     // 공식 인용 존재 확인
     const { verifiedReview } = await verifyAndCorrectReviewCitations({

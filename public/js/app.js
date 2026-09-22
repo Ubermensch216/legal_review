@@ -4,10 +4,12 @@ import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs } from './lawWor
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio } from './documentStudio.js';
 import { initHistoryDrawer, refreshHistoryList, addHistoryRecord } from './history.js';
+import { initLearningTab } from './learningTab.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 모듈 초기화
   initWorkbenchTabs();
+  initLearningTab();
   initDocumentViewer();
   initDocumentStudio();
   initHistoryDrawer();
@@ -179,21 +181,27 @@ function initReviewForm() {
   const btnRun = document.getElementById('btn-run-review');
   const spinner = document.getElementById('review-spinner');
   const btnText = btnRun.querySelector('.btn-text');
+  document.getElementById('manual-learning-mode')?.addEventListener('change', updateLlmDisplay);
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (state.isReviewing) return;
+    const manualLearning = state.manualLearningRerun || document.getElementById('manual-learning-mode')?.checked;
     const query = queryInput.value.trim();
     const targetLaw = targetLawInput.value.trim();
     // <input type="date">는 YYYY-MM-DD로 준다. 서버가 두 형식을 모두 받는다.
     const targetDate = targetDateInput ? targetDateInput.value.trim() : '';
 
     if (!query && !state.selectedFile) {
+      state.sourceHistoryId = null;
+      state.manualLearningRerun = false;
       alert('검토 질의를 입력하거나 검토 대상 문서(HWPX, PDF 등)를 첨부해주세요.');
       queryInput.focus();
       return;
     }
 
     // 로딩 상태 시작
+    state.isReviewing = true;
     btnRun.disabled = true;
     spinner.classList.remove('hidden');
     btnText.textContent = '법령 및 판례 수집 / AI 검토 중...';
@@ -203,9 +211,15 @@ function initReviewForm() {
     formData.append('preset', state.currentPreset || 'compliance');
     formData.append('targetLaw', targetLaw);
     formData.append('targetDate', targetDate);
-    formData.append('llmProvider', state.settings.provider);
-    formData.append('llmModel', state.settings.modelName);
-    formData.append('llmApiKey', state.settings.apiKey);
+    if (manualLearning) formData.append('learningMode', 'manual');
+    else {
+      formData.append('llmProvider', state.settings.provider);
+      formData.append('llmModel', state.settings.modelName);
+      formData.append('llmApiKey', state.settings.apiKey);
+    }
+
+    // 같은 사건의 재검토라면 그 이력을 알려, 그 사건에서 승인한 지식을 검토에 싣는다.
+    if (state.sourceHistoryId) formData.append('sourceHistoryId', state.sourceHistoryId);
 
     if (state.selectedFile) {
       formData.append('file', state.selectedFile);
@@ -219,7 +233,7 @@ function initReviewForm() {
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.message || `HTTP ${res.status}`);
+        throw new Error(errJson.error || errJson.message || `HTTP ${res.status}`);
       }
 
       const data = await res.json();
@@ -231,6 +245,10 @@ function initReviewForm() {
     } catch (err) {
       alert(`검토 실행 중 오류가 발생했습니다: ${err.message}`);
     } finally {
+      // 한 번의 실행에만 적용한다. 남겨두면 이후 일반 검토에 엉뚱한 사건의 지식이 실린다.
+      state.sourceHistoryId = null;
+      state.manualLearningRerun = false;
+      state.isReviewing = false;
       btnRun.disabled = false;
       spinner.classList.add('hidden');
       btnText.textContent = '종합 법령검토 실행';
@@ -391,7 +409,9 @@ async function loadServerConfig() {
 function updateLlmDisplay() {
   const display = document.getElementById('current-llm-display');
   if (display) {
-    display.textContent = `AI 엔진: ${state.settings.provider.toUpperCase()} (${state.settings.modelName})`;
+    display.textContent = document.getElementById('manual-learning-mode')?.checked
+      ? `로컬 Ollama (${state.config?.models?.ollama || '서버 설정 모델'}) · 외부 AI 직접 질의`
+      : `AI 엔진: ${state.settings.provider.toUpperCase()} (${state.settings.modelName})`;
   }
 }
 

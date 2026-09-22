@@ -227,10 +227,19 @@ export async function refreshHistoryList(highlight = false) {
 async function restoreHistory(id) {
   try {
     const item = await getReviewByIdFromIndexedDB(id);
-    if (!item) throw new Error('이력을 찾을 수 없습니다.');
+    let data = item?.data || item;
 
-    const data = item.data || item;
-    renderWorkbench(data);
+    // 서버 목록에서 동기화된 기록에는 요약만 들어 있다. 검토 본문은 서버에서 가져와야 한다.
+    if (!data?.review) {
+      const res = await fetch(`/api/law/history/${encodeURIComponent(id)}`);
+      const full = res.ok ? await res.json() : null;
+      if (full?.item?.data?.review) data = full.item.data;
+    }
+    if (!data?.review) throw new Error('이력을 찾을 수 없습니다.');
+
+    // 서버가 이력 ID를 payload에 넣기 전에 직렬화한 기록도 있다. 그때는 행 ID가 곧 서버 이력 ID다.
+    // 이 값이 없으면 외부 전문가 질의 탭이 어느 검토를 대상으로 할지 알 수 없다.
+    renderWorkbench({ ...data, historyId: data.historyId || id });
     closeHistoryDrawer();
 
     // 워크벤치 영역으로 스크롤

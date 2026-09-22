@@ -16,6 +16,7 @@ import { ENV } from '../env.js';
 import { createManualLearningRouter } from './manualLearningApi.js';
 import { localLearningEndpoint } from './manualLearningLocal.js';
 import { getLearningStore } from './manualLearningStore.js';
+import { inquiryCoverage } from './manualLearning.js';
 
 const router = express.Router();
 router.use('/learning', createManualLearningRouter());
@@ -71,7 +72,12 @@ router.post('/parse-document', upload.single('file'), async (req, res) => {
  */
 router.post('/workbench', upload.single('file'), async (req, res) => {
   try {
-    const manualLearning = req.body.learningMode === 'manual';
+    // Following a manually imported answer is always a local operation.
+    const sourceHistoryId = String(req.body.sourceHistoryId || '').trim().slice(0, 100) || null;
+    if (sourceHistoryId && !getHistoryById(sourceHistoryId)) {
+      return res.status(404).json({ ok: false, error: '원 검토 이력을 찾을 수 없습니다. 검토를 다시 실행한 뒤 시도하십시오.' });
+    }
+    const manualLearning = req.body.learningMode === 'manual' || Boolean(sourceHistoryId);
     if (manualLearning) localLearningEndpoint();
     const query = req.body.query || '';
     const preset = req.body.preset || 'compliance';
@@ -116,13 +122,27 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     };
 
     if (manualLearning) workbenchContext.meta.learningMode = 'manual';
+
+    // 같은 사건의 재검토. 이 값이 있으면 그 검토에서 승인한 지식을 쟁점어 일치 없이도 싣는다.
+    // 저장된 이력이 실제로 있어야 한다. 없는 값을 받아 남의 지식을 끌어오지 않게 한다.
+    const learningStore = sourceHistoryId ? getLearningStore() : null;
+    const inquiries = learningStore ? learningStore.list('inquiry').filter(i => i.historyId === sourceHistoryId) : [];
+    const cards = learningStore ? learningStore.list('knowledge') : [];
+    const unmet = inquiries.flatMap(i => inquiryCoverage(i, cards).questions
+      .filter(q => q.state !== 'APPROVED').map(q => `${i.id.slice(0, 8)} #${q.no}`));
+    if (unmet.length) {
+      workbenchContext.meta.dataIntegrity.warnings.push(`외부 질의 중 승인된 답변이 연결되지 않은 질문 ${unmet.length}건이 남아 있습니다: ${unmet.join(', ')}. 해당 쟁점의 판단을 보류하십시오.`);
+    }
+
     const reviewResult = await generateLegalReview({
       query,
       preset,
       documentText,
       workbenchContext,
-      llmConfig
+      llmConfig,
+      sourceHistoryId
     });
+    if (unmet.length && reviewResult.reviewStatus === 'COMPLETE') reviewResult.reviewStatus = 'PARTIAL';
 
     // 데이터 출처(목업 여부)와 검토 엔진(LLM/룰베이스)을 응답 최상단에 노출한다.
     // 폴백 결과가 정상 검토와 구분되지 않은 채 결재 문서로 나가는 것을 막기 위함이다.
@@ -141,7 +161,11 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         isCitationMeasurable: Boolean(reviewResult?.factualityVerification?.isMeasurable),
         warnings
       },
-      meta: workbenchContext.meta,
+      // 이 검토가 어느 사건의 후속이고 어떤 지식을 썼는지 남긴다.
+      // 별도 테이블 없이 이력만으로 지식의 출처를 되짚을 수 있어야 한다.
+      meta: sourceHistoryId ? { ...workbenchContext.meta, sourceHistoryId,
+        usedInquiryIds: [...new Set((reviewResult?.learningReferences || []).map(r => learningStore.get(r.id)?.parentId).filter(Boolean))],
+        usedKnowledgeIds: (reviewResult?.learningReferences || []).map(r => r.id) } : workbenchContext.meta,
       review: reviewResult,                     // Tab 1: 검토 초안
       officialEvidence: workbenchContext.officialEvidence, // Tab 2: 공식 근거
       impactAndRevisions: workbenchContext.impactAndRevisions // Tab 3: 개정/영향
@@ -162,7 +186,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     res.json(responsePayload);
   } catch (err) {
     console.error('[LawApi] workbench 에러:', err);
-    res.status(500).json(formatErrorResponse(err));
+    res.status(err.statusCode || 500).json(formatErrorResponse(err));
   }
 });
 

@@ -5,6 +5,8 @@ export const state = {
   selectedFile: null,
   isReviewing: false,
   lastReviewResult: null,
+  // 외부 전문가 질의 탭에서 최종 검토를 다시 실행할 때만 채워진다. 실행 후 비운다.
+  sourceHistoryId: null,
   config: null,
   settings: {
     provider: localStorage.getItem('lr_provider') || 'ollama',

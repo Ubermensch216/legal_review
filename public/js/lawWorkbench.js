@@ -2,6 +2,7 @@
 import { state } from './state.js';
 import { openArticleViewer, openPrecedentViewer } from './documentViewer.js';
 import { openStudio } from './documentStudio.js';
+import { setLearningHistory, resetLearningTab } from './learningTab.js';
 
 export function initWorkbenchTabs() {
   const tabs = document.querySelectorAll('.wb-tab');
@@ -174,6 +175,10 @@ export function renderWorkbench(data) {
 
   // 3. Tab 3: 개정 및 영향
   renderRevisionsTab(impactAndRevisions, meta);
+
+  // 4. Tab 5: 외부 전문가 질의 — 서버에 저장된 이력에만 연결한다.
+  //    질의서는 저장된 검토 자료에서 만들어지므로 이력 저장에 실패하면 사용할 수 없다.
+  setLearningHistory(data.meta?.sourceHistoryId || data.historyId);
 }
 
 /**
@@ -200,6 +205,8 @@ export function resetWorkbenchTabs() {
     dotImpactEl.className = 'tab-status-dot';
     dotImpactEl.textContent = '';
   }
+
+  resetLearningTab();
 }
 
 /**

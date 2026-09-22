@@ -161,6 +161,8 @@
 
           <!-- [STEP 3] 실행 액션 바 -->
           <div class="form-actions-bar">
+            <label class="learning-check"><input type="checkbox" id="manual-learning-mode" checked>
+              <span>로컬 검토 · 외부 AI는 직접 질의</span></label>
             <div class="llm-indicator">
               <span class="indicator-dot online"></span>
               <span id="current-llm-display">AI 엔진: Ollama (gemma4:e2b)</span>
@@ -197,6 +199,11 @@
             <span class="tab-num">4</span>
             <span class="tab-title">공식 법률검토의견서</span>
             <span class="tab-badge off" id="badge-report-status">대기</span>
+          </button>
+          <button class="wb-tab" data-tab="tab-learning">
+            <span class="tab-num">5</span>
+            <span class="tab-title">외부 전문가 질의</span>
+            <span class="tab-badge off" id="badge-learning-status">대기</span>
           </button>
         </div>
 
@@ -405,6 +412,11 @@
               </div>
             </div>
           </div>
+        </div>
+
+        <!-- 탭 5: 외부 전문가 질의 (비식별 질의서 → 외부 AI → 답변 반입 → 지식 승인) -->
+        <div class="tab-pane" id="tab-learning">
+          <div class="learning-tab" id="learning-content"></div>
         </div>
       </section>
 

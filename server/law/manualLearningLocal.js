@@ -14,7 +14,8 @@ export function localLearningEndpoint() {
 // 학습 작업의 산출물은 짧은 JSON 하나다. 검토 본문용 출력 예산(기본 8,192 토큰)을 그대로
 // 예약하면 그만큼 입력이 줄어, 정작 외부 답변이 들어갈 자리가 남지 않는다.
 // 운영자가 더 작은 값을 지정했다면 그 설정을 넘어서지 않는다.
-const TASK_OUTPUT_TOKENS = Object.freeze({ analysis: 3072, card: 5120 });
+// extract는 청크 하나에서 뽑은 조각만, compose는 제목·쟁점 두 줄만 낸다. 둘 다 출력이 짧다.
+const TASK_OUTPUT_TOKENS = Object.freeze({ analysis: 3072, card: 5120, extract: 1536, compose: 1024 });
 
 export function learningBudget(task) {
   const operator = resolveBudget('ollama', { model: ENV.OLLAMA_MODEL });

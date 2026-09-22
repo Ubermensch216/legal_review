@@ -34,6 +34,11 @@ export function resolveSectionBudgets() {
   return merged;
 }
 
+const groupBy = (items, key) => items.reduce((acc, item) => {
+  (acc[key(item)] ||= []).push(item);
+  return acc;
+}, {});
+
 export function buildReviewInput(context, documentText = '', query = '', budgets = {}) {
   const evidence = context.officialEvidence || {};
   const limits = resolveSectionBudgets();
@@ -51,13 +56,23 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   if (context.learningWarning) warnings.push(context.learningWarning);
   let learningKnowledgeText = '';
   const learningReferences = [];
+  // 예산에 밀려 빠진 지식도 사유와 함께 남긴다. 조용히 빠지면 사용자는
+  // "답변을 다 승인했는데 최종 검토에 반영되지 않았다"고만 느낀다.
+  const learningExcluded = [...(context.learningExcluded || [])];
   for (const item of context.learningKnowledge || []) {
     const text = JSON.stringify({ title: item.title, ...item.card });
-    if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) continue;
+    if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) {
+      learningExcluded.push({ id: item.id, title: item.title, reason: 'BUDGET',
+        message: '입력 예산이 부족해 이번 검토에는 싣지 못했습니다.', inCase: Boolean(item.inCase) });
+      continue;
+    }
     learningKnowledgeText += `${text}\n\n`;
-    learningReferences.push({ id: item.id, title: item.title, source: item.source });
+    learningReferences.push({ id: item.id, title: item.title, source: item.source, inCase: Boolean(item.inCase) });
   }
   if (learningReferences.length) warnings.push(`사용자 승인 외부 AI 참고 지식 ${learningReferences.length}건을 입력에 포함했습니다. 공식 근거나 법리 검증을 대신하지 않습니다.`);
+  for (const [reason, items] of Object.entries(groupBy(learningExcluded, x => x.reason))) {
+    warnings.push(`승인된 학습 지식 ${items.length}건을 이번 검토에 적용하지 않았습니다: ${items[0].message} (${reason})`);
+  }
   // 과거·미래 시점 검토임을 LLM 프롬프트와 출력 보고서 양쪽에 남긴다.
   // 이 문장이 없으면 검토문이 현행 법령을 말하는지 그 시점 법령을 말하는지 구분되지 않는다.
   if (context.meta?.targetDate) {
@@ -176,5 +191,5 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   if (omittedEvidence) warnings.push(`입력 예산 때문에 근거 ${omittedEvidence}건을 제외했습니다. 제외한 자료에 관한 판단은 보류하십시오.`);
   if (document.omittedCount || document.truncatedCount) warnings.push('첨부문서는 부분 발췌입니다. 문서 전체를 검토했다고 표현하지 마십시오.');
   return { document, articlesText, precedentsText, interpretationsText, ordinanceArticlesText, adminRuleText, keyProvisionsText,
-    learningKnowledgeText, learningReferences, warnings, omittedEvidence };
+    learningKnowledgeText, learningReferences, learningExcluded, warnings, omittedEvidence };
 }
