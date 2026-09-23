@@ -1,0 +1,1310 @@
+{
+  "measuredAt": "2026-09-23T02:48:19.843Z",
+  "pipeline": "staged",
+  "provider": "ollama",
+  "model": "gemma4:e2b",
+  "lawOc": true,
+  "modelBudgets": "{\"ollama:gemma4:e2b\":{\"contextTokens\":40960,\"outputTokens\":8192,\"tokensPerChar\":{\"hangul\":0.75}}}",
+  "sectionBudgets": "{\"precedents\":12000,\"interpretations\":9000}",
+  "note": "효율·안정성 기준선. 법리 정확도 평가가 아니다.",
+  "summary": {
+    "runs": 5,
+    "completed": 5,
+    "parseFailures": 0,
+    "fallbacks": 0,
+    "medianWallMs": 967665,
+    "medianLlmWallMs": 935192,
+    "medianOutputTokens": 7426,
+    "medianInputTokens": 91040,
+    "llmCalls": 34
+  },
+  "rows": [
+    {
+      "id": "01",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 967665,
+      "collectMs": 277,
+      "primaryLaw": "근로기준법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 6,
+        "risks": 5,
+        "redlines": 1,
+        "opinionChars": 5235,
+        "draftChars": 8204
+      },
+      "citationExistence": 100,
+      "citations": {
+        "measurable": true,
+        "precision": 100,
+        "recall": 71,
+        "cited": [
+          "근로기준법:94",
+          "근로기준법:53",
+          "근로기준법:56",
+          "근로기준법:27",
+          "근로기준법:20"
+        ],
+        "hit": [
+          "근로기준법:94",
+          "근로기준법:53",
+          "근로기준법:56",
+          "근로기준법:27",
+          "근로기준법:20"
+        ],
+        "missed": [
+          "근로기준법:23",
+          "근로기준법:50"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "취업규칙 전부개정안은 근로기준법을 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "포괄임금제 조항은 근로기준법 제50조, 제53조, 제56조를 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I3",
+            "question": "징계해고 절차는 근로기준법 제27조 및 기타 규정을 준수하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "취업규칙 불이익 변경 절차는 근로기준법 제94조를 준수하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "경업금지 및 위약벌 조항은 근로기준법상 위약 예정 금지 원칙에 위배되는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          }
+        ],
+        "gate": "OK",
+        "rejectedIds": 3,
+        "warrants": [
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED"
+        ]
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7286,
+            "outputTokens": 602,
+            "prefillMs": 16568,
+            "decodeMs": 38863,
+            "loadMs": 18,
+            "thinkingChars": 0,
+            "outputChars": 1452,
+            "wallMs": 55560,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7312,
+            "outputTokens": 294,
+            "prefillMs": 4998,
+            "decodeMs": 18731,
+            "loadMs": 25,
+            "thinkingChars": 0,
+            "outputChars": 669,
+            "wallMs": 23771,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12712,
+            "outputTokens": 1440,
+            "prefillMs": 59420,
+            "decodeMs": 106248,
+            "loadMs": 16,
+            "thinkingChars": 0,
+            "outputChars": 2799,
+            "wallMs": 165722,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12290,
+            "outputTokens": 1014,
+            "prefillMs": 68585,
+            "decodeMs": 73852,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 1914,
+            "wallMs": 142486,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12918,
+            "outputTokens": 1006,
+            "prefillMs": 77207,
+            "decodeMs": 81759,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 1867,
+            "wallMs": 159043,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 11970,
+            "outputTokens": 782,
+            "prefillMs": 66523,
+            "decodeMs": 58915,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 1458,
+            "wallMs": 125485,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12146,
+            "outputTokens": 793,
+            "prefillMs": 68915,
+            "decodeMs": 58466,
+            "loadMs": 17,
+            "thinkingChars": 0,
+            "outputChars": 1503,
+            "wallMs": 127434,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 8061,
+            "outputTokens": 969,
+            "prefillMs": 27135,
+            "decodeMs": 65183,
+            "loadMs": 15,
+            "thinkingChars": 0,
+            "outputChars": 1809,
+            "wallMs": 92358,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5r:D1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7757,
+            "outputTokens": 563,
+            "prefillMs": 7295,
+            "decodeMs": 35999,
+            "loadMs": 19,
+            "thinkingChars": 0,
+            "outputChars": 912,
+            "wallMs": 43333,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 9,
+          "failed": 0,
+          "inputTokens": 92452,
+          "outputTokens": 7463,
+          "prefillMs": 396646,
+          "decodeMs": 538016,
+          "wallMs": 935192,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "02",
+      "run": 1,
+      "preset": "contract_risk",
+      "stage": "DONE",
+      "wallMs": 199330,
+      "collectMs": 1706,
+      "primaryLaw": "개인정보 보호법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 0,
+        "risks": 5,
+        "redlines": 0,
+        "opinionChars": 380,
+        "draftChars": 1289
+      },
+      "citationExistence": null,
+      "citations": null,
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "계약서 조항 중 갑에게 지나치게 유리한 독소조항이 존재하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I2",
+            "question": "과업 범위 변경 시 을에게 불리한 조항이 포함되어 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I3",
+            "question": "계약 불이행 시 을에게 과도한 책임과 손해배상 책임이 부과되는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I4",
+            "question": "을의 지식재산권 귀속 및 재사용 제한 조항이 부당한가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I5",
+            "question": "하도급 및 인력 관리에 있어 을에게 과도한 통제 권한이 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          }
+        ],
+        "gaps": [],
+        "gate": "OK",
+        "rejectedIds": 5,
+        "warrants": []
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 6474,
+            "outputTokens": 629,
+            "prefillMs": 53994,
+            "decodeMs": 41073,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 1592,
+            "wallMs": 95168,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 6594,
+            "outputTokens": 1060,
+            "prefillMs": 5966,
+            "decodeMs": 65541,
+            "loadMs": 19,
+            "thinkingChars": 0,
+            "outputChars": 2009,
+            "wallMs": 71551,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 2,
+          "failed": 0,
+          "inputTokens": 13068,
+          "outputTokens": 1689,
+          "prefillMs": 59960,
+          "decodeMs": 106614,
+          "wallMs": 166719,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "03",
+      "run": 1,
+      "preset": "admin_dispute",
+      "stage": "DONE",
+      "wallMs": 974273,
+      "collectMs": 343,
+      "primaryLaw": "식품위생법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 14,
+        "risks": 5,
+        "redlines": 1,
+        "opinionChars": 6022,
+        "draftChars": 9536
+      },
+      "citationExistence": 100,
+      "citations": {
+        "measurable": true,
+        "precision": 67,
+        "recall": 67,
+        "cited": [
+          "행정절차법:21",
+          "식품위생법:81",
+          "식품위생법:82"
+        ],
+        "hit": [
+          "식품위생법:81",
+          "식품위생법:82"
+        ],
+        "missed": [
+          "식품위생법:75"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "영업정지 처분의 사전통지 절차는 행정절차법상 적법한가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "처분청이 청문 절차 없이 의견제출만으로 영업정지 처분을 진행한 것은 적법한가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I3",
+            "question": "의견제출 기간 7일 부여는 행정절차법상 상당한 기간에 해당하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "위반사실 3(면적 변경 미신고)이 영업정지 사유에 병합될 수 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I5",
+            "question": "영업정지 처분을 갈음하여 과징금을 부과할 수 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          }
+        ],
+        "gate": "OK",
+        "rejectedIds": 0,
+        "warrants": [
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED"
+        ]
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7180,
+            "outputTokens": 626,
+            "prefillMs": 57030,
+            "decodeMs": 39182,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 1600,
+            "wallMs": 96295,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 9340,
+            "outputTokens": 178,
+            "prefillMs": 25178,
+            "decodeMs": 11652,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 425,
+            "wallMs": 36874,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12502,
+            "outputTokens": 1548,
+            "prefillMs": 72638,
+            "decodeMs": 112033,
+            "loadMs": 18,
+            "thinkingChars": 0,
+            "outputChars": 3270,
+            "wallMs": 184753,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12615,
+            "outputTokens": 814,
+            "prefillMs": 73801,
+            "decodeMs": 58958,
+            "loadMs": 18,
+            "thinkingChars": 0,
+            "outputChars": 1547,
+            "wallMs": 132867,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12878,
+            "outputTokens": 1607,
+            "prefillMs": 76413,
+            "decodeMs": 118453,
+            "loadMs": 23,
+            "thinkingChars": 0,
+            "outputChars": 3443,
+            "wallMs": 194925,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12830,
+            "outputTokens": 1328,
+            "prefillMs": 75532,
+            "decodeMs": 94542,
+            "loadMs": 19,
+            "thinkingChars": 0,
+            "outputChars": 2781,
+            "wallMs": 170178,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s6",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7215,
+            "outputTokens": 14,
+            "prefillMs": 18639,
+            "decodeMs": 786,
+            "loadMs": 13,
+            "thinkingChars": 0,
+            "outputChars": 42,
+            "wallMs": 19489,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7855,
+            "outputTokens": 950,
+            "prefillMs": 8312,
+            "decodeMs": 57901,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 1765,
+            "wallMs": 66245,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5r:D1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 8625,
+            "outputTokens": 361,
+            "prefillMs": 15859,
+            "decodeMs": 22285,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 584,
+            "wallMs": 38182,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 9,
+          "failed": 0,
+          "inputTokens": 91040,
+          "outputTokens": 7426,
+          "prefillMs": 423402,
+          "decodeMs": 515792,
+          "wallMs": 939808,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "04",
+      "run": 1,
+      "preset": "privacy_security",
+      "stage": "DONE",
+      "wallMs": 1032108,
+      "collectMs": 355,
+      "primaryLaw": "개인정보 보호법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 11,
+        "risks": 5,
+        "redlines": 1,
+        "opinionChars": 5111,
+        "draftChars": 8840
+      },
+      "citationExistence": 82,
+      "citations": {
+        "measurable": true,
+        "precision": 18,
+        "recall": 25,
+        "cited": [
+          "개인정보보호법:24의2",
+          "개인정보보호법시행령:21의2",
+          "개인정보보호법시행령:18",
+          "개인정보보호법시행령:21",
+          "개인정보보호법시행령:30",
+          "개인정보보호법:22",
+          "개인정보보호법시행령:17",
+          "개인정보보호법:18",
+          "개인정보보호법시행령:29의10",
+          "개인정보보호법시행령:14의2",
+          "개인정보보호법시행령:15의2"
+        ],
+        "hit": [
+          "개인정보보호법:24의2",
+          "개인정보보호법:22"
+        ],
+        "missed": [
+          "개인정보보호법:15",
+          "개인정보보호법:17",
+          "개인정보보호법:23",
+          "개인정보보호법:25",
+          "개인정보보호법:26",
+          "개인정보보호법:28의2"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "주민등록번호 수집 및 암호화 조치의 적정성인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "얼굴인식 출입관리 시 민감정보 수집 및 안전성 확보 조치가 적정한가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I3",
+            "question": "마케팅 광고 발송 시 포괄적 동의의 유효성 및 수신 동의 획득 여부가 적정한가?",
+            "conclusion": "NOT_APPLICABLE",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "AI 추천모델 학습 시 가명처리 및 국외 이전 관련 법적 요건이 충족되었는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "채용 지원자 관리 시 민감정보 수집의 최소성 및 파기 절차가 적정한가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          }
+        ],
+        "gate": "OK",
+        "rejectedIds": 1,
+        "warrants": [
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED"
+        ]
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 6240,
+            "outputTokens": 684,
+            "prefillMs": 48348,
+            "decodeMs": 39489,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 1613,
+            "wallMs": 87936,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 8060,
+            "outputTokens": 321,
+            "prefillMs": 20559,
+            "decodeMs": 20003,
+            "loadMs": 17,
+            "thinkingChars": 0,
+            "outputChars": 712,
+            "wallMs": 40605,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 9679,
+            "outputTokens": 481,
+            "prefillMs": 49474,
+            "decodeMs": 31010,
+            "loadMs": 20,
+            "thinkingChars": 0,
+            "outputChars": 1150,
+            "wallMs": 80546,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7479,
+            "outputTokens": 1103,
+            "prefillMs": 28202,
+            "decodeMs": 68055,
+            "loadMs": 22,
+            "thinkingChars": 0,
+            "outputChars": 2478,
+            "wallMs": 96302,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 11835,
+            "outputTokens": 1049,
+            "prefillMs": 61648,
+            "decodeMs": 72820,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 2154,
+            "wallMs": 134540,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 11590,
+            "outputTokens": 1032,
+            "prefillMs": 58846,
+            "decodeMs": 71767,
+            "loadMs": 18,
+            "thinkingChars": 0,
+            "outputChars": 2029,
+            "wallMs": 130709,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 10037,
+            "outputTokens": 927,
+            "prefillMs": 42857,
+            "decodeMs": 60406,
+            "loadMs": 13,
+            "thinkingChars": 0,
+            "outputChars": 1834,
+            "wallMs": 103340,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 10955,
+            "outputTokens": 864,
+            "prefillMs": 52247,
+            "decodeMs": 58696,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 1836,
+            "wallMs": 110999,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 11157,
+            "outputTokens": 1082,
+            "prefillMs": 55141,
+            "decodeMs": 73385,
+            "loadMs": 25,
+            "thinkingChars": 0,
+            "outputChars": 2075,
+            "wallMs": 128578,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 6893,
+            "outputTokens": 842,
+            "prefillMs": 12951,
+            "decodeMs": 49939,
+            "loadMs": 17,
+            "thinkingChars": 0,
+            "outputChars": 1647,
+            "wallMs": 62957,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5r:D1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7382,
+            "outputTokens": 186,
+            "prefillMs": 12738,
+            "decodeMs": 10911,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 325,
+            "wallMs": 23680,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 11,
+          "failed": 0,
+          "inputTokens": 101307,
+          "outputTokens": 8571,
+          "prefillMs": 443011,
+          "decodeMs": 556481,
+          "wallMs": 1000192,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "05",
+      "run": 1,
+      "preset": "pre_consulting_audit",
+      "stage": "DONE",
+      "wallMs": 136905,
+      "collectMs": 387,
+      "primaryLaw": "지방재정법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 1,
+        "legalBasis": 0,
+        "risks": 1,
+        "redlines": 0,
+        "opinionChars": 119,
+        "draftChars": 1241
+      },
+      "citationExistence": null,
+      "citations": null,
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "관내 사업장을 두었으나 군에 주민등록을 두지 아니한 소상공인을 조례 개정 없이 지침(사업 공고)으로 지원 대상에 포함할 수 있는지 여부인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          }
+        ],
+        "gaps": [],
+        "gate": "OK",
+        "rejectedIds": 0,
+        "warrants": []
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3512,
+            "outputTokens": 583,
+            "prefillMs": 25116,
+            "decodeMs": 32059,
+            "loadMs": 13,
+            "thinkingChars": 0,
+            "outputChars": 1174,
+            "wallMs": 57241,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3450,
+            "outputTokens": 170,
+            "prefillMs": 3473,
+            "decodeMs": 9360,
+            "loadMs": 12,
+            "thinkingChars": 0,
+            "outputChars": 419,
+            "wallMs": 12866,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3538,
+            "outputTokens": 975,
+            "prefillMs": 3958,
+            "decodeMs": 53443,
+            "loadMs": 15,
+            "thinkingChars": 0,
+            "outputChars": 1824,
+            "wallMs": 57432,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 3,
+          "failed": 0,
+          "inputTokens": 10500,
+          "outputTokens": 1728,
+          "prefillMs": 32547,
+          "decodeMs": 94862,
+          "wallMs": 127539,
+          "prefixCacheHits": 0
+        }
+      }
+    }
+  ]
+}

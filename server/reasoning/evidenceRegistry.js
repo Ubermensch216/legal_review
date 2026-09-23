@@ -16,20 +16,12 @@
 //   D4        첨부문서 조항     D4.2   긴 조항의 둘째 조각
 //   K1        승인된 외부 참고 지식(비공식)
 import { createHash } from 'node:crypto';
-import { articleText, inForceAt, isOfficial, normalizedLawName, sameLaw, today } from '../law/evidence.js';
+import { articleText, inForceAt, isOfficial, normalizedLawName, sameLaw, today, unitNumber } from '../law/evidence.js';
 import { extractArticleReferences, isCitationReference, normalizeArticleNo } from '../law/lawArticleRef.js';
 import { chunkLegalDocument } from '../parsers/legalDocChunker.js';
 
-const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
-
-/** 항·호 번호는 '①'이나 '1.' 형태로 들어온다. 숫자만 뽑아 표기를 통일한다. */
-export const unitNumber = value => {
-  const text = String(value || '').trim();
-  const digits = text.match(/\d+/)?.[0];
-  if (digits) return digits;
-  const circled = CIRCLED.indexOf(text.charAt(0));
-  return circled >= 0 ? String(circled + 1) : '';
-};
+// 항·호 번호 통일은 인용 검증기와 같은 규칙을 쓴다.
+export { unitNumber };
 
 /** "…다만, …" 형태를 원칙과 단서로 나눈다. 단서가 없으면 null. */
 export function splitProviso(text) {

@@ -53,16 +53,29 @@ export function exactArticle(articles, number) {
   return key ? (articles || []).find(a => normalizeArticleNo(a.fullArticleNo || a.articleNo) === key) : undefined;
 }
 
+const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
+
+/**
+ * 항·호 번호를 숫자 문자열로 통일한다. 공식 API는 항 번호를 '①'처럼 원문자로 준다.
+ * 숫자만 찾으면 원문자 항이 모두 '없음'이 되어, 항까지 적은 인용이 존재 확인에서 전부 떨어진다.
+ */
+export const unitNumber = value => {
+  const text = String(value || '').trim();
+  const digits = text.match(/\d+/)?.[0];
+  if (digits) return digits;
+  const circled = CIRCLED.indexOf(text.charAt(0));
+  return circled >= 0 ? String(circled + 1) : '';
+};
+
 // Existence of an article does not establish existence of its cited paragraph/item.
 export function containsCitation(article, citation) {
   if (!article || article.isDeleted || !articleText(article).trim()) return false;
   const pNo = citation.match(/제?\s*(\d+)\s*항/)?.[1];
   const iNo = citation.match(/제?\s*(\d+)\s*호/)?.[1];
   const sNo = citation.match(/([가-힣])\s*목/)?.[1];
-  const number = value => String(value || '').match(/\d+/)?.[0];
-  const paragraphs = pNo ? (article.paragraphs || []).filter(p => number(p.paragraphNo) === pNo) : article.paragraphs || [];
+  const paragraphs = pNo ? (article.paragraphs || []).filter(p => unitNumber(p.paragraphNo) === pNo) : article.paragraphs || [];
   if (pNo && !paragraphs.length) return false;
-  const items = paragraphs.flatMap(p => p.items || []).filter(i => !iNo || number(i.itemNo) === iNo);
+  const items = paragraphs.flatMap(p => p.items || []).filter(i => !iNo || unitNumber(i.itemNo) === iNo);
   if (iNo && !items.length) return false;
   if (sNo && !items.some(i => (i.subItems || []).some(s => String(s.subItemNo).replace(/[.\s목]/g, '') === sNo))) return false;
   return true;

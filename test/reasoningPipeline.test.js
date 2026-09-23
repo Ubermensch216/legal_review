@@ -124,6 +124,20 @@ test('선결 쟁점은 뒤에 적혀 있어도 먼저 판단한다', () => {
   assert.deepEqual(order.map(i => i.id), ['I2', 'I1', 'I3']);
 });
 
+test('공식 요건이 없어 모든 쟁점을 생략하면 검토 필요 게이트와 근거 공백을 남긴다', async () => {
+  fakeOllama();
+  const context = workbenchContext();
+  context.officialEvidence.articles = [];
+  context.meta.dataIntegrity.hasOfficialArticles = false;
+  const review = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText,
+    workbenchContext: context, provider: 'ollama', model: ENV.OLLAMA_MODEL,
+    session: createLlmSession(), clients, embed, cache: cache() });
+  assert.ok(review.reasoning.issues.every(i => i.stageStatus === 'SKIPPED'));
+  assert.equal(review.reasoning.gate, 'HUMAN_REVIEW_REQUIRED');
+  assert.equal(review.reviewStatus, 'PARTIAL');
+  assert.equal(review.reasoning.gaps.filter(g => g.type === 'MISSING_AUTHORITY').length, review.reasoning.issues.length);
+});
+
 test('REVIEW_PIPELINE=staged이면 검토가 단계형으로 돌고 인용 검증을 거치며, 쟁점 정리에 실패하면 단일 호출 검토로 넘어간다', async () => {
   process.env.REVIEW_PIPELINE = 'staged';
   const run = () => generateLegalReview({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),

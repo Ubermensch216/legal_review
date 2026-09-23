@@ -9,6 +9,7 @@
 //   BASELINE_CASES=01,05 BASELINE_REPEAT=3 node test/benchmark/pipelineBaseline.js
 //   BASELINE_OUT=docs/audit/pipeline-baseline-custom.json node test/benchmark/pipelineBaseline.js
 //   BASELINE_PIPELINE=staged node test/benchmark/pipelineBaseline.js   # 단계형 파이프라인으로 같은 사례 측정
+//   BASELINE_SAVE_DIR=<폴더> ...   # 사례별 검토 결과 전체를 저장(분석용; 사건 자료가 들어가므로 저장소 밖에 두십시오)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,6 +68,10 @@ async function runCase(item, run) {
   const review = await generateLegalReview({ query: item.query, preset: item.preset, documentText,
     workbenchContext: ctx, llmConfig: { provider, pipeline } });
   const verification = review.factualityVerification || {};
+  if (process.env.BASELINE_SAVE_DIR) {
+    fs.mkdirSync(process.env.BASELINE_SAVE_DIR, { recursive: true });
+    fs.writeFileSync(path.join(process.env.BASELINE_SAVE_DIR, `${pipeline}-${item.id}-${run}.json`), JSON.stringify({ meta: ctx.meta, review }, null, 1));
+  }
   return { ...row, stage: 'DONE', wallMs: Date.now() - started, collectMs: collectedMs,
     primaryLaw: ctx.meta?.primaryLawName || null,
     reviewEngine: review.reviewEngine, reviewStatus: review.reviewStatus, isFallback: Boolean(review.isFallback),

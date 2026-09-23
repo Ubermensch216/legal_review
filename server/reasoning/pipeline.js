@@ -257,6 +257,9 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   progress.done('s5', synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
 
   const gateReasons = [...new Set(issueResults.flatMap(r => (r.gateReasons || []).map(g => `${r.issueId}: ${g}`)))];
+  for (const result of issueResults.filter(r => r.stageStatus === 'SKIPPED')) {
+    gateReasons.push(`${result.issueId}: 적용할 공식 근거 또는 판단 요건이 없어 쟁점을 검토하지 못함`);
+  }
   if (tally('NOT_SUPPORTED')) gateReasons.push(`근거가 뒷받침하지 않는 주장 ${tally('NOT_SUPPORTED')}개`);
   const complete = issueResults.every(r => r.stageStatus === 'OK') && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';

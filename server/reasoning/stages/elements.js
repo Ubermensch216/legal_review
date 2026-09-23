@@ -72,9 +72,15 @@ export async function decomposeArticles({ articleIds, registry, prefix, provider
       warnings.push(`조문 요건 분해 실패(${batch.join(', ')}) — 항·호 단위 골격 요건으로 대체: ${err.message}`);
     }
 
-    for (const id of batch) {
+    // 모델이 articleId를 "A5 (근로기준법 제27조)"처럼 꾸며 쓰는 일이 있다(실측). ID만 뽑아 맞추고,
+    // 그래도 안 맞으면 조문 수가 같을 때에 한해 순서대로 맞춘다.
+    const answers = parsed?.articles || [];
+    const idOf = value => String(value || '').match(/[AO]\d+/)?.[0] || '';
+    const byOrder = answers.length === batch.length && !answers.some(a => batch.includes(idOf(a.articleId)));
+    for (const [index, id] of batch.entries()) {
       const own = new Set([id, ...registry.children(id).map(c => c.id)]);
-      const answer = parsed?.articles?.find(a => a.articleId === id);
+      const answer = answers.find(a => idOf(a.articleId) === id) || (byOrder ? answers[index] : null);
+      if (parsed && !answer) warnings.push(`조문 요건 분해 응답에 ${id}가 없어 항·호 단위 골격 요건으로 대체했습니다.`);
       const elements = (answer?.elements || []).map(e => ({ ...e, text: String(e.text).trim(), sourceIds: e.sourceIds.filter(s => own.has(s)) }))
         .filter(e => e.text).slice(0, MAX_ELEMENTS)
         .map((e, n) => ({ id: `${id}.E${n + 1}`, text: e.text, mandatory: e.mandatory, isException: e.isException,

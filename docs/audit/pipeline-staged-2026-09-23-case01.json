@@ -1,0 +1,394 @@
+{
+  "measuredAt": "2026-09-23T01:49:18.986Z",
+  "pipeline": "staged",
+  "provider": "ollama",
+  "model": "gemma4:e2b",
+  "lawOc": true,
+  "modelBudgets": "{\"ollama:gemma4:e2b\":{\"contextTokens\":40960,\"outputTokens\":8192,\"tokensPerChar\":{\"hangul\":0.75}}}",
+  "sectionBudgets": "{\"precedents\":12000,\"interpretations\":9000}",
+  "note": "효율·안정성 기준선. 법리 정확도 평가가 아니다.",
+  "summary": {
+    "runs": 1,
+    "completed": 1,
+    "parseFailures": 0,
+    "fallbacks": 0,
+    "medianWallMs": 1515024,
+    "medianLlmWallMs": 1471543,
+    "medianOutputTokens": 8908,
+    "medianInputTokens": 88596,
+    "llmCalls": 9
+  },
+  "rows": [
+    {
+      "id": "01",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 1515024,
+      "collectMs": 265,
+      "primaryLaw": "근로기준법",
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 7,
+        "risks": 5,
+        "redlines": 1,
+        "opinionChars": 5552,
+        "draftChars": 9456
+      },
+      "citationExistence": 14,
+      "citations": {
+        "measurable": true,
+        "precision": 17,
+        "recall": 14,
+        "cited": [
+          "근로기준법:94",
+          "근로기준법:53",
+          "근로기준법:56",
+          "근로기준법:27",
+          "근로기준법:23",
+          "근로기준법:20"
+        ],
+        "hit": [
+          "근로기준법:20"
+        ],
+        "missed": [
+          "근로기준법:23",
+          "근로기준법:27",
+          "근로기준법:50",
+          "근로기준법:53",
+          "근로기준법:56",
+          "근로기준법:94"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "취업규칙 전부개정안은 근로기준법을 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "포괄임금제 조항은 근로기준법 제50조, 제53조, 제56조를 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "SKIPPED"
+          },
+          {
+            "id": "I3",
+            "question": "징계해고 절차는 근로기준법 제27조 및 기타 관련 규정을 준수하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "취업규칙 변경 시 불이익 변경 절차는 근로기준법 제94조를 준수하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "신설된 위약벌 조항은 근로기준법상 위약 예정 금지 원칙에 위배되는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "MISSING_AUTHORITY",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          }
+        ],
+        "gate": "OK",
+        "rejectedIds": 0,
+        "warrants": [
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED",
+          "SUPPORTED"
+        ]
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7286,
+            "outputTokens": 612,
+            "prefillMs": 56202,
+            "decodeMs": 39062,
+            "loadMs": 14,
+            "thinkingChars": 0,
+            "outputChars": 1459,
+            "wallMs": 95359,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 8438,
+            "outputTokens": 1191,
+            "prefillMs": 16065,
+            "decodeMs": 77130,
+            "loadMs": 81,
+            "thinkingChars": 0,
+            "outputChars": 2642,
+            "wallMs": 93313,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7364,
+            "outputTokens": 274,
+            "prefillMs": 5144,
+            "decodeMs": 17712,
+            "loadMs": 13,
+            "thinkingChars": 0,
+            "outputChars": 627,
+            "wallMs": 22890,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12706,
+            "outputTokens": 1835,
+            "prefillMs": 76449,
+            "decodeMs": 135750,
+            "loadMs": 19,
+            "thinkingChars": 0,
+            "outputChars": 3356,
+            "wallMs": 212284,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12305,
+            "outputTokens": 1568,
+            "prefillMs": 70334,
+            "decodeMs": 115974,
+            "loadMs": 15,
+            "thinkingChars": 0,
+            "outputChars": 2951,
+            "wallMs": 186399,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12048,
+            "outputTokens": 958,
+            "prefillMs": 68369,
+            "decodeMs": 68469,
+            "loadMs": 18,
+            "thinkingChars": 0,
+            "outputChars": 1942,
+            "wallMs": 136887,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 12722,
+            "outputTokens": 1024,
+            "prefillMs": 77069,
+            "decodeMs": 85677,
+            "loadMs": 15,
+            "thinkingChars": 0,
+            "outputChars": 1814,
+            "wallMs": 162816,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7965,
+            "outputTokens": 907,
+            "prefillMs": 27959,
+            "decodeMs": 63214,
+            "loadMs": 76,
+            "thinkingChars": 0,
+            "outputChars": 1702,
+            "wallMs": 91316,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5r:D1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7762,
+            "outputTokens": 539,
+            "prefillMs": 16535,
+            "decodeMs": 34573,
+            "loadMs": 16,
+            "thinkingChars": 0,
+            "outputChars": 859,
+            "wallMs": 470279,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 9,
+          "failed": 0,
+          "inputTokens": 88596,
+          "outputTokens": 8908,
+          "prefillMs": 414126,
+          "decodeMs": 637561,
+          "wallMs": 1471543,
+          "prefixCacheHits": 0
+        }
+      }
+    }
+  ]
+}

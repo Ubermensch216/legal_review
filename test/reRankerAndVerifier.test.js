@@ -137,3 +137,21 @@ test('연쇄 검색은 주입한 본문의 인용 관계만 선택한다', async
   assert.equal(cascade.stageStatus.rule, 'NOT_FOUND');
   assert.equal(cascade.isCompleteHierarchy, false);
 });
+
+test('공식 API의 원문자 항 번호(①)로 된 조문도 항·호 단위 인용을 확인한다 (factualityVerifier)', async () => {
+  // 공식 API는 항 번호를 '①'로 준다. 숫자만 찾던 과거 대조는 '제94조 제1항' 같은 인용을 전부 미검증으로 떨어뜨렸다.
+  const article = { articleNo: 94, fullArticleNo: '94', title: '규칙의 작성, 변경 절차', content: '제94조', enforceDate: '20200101',
+    paragraphs: [{ paragraphNo: '①', content: '취업규칙 변경 시 의견 청취', items: [] },
+      { paragraphNo: '②', content: '신고', items: [{ itemNo: '1.', content: '첨부 서류' }] }] };
+  const { verificationReport } = await verifyAndCorrectReviewCitations({
+    review: { legalBasis: [
+      { lawName: '근로기준법', articleNo: '제94조 제1항' },
+      { lawName: '근로기준법', articleNo: '제94조 제2항 제1호' },
+      { lawName: '근로기준법', articleNo: '제94조 제3항' }
+    ] },
+    workbenchContext: { meta: { primaryLawName: '근로기준법' },
+      officialEvidence: { lawDetail: { lawName: '근로기준법', lawId: '1', enforceDate: '20200101', source: 'OFFICIAL_API' }, articles: [article] } },
+    lookupArticle: async () => null
+  });
+  assert.deepEqual(verificationReport.details.map(d => d.status), ['VERIFIED', 'VERIFIED', 'UNVERIFIED'], '없는 제3항은 여전히 미검증');
+});

@@ -13,6 +13,10 @@ export const GAP_ROUTE = Object.freeze({
 const MAX_INQUIRY_GAPS = 12;
 
 const clip = (text, max) => { const t = String(text || '').replace(/\s+/g, ' ').trim(); return t.length > max ? `${t.slice(0, max)}…` : t; };
+// 모델의 openQuestion은 자유 문장이다. 입증 부족을 설명하는 문장을 법리 질의로 보내면
+// 사건 사실이 외부 질의서에 섞이므로, 사실 확인 표현은 사용자 경로로 보낸다.
+const FACT_QUESTION = /사실관계|자료|증빙|증거|확인|제시|실제|구체적|존재 여부|이루어졌|지급 여부|산정|내용이 .*없|여부가 .*없/;
+const LEGAL_QUESTION = /해석|법리|법적|법률상|판례|조문|법령|효력|어떤 기준|판단.{0,15}기준|기준은 무엇/;
 
 /**
  * @param {object} args
@@ -26,7 +30,9 @@ export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts =
   const gaps = [];
   const seen = new Set();
   const add = gap => {
-    const key = `${gap.issueId}|${gap.elementId || ''}|${gap.type}`;
+    // 같은 조문의 요건은 여러 쟁점에 걸쳐 나온다. 요건 단위 공백은 쟁점이 달라도 한 번만 묻는다.
+    // 쟁점에 매이지 않는 공백(자료 밖 사실·수집 실패)은 문장마다 다른 공백이다.
+    const key = gap.elementId ? `${gap.elementId}|${gap.type}` : gap.issueId ? `${gap.issueId}||${gap.type}` : `-|${gap.type}|${gap.question}`;
     if (seen.has(key)) return;
     seen.add(key);
     gaps.push({ ...gap, route: GAP_ROUTE[gap.type], state: 'OPEN' });
@@ -39,27 +45,39 @@ export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts =
     const base = elementId => ({ issueId: issue.id, elementId, changesOutcome: elementId ? deciding.has(elementId) : true,
       priority: weight + (elementId && deciding.has(elementId) ? 2 : 0) });
 
-    if (result.stageStatus === 'FAILED') {
-      add({ ...base(null), type: 'STAGE_FAILURE', question: `다음 쟁점을 판단하기 위한 적용 요건·예외와 판단 기준은 무엇인가? — ${issue.question}` });
+    if (result.stageStatus === 'FAILED' || result.stageStatus === 'SKIPPED') {
+      const skipped = result.stageStatus === 'SKIPPED';
+      add({ ...base(null), type: skipped ? 'MISSING_AUTHORITY' : 'STAGE_FAILURE',
+        question: skipped
+          ? `다음 쟁점에 적용할 공식 법령·판례·해석례와 판단 요건은 무엇인가? — ${issue.question}`
+          : `다음 쟁점을 판단하기 위한 적용 요건·예외와 판단 기준은 무엇인가? — ${issue.question}` });
       continue;
     }
     for (const a of result.assessments || []) {
+      // 결론을 좌우하지 않는 요건의 공백은 묻지 않는다. 소형 모델은 거의 모든 요건에 의문을 남기므로,
+      // 걸러내지 않으면 질의서가 결론과 무관한 질문으로 찬다(실측: 사례 01에서 공백 24개).
+      if (!deciding.has(a.elementId)) continue;
       const element = result.elements.find(e => e.id === a.elementId);
       const open = ['UNKNOWN', 'DISPUTED', 'PARTIALLY_SATISFIED'].includes(a.status);
-      if (a.openQuestion) {
+      const proofMissing = ['INSUFFICIENT', 'NO_EVIDENCE'].includes(a.proof);
+      const factualQuestion = Boolean(a.openQuestion) && (FACT_QUESTION.test(a.openQuestion)
+        || (proofMissing && !LEGAL_QUESTION.test(a.openQuestion)));
+      if (a.openQuestion && !factualQuestion) {
         add({ ...base(a.elementId), type: 'LEGAL_INTERPRETATION', question: clip(a.openQuestion, 300) });
-      } else if (open && !a.evidenceIds.length) {
+      } else if (open && !a.evidenceIds.length && !proofMissing) {
         add({ ...base(a.elementId), type: 'MISSING_AUTHORITY',
           question: `'${clip(element?.text, 120)}' 요건의 충족 여부를 판단할 법령·판례·해석례는 무엇인가? (쟁점: ${clip(issue.question, 120)})` });
-      } else if (open && a.status !== 'PARTIALLY_SATISFIED' && !['INSUFFICIENT', 'NO_EVIDENCE'].includes(a.proof)) {
+      } else if (open && a.status !== 'PARTIALLY_SATISFIED' && !proofMissing) {
         // 근거도 사실도 있는데 판단이 서지 않았다 — 해석 문제다.
         add({ ...base(a.elementId), type: 'LEGAL_INTERPRETATION',
           question: `'${clip(element?.text, 120)}' 요건은 어떤 기준으로 판단하는가? (쟁점: ${clip(issue.question, 120)})` });
       }
       // 법리 판단과 별개로 입증이 모자라면 사용자에게 사실 확인을 요청한다.
-      if (['INSUFFICIENT', 'NO_EVIDENCE'].includes(a.proof) && a.status !== 'NOT_SATISFIED') {
+      if ((proofMissing || factualQuestion) && a.status !== 'NOT_SATISFIED') {
         add({ ...base(a.elementId), type: 'FACT_UNKNOWN',
-          question: `'${clip(element?.text, 120)}' 요건을 입증할 자료(사실관계)를 확인해 주십시오.` });
+          question: factualQuestion
+            ? clip(a.openQuestion, 300)
+            : `'${clip(element?.text, 120)}' 요건을 입증할 자료(사실관계)를 확인해 주십시오.` });
       }
     }
     const supports = (result.precedents || []).some(p => p.stance === 'SUPPORTS' && p.relation !== 'NOT_RELEVANT');

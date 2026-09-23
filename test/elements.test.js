@@ -105,3 +105,14 @@ test('요건이 상한을 넘으면 예외 요건은 모두 남긴다', () => {
   assert.equal(selected.length, 10);
   assert.deepEqual(selected.filter(e => e.isException).map(e => e.id), ['A1.E11', 'A1.E12']);
 });
+
+test('모델이 조문 ID를 꾸며 써도 ID를 뽑아 맞추고, 끝내 빠진 조문은 골격으로 대체하며 사유를 남긴다', async () => {
+  const registry = buildEvidenceRegistry(context());
+  const decorated = JSON.stringify({ articles: [{ articleId: 'A2(제94조)', burden: '', elements: [
+    { text: '불리한 변경일 것', mandatory: true, isException: true, sourceIds: ['A2.1x'] }] }] });
+  fakeOllama(() => reply(decorated));
+  const result = await decomposeArticles({ articleIds: ['A1', 'A2'], registry, prefix: 'P0', provider: 'ollama', config, session: createLlmSession(), cache: freshCache('elements-c') });
+  assert.equal(result.byArticle.get('A2').source, 'LLM');
+  assert.equal(result.byArticle.get('A1').source, 'SKELETON');
+  assert.ok(result.warnings.some(w => /A1가 없어/.test(w)));
+});
