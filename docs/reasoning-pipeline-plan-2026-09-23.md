@@ -1,5 +1,7 @@
 # 단계형 법률 추론 파이프라인 — LLM 효율 중심 구현 계획
 
+> **현행 상태 (2026-09-23):** 이 문서의 1~11장은 당시 설계와 가설이다. 실제 구현·측정 판정은 아래 §12, [현재 상태](current-status.md), [5건 비교 기록](audit/pipeline-comparison-2026-09-23.md)을 따른다. 단계형은 기본값으로 전환하지 않았다. 초기의 "출력 토큰 절반 이하" 예상은 사례 01 실측에서 성립하지 않았다.
+
 - 작성일: 2026-09-23
 - 기준: `main` @ `31f2cd4`, 로컬 Ollama 0.34.2 / `gemma4:e2b`(5.1B, Q4_K_M) / `bge-m3`(설치됨, 미사용)
 - 입력: `deep-research-report (1).md`(Legal Review 전문 법률분석 시스템 고도화 보고서), 현재 소스, 기존 `docs/audit/*`, `docs/research/*`
@@ -441,7 +443,7 @@ v1 필드 매핑: `coreIssues` ← `issues[].question`, `legalBasis` ← 인용�
 | 단계 | 상태 | 파일 | 비고 |
 |---|---|---|---|
 | Phase 0 게이트웨이·호출 원장 | 완료 | `server/reasoning/llmGateway.js` | 모든 검토 결과에 `llmLedger`(단계·입출력 토큰·prefill/디코드 시간·접두부 캐시 추정). JSON Schema `format`, `think` 지원 |
-| Phase 0 기준선 | 측정 중 | `test/benchmark/pipelineBaseline.js`, `docs/audit/pipeline-baseline-2026-09-23.json` | 아래 "기준선에서 드러난 결함" 참조 |
+| Phase 0 기준선 | 5건 1회 측정 완료 | `test/benchmark/pipelineBaseline.js`, `docs/audit/pipeline-baseline-2026-09-23.json` | 1건 파싱 실패·3건 폴백. 아래 결함 및 비교 기록 참조 |
 | Phase 1 근거 등록부 | 완료 | `server/reasoning/evidenceRegistry.js` | 항·호·단서·판결요지 번호·참조조문 연결 |
 | Phase 2 S1 사건·쟁점 | 완료 | `stages/caseIssues.js` | 인용문 실재 확인·ID 거부·중복 병합·순환 제거 |
 | Phase 3 S2 쟁점별 조사 | 완료 | `stages/issueResearch.js`, `embeddings.js` | `bge-m3` 사용, 불가 시 문자열 특징만 |
@@ -449,14 +451,14 @@ v1 필드 매핑: `coreIssues` ← `issues[].question`, `legalBasis` ← 인용�
 | Phase 5 S4 포섭·결론 규칙 | 완료 | `stages/application.js`, `verify/conclusion.js` | 기본 think off + `reasoning` 필드. think A/B는 실측 후 결정 |
 | Phase 6 S5·S6·조립 | 완료 | `stages/synthesis.js`, `verify/warrant.js`, `pipeline.js` | v1 필드 렌더링, 인용 검증기 이중 적용 |
 | Phase 7 비교 평가 | 1회 비교 완료, 전환 보류 | `docs/audit/pipeline-comparison-2026-09-23.md` | 02·05 쟁점 전부 생략, 04 인용 존재율 82%, 01 모델 시간 +27%; 기본값 유지 |
-| Phase 8-1 공백 산출 | 완료 | `stages/gaps.js` | |
+| Phase 8-1 공백 산출 | 기본 분류 구현, 재조사 보류 | `stages/gaps.js` | 사실 질문의 외부 질의 오분류와 생략 쟁점 누락은 수정. 계획한 MISSING_AUTHORITY 자동 재조회는 미구현 |
 | Phase 8-2 공백 기반 질의서 | 완료 | `manualLearning.js` `createInquiryFromGaps` | 단계형 검토 이력이면 자동 적용. 이전 이력은 기존 방식 |
 | Phase 8-3 질문별 답변 반입 | 완료 | `normalizeAnswers`, `parseStructuredCard` | 새 판례·조문의 공식 API 확인은 **보류**(아래) |
 | Phase 8-4 부분 재검토 | 완료 | `pipeline.js`, `knowledgeAnchors` | 공식 근거 지문이 같을 때만 S1·S2 재사용 |
 | Phase 8-5 임베딩 관련도 | **보류** | — | `findLearningKnowledge`가 동기 함수라 호출부 변경 필요 |
 | Phase 8-6 학습 탭 공백 표시 | 완료 | `public/js/learningTab.js` | 질문별 연결 쟁점·요건·공백 유형 |
 | HUMAN_EXPERT 출처 | 완료 | `manualLearning.js`, `learningTab.js` | 신뢰 차등 없음 |
-| Phase 9 쟁점·요건 탭 | 미착수 | — | |
+| Phase 9 쟁점·요건 표시 | 부분 구현 | `public/js/reasoningView.js` | 기존 검토 초안에 구조화된 쟁점·요건 표 표시. 별도 탭과 쟁점 직접 수정 기능은 없음 |
 
 ### 계획과 달라진 점
 
@@ -498,4 +500,4 @@ v1 필드 매핑: `coreIssues` ← `issues[].question`, `legalBasis` ← 인용�
 2. **시간의 대부분은 S4 출력이다(쟁점당 958~1,835토큰).** 요건별 분석·서술 길이 상한을 줄였다(분석 200→120자, 서술 600→400자, 판단 과정 300→200자 등).
 3. **인용 존재율 14%는 검증기의 기존 결함이었다.** 공식 API의 항 번호는 `①` 형식인데 대조 함수가 숫자만 찾아, 항까지 적은 인용(`제94조 제1항`)이 모두 미검증이 됐다. 단일 호출은 주로 조 단위로 인용해 드러나지 않았다. `evidence.js`의 `containsCitation`이 원문자를 읽도록 고쳤다(회귀 시험 추가).
 4. **공백이 24개로 과다했다.** 결론을 좌우하는 요건의 공백만 만들고, 여러 쟁점에 걸친 같은 요건은 한 번만 묻도록 고쳤다.
-5. **쟁점 하나(I2)가 요건 없음으로 생략됐다.** 원인 분석 중.
+5. **쟁점 하나(I2)가 요건 없음으로 생략됐다.** 후속 5건 실행에서는 사례 01의 5개 쟁점이 모두 S4를 실행했다. 다만 S3의 A5·A2는 골격 대체였고, 사례 02·05는 모든 쟁점이 생략됐다. 현재 생략은 공식 근거 공백과 검토 필요 게이트로 표시한다. 자세한 결과는 [5건 비교 기록](audit/pipeline-comparison-2026-09-23.md)에 있다.
