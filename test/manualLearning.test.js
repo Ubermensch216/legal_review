@@ -800,5 +800,126 @@ test('T5 형식이 깨진 로컬 AI 출력은 지식으로 저장되지 않는�
 
   // 24,000자를 넘는 답변은 로컬 AI에 넘기기 전에 거절한다.
   const big = service(async () => ({ card: card(), sensitiveTerms: [] }));
-  await statusAsync(() => big.importAnswer(item.id, { answer: '가'.repeat(24001) }), 400, /외부 AI 답변/);
+  await statusAsync(() => big.importAnswer(item.id, { answer: '가'.repeat(24001) }), 400, /외부 답변/);
+});
+
+// ─────────────────────────────────────────────────────────────
+// T12. 답변 주체 — 외부 AI와 외부 전문가(사람)를 구분하되 검증 규칙은 같다
+// ─────────────────────────────────────────────────────────────
+
+test('T12 외부 전문가 답변은 출처가 구분되어 저장되고, 잘못 고른 주체는 승인 전에 고칠 수 있다', async () => {
+  const { item } = await readyInquiry();
+  const withCard = service(async () => ({ card: card(), sensitiveTerms: [] }));
+  const expert = await withCard.importAnswer(item.id, { answer: '자문 변호사의 검토 의견입니다.', sourceType: 'HUMAN_EXPERT', providerLabel: '자문 변호사' });
+  assert.equal(expert.sourceType, 'HUMAN_EXPERT');
+  assert.equal(expert.provenance, 'USER_IMPORTED_HUMAN_EXPERT');
+  assert.equal(expert.sourceLabel, '사용자가 직접 가져온 외부 전문가(사람) 답변');
+  // 사람의 답변이어도 공식 근거로 인증되지 않는다.
+  assert.equal(expert.legalValidity, 'NOT_CERTIFIED');
+
+  const ai = await withCard.importAnswer(item.id, { answer: '외부 AI의 다른 답변입니다.' });
+  assert.equal(ai.sourceType, 'EXTERNAL_AI', '지정하지 않으면 외부 AI로 본다');
+  const fixed = withCard.editKnowledge(ai.id, { revision: ai.revision, card: card(), sourceType: 'HUMAN_EXPERT' });
+  assert.equal(fixed.provenance, 'USER_IMPORTED_HUMAN_EXPERT');
+  const kept = withCard.editKnowledge(fixed.id, { revision: fixed.revision, card: card() });
+  assert.equal(kept.sourceType, 'HUMAN_EXPERT', '주체를 보내지 않은 수정은 기존 주체를 유지한다');
+
+  await statusAsync(() => withCard.importAnswer(item.id, { answer: '또 다른 답변', sourceType: 'OFFICIAL' }), 400, /답변 주체/);
+});
+
+test('T12 외부 전문가 지식도 같은 게이트를 거치고, 검토 프롬프트와 제한사항에 주체가 드러난다', async () => {
+  const { knowledge } = await approvedKnowledge({ sourceType: 'HUMAN_EXPERT', provenance: 'USER_IMPORTED_HUMAN_EXPERT' });
+  const found = find();
+  assert.equal(found.used[0].source, 'USER_APPROVED_HUMAN_EXPERT');
+
+  // 사람의 답변이라고 근거 스냅샷 게이트가 완화되지 않는다.
+  const changed = context();
+  changed.officialEvidence.articles[0].content = '개정된 조문 본문';
+  assert.deepEqual(reasons(find(changed)), ['EVIDENCE_CHANGED']);
+
+  const historyId = 'rev_case_expert';
+  await seedDefaultStore(historyId, { sourceType: 'HUMAN_EXPERT', provenance: 'USER_IMPORTED_HUMAN_EXPERT' });
+  const prompts = [];
+  stubOllama(prompts);
+  const reviewed = await runReview('전혀 다른 표현의 질의', context(), historyId);
+  assert.match(prompts.join('\n'), /"answerSource":"외부 전문가\(사람\)"/);
+  assert.ok(reviewed.warnings.some(w => /외부 전문가 1건/.test(w)), JSON.stringify(reviewed.warnings));
+  assert.ok(knowledge.id);
+});
+
+// ─────────────────────────────────────────────────────────────
+// T13. 단계형 검토의 판단 공백 → 질의서 → 질문별 답변
+// ─────────────────────────────────────────────────────────────
+
+const stagedContext = gaps => {
+  const ctx = context();
+  ctx.review.reasoning = { version: 1, facts: [{ id: 'F1', text: '민간기관이 시설을 관리위탁 받았다', status: 'CONFIRMED' }, { id: 'F2', text: '무관한 사실', status: 'CONFIRMED' }],
+    unknownFacts: ['조례상 수납 주체 규정 여부'],
+    issues: [{ id: 'I1', question: '수탁자가 사용료를 징수할 수 있는가?', factIds: ['F1'] }],
+    gaps };
+  return ctx;
+};
+const gap = (id, type, route, question, extra = {}) => ({ id, type, route, question, issueId: 'I1', elementId: 'A1.E2', state: 'OPEN', priority: 2, ...extra });
+const stagedService = (ctx, local) => createManualLearningService({ store, history: () => ({ data: ctx }), local });
+
+test('T13 단계형 검토의 법리 공백만 질문으로 옮기고, 로컬 AI에는 사실 추상화만 맡기며 질문과 공백을 잇는다', async () => {
+  const calls = [];
+  const ctx = stagedContext([
+    gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '관리위탁 권한에 사용료 징수권이 포함되는 기준은 무엇인가?'),
+    gap('G2', 'FACT_UNKNOWN', 'USER', '위탁계약서 원본을 확인해 주십시오.'),
+    gap('G3', 'AUTHORITY_CONFLICT', 'EXTERNAL_INQUIRY', '상반된 해석례를 어떻게 평가해야 하는가?', { elementId: null }),
+    gap('G4', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '미뤄진 질문', { state: 'DEFERRED' })
+  ]);
+  const s = stagedService(ctx, async (system, user) => {
+    calls.push({ system, user: JSON.parse(user) });
+    return { abstractFacts: ['한 지방자치단체가 시설을 민간기관에 관리위탁하였다'], preservedLogic: ['조례에 수납 주체 규정이 없다'], missingFacts: [], sensitiveTerms: [] };
+  });
+  const { needsHelp, item } = await s.createInquiry({ historyId: 'rev_staged', focus: '위탁료와 사용료의 관계는?' });
+  assert.equal(needsHelp, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].system, /비식별로 추상화/);
+  assert.deepEqual(calls[0].user.facts, ['민간기관이 시설을 관리위탁 받았다'], '공백이 난 쟁점의 사실만 보낸다');
+  assert.deepEqual(item.questions.map(q => q.text), ['관리위탁 권한에 사용료 징수권이 포함되는 기준은 무엇인가?', '상반된 해석례를 어떻게 평가해야 하는가?', '위탁료와 사용료의 관계는?']);
+  assert.doesNotMatch(item.text, /위탁계약서 원본/, '사실 공백은 외부로 보내지 않는다');
+  assert.deepEqual(item.anchors.map(a => [a.no, a.gapId, a.type]), [[1, 'G1', 'LEGAL_INTERPRETATION'], [2, 'G3', 'AUTHORITY_CONFLICT']]);
+  assert.equal(item.questionSource, 'REASONING_GAPS');
+  assert.match(item.text, /"answers":\[\{"questionNo":1/);
+
+  // 질문 문구를 고쳐도 번호가 남아 있으면 연결을 유지하고, 질문이 사라지면 연결도 뺀다.
+  const edited = s.editInquiry(item.id, { revision: item.revision, text: item.text.replace(/\n2\. 상반된[^\n]*\n/, '\n') });
+  assert.deepEqual(edited.anchors.map(a => a.no), [1]);
+});
+
+test('T13 외부로 물을 법리 공백이 없으면 로컬 AI를 부르지 않는다', async () => {
+  let called = false;
+  const s = stagedService(stagedContext([gap('G1', 'FACT_UNKNOWN', 'USER', '사실 확인')]), async () => { called = true; return {}; });
+  const result = await s.createInquiry({ historyId: 'rev_staged' });
+  assert.equal(result.needsHelp, false);
+  assert.match(result.message, /법리 공백이 없습니다/);
+  assert.equal(called, false);
+});
+
+test('T13 질문별 답변을 구조화 반입하면 로컬 AI 없이 저장하고, 질의서에 없는 번호는 버리며, 진행 상태에 공백 연결을 싣는다', async () => {
+  const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '징수권 포함 기준은?'), gap('G2', 'MISSING_AUTHORITY', 'EXTERNAL_INQUIRY', '근거 조문은?')]);
+  let localCalls = 0;
+  const s = stagedService(ctx, async () => { localCalls++; return { abstractFacts: ['추상 사실'], preservedLogic: ['조건'], missingFacts: [], sensitiveTerms: [] }; });
+  const { item } = await s.createInquiry({ historyId: 'rev_staged' });
+  const ready = s.confirmInquiry(item.id, { revision: item.revision, privacyConfirmed: true, logicConfirmed: true });
+  const answer = JSON.stringify({
+    answers: [
+      { questionNo: 2, position: '공유재산법 제20조가 근거입니다.', conditions: ['관리위탁일 것'], exceptions: [], checklist: ['조례 확인'],
+        citations: [{ lawName: law.lawName, articleNo: '제20조' }], cases: ['2019두12345'], confidence: '확실' },
+      { questionNo: 9, position: '없는 질문' },
+      { questionNo: 1, position: '견해가 나뉩니다.', confidence: '아마도' }
+    ],
+    card: card()
+  });
+  const knowledge = await s.importAnswer(ready.id, { answer, mode: 'structured', sourceType: 'HUMAN_EXPERT' });
+  assert.equal(localCalls, 1, '질의서 작성 1회뿐, 반입에는 로컬 AI를 쓰지 않는다');
+  assert.deepEqual(knowledge.answersByQuestion.map(a => [a.questionNo, a.confidence]), [[1, '미확인'], [2, '확실']]);
+  assert.deepEqual(knowledge.answersByQuestion[1].citations, [{ lawName: law.lawName, articleNo: '제20조' }]);
+  assert.deepEqual(knowledge.answeredQuestions, [1, 2], '질문별 답변이 다룬 번호가 곧 답한 질문이다');
+
+  const listed = s.list().inquiries.find(i => i.id === ready.id);
+  assert.deepEqual(listed.coverage.questions.map(q => [q.no, q.state, q.anchor?.gapId]), [[1, 'ANSWERED', 'G1'], [2, 'ANSWERED', 'G2']]);
 });

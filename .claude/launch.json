@@ -4,8 +4,34 @@
     {
       "name": "legal-reviewer",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start"],
+      "runtimeArgs": [
+        "run",
+        "start"
+      ],
       "port": 3000
+    },
+    {
+      "name": "learning-fixture",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "test/fixtures/manualLearningBrowser.mjs"
+      ],
+      "env": {
+        "FIXTURE_PORT": "3199"
+      },
+      "port": 3199
+    },
+    {
+      "name": "learning-fixture-staged",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "test/fixtures/manualLearningBrowser.mjs"
+      ],
+      "env": {
+        "FIXTURE_PORT": "3198",
+        "FIXTURE_STAGED": "1"
+      },
+      "port": 3198
     }
   ]
 }

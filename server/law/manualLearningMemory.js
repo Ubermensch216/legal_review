@@ -133,7 +133,29 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
 
   return {
     used: kept.slice(0, limit).map(item => ({ id: item.id, title: item.card.title, card: item.card,
-      source: 'USER_APPROVED_EXTERNAL_AI', approvedAt: item.approvedAt, inCase: item.inCase })),
+      source: item.sourceType === 'HUMAN_EXPERT' ? 'USER_APPROVED_HUMAN_EXPERT' : 'USER_APPROVED_EXTERNAL_AI',
+      approvedAt: item.approvedAt, inCase: item.inCase })),
     excluded: drops
   };
+}
+
+/**
+ * 재검토에 실을 지식이 어느 쟁점의 공백을 메우는지 찾는다. 같은 사건에서 만든 질의서의 질문-공백 연결만 쓴다
+ * (다른 사건의 쟁점 번호는 이 검토와 무관하다). 질문별 답변도 함께 돌려 입력에 싣게 한다.
+ * @returns {{ knowledgeIssues: Map<string, string[]>, rerunIssueIds: string[], answersById: Map<string, object[]> }}
+ */
+export function knowledgeAnchors(usedItems, sourceHistoryId, store = getLearningStore()) {
+  const knowledgeIssues = new Map();
+  const answersById = new Map();
+  for (const used of usedItems || []) {
+    const item = store.get(used.id);
+    if (!item) continue;
+    const answered = new Set(item.answeredQuestions || []);
+    if (item.answersByQuestion?.length) answersById.set(item.id, item.answersByQuestion);
+    if (!sourceHistoryId || item.historyId !== sourceHistoryId) continue;
+    const inquiry = store.get(item.parentId);
+    const issues = [...new Set((inquiry?.anchors || []).filter(a => answered.has(a.no) && a.issueId).map(a => a.issueId))];
+    if (issues.length) knowledgeIssues.set(item.id, issues);
+  }
+  return { knowledgeIssues, rerunIssueIds: [...new Set([...knowledgeIssues.values()].flat())], answersById };
 }

@@ -1,0 +1,344 @@
+{
+  "measuredAt": "2026-09-23T01:21:35.314Z",
+  "provider": "ollama",
+  "model": "gemma4:e2b",
+  "lawOc": true,
+  "modelBudgets": "{\"ollama:gemma4:e2b\":{\"contextTokens\":40960,\"outputTokens\":8192,\"tokensPerChar\":{\"hangul\":0.75}}}",
+  "sectionBudgets": "{\"precedents\":12000,\"interpretations\":9000}",
+  "note": "효율·안정성 기준선. 법리 정확도 평가가 아니다.",
+  "summary": {
+    "runs": 5,
+    "completed": 4,
+    "parseFailures": 1,
+    "fallbacks": 3,
+    "medianWallMs": 737140,
+    "medianLlmWallMs": 736660,
+    "medianOutputTokens": 4046,
+    "medianInputTokens": 23132,
+    "llmCalls": 5
+  },
+  "rows": [
+    {
+      "id": "01",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 737140,
+      "collectMs": 317,
+      "primaryLaw": "근로기준법",
+      "reviewEngine": "LLM",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 4,
+        "legalBasis": 5,
+        "risks": 3,
+        "redlines": 4,
+        "opinionChars": 154,
+        "draftChars": 205
+      },
+      "citationExistence": 100,
+      "citations": {
+        "measurable": true,
+        "precision": 80,
+        "recall": 57,
+        "cited": [
+          "근로기준법:94",
+          "근로기준법:23",
+          "근로기준법:26",
+          "근로기준법:53",
+          "근로기준법:56"
+        ],
+        "hit": [
+          "근로기준법:94",
+          "근로기준법:23",
+          "근로기준법:53",
+          "근로기준법:56"
+        ],
+        "missed": [
+          "근로기준법:20",
+          "근로기준법:27",
+          "근로기준법:50"
+        ]
+      },
+      "inputBudget": {
+        "estimatedInputTokens": 25673,
+        "inputLimit": 32256,
+        "reduced": false
+      },
+      "omittedEvidence": 14,
+      "ledger": {
+        "calls": [
+          {
+            "stage": "review",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": null,
+            "schema": false,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 23132,
+            "outputTokens": 4046,
+            "prefillMs": 250304,
+            "decodeMs": 485919,
+            "loadMs": 28,
+            "thinkingChars": 3930,
+            "outputChars": 5502,
+            "wallMs": 736660,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 1,
+          "failed": 0,
+          "inputTokens": 23132,
+          "outputTokens": 4046,
+          "prefillMs": 250304,
+          "decodeMs": 485919,
+          "wallMs": 736660,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "02",
+      "run": 1,
+      "preset": "contract_risk",
+      "stage": "PARSE",
+      "error": "[02_정보시스템_구축_용역계약서.docx] 문서 파싱 중 오류가 발생했습니다: DOMParser.parseFromString: the provided mimeType \"undefined\" is not valid.",
+      "wallMs": 8
+    },
+    {
+      "id": "03",
+      "run": 1,
+      "preset": "admin_dispute",
+      "stage": "DONE",
+      "wallMs": 308090,
+      "collectMs": 3883,
+      "primaryLaw": "식품위생법",
+      "reviewEngine": "RULE_BASED_FALLBACK",
+      "reviewStatus": "FAILED",
+      "isFallback": true,
+      "fallbackReason": "LLM 검토를 실행하지 못했습니다 (Ollama 호출 실패 (http://localhost:11434): fetch failed [UND_ERR_HEADERS_TIMEOUT]). 규칙 기반 점검 결과만 제공됩니다.",
+      "counts": {
+        "issues": 0,
+        "legalBasis": 0,
+        "risks": 0,
+        "redlines": 1,
+        "opinionChars": 68,
+        "draftChars": 2018
+      },
+      "citationExistence": null,
+      "citations": {
+        "measurable": false,
+        "precision": null,
+        "recall": null,
+        "cited": [],
+        "hit": [],
+        "missed": [
+          "식품위생법:75",
+          "식품위생법:81",
+          "식품위생법:82"
+        ]
+      },
+      "inputBudget": {
+        "estimatedInputTokens": 29914,
+        "inputLimit": 32256,
+        "reduced": false
+      },
+      "omittedEvidence": 34,
+      "ledger": {
+        "calls": [
+          {
+            "stage": "review",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": null,
+            "schema": false,
+            "ok": false,
+            "truncated": false,
+            "inputTokens": null,
+            "outputTokens": null,
+            "prefillMs": null,
+            "decodeMs": null,
+            "loadMs": null,
+            "thinkingChars": null,
+            "outputChars": null,
+            "wallMs": 304194,
+            "prefixCacheLikely": null,
+            "error": "Ollama 호출 실패 (http://localhost:11434): fetch failed [UND_ERR_HEADERS_TIMEOUT]"
+          }
+        ],
+        "totals": {
+          "calls": 1,
+          "failed": 1,
+          "inputTokens": null,
+          "outputTokens": null,
+          "prefillMs": null,
+          "decodeMs": null,
+          "wallMs": 304194,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "04",
+      "run": 1,
+      "preset": "privacy_security",
+      "stage": "DONE",
+      "wallMs": 901362,
+      "collectMs": 1312,
+      "primaryLaw": "개인정보 보호법",
+      "reviewEngine": "RULE_BASED_FALLBACK",
+      "reviewStatus": "FAILED",
+      "isFallback": true,
+      "fallbackReason": "LLM 검토를 실행하지 못했습니다 (Ollama 응답이 900초 내에 완료되지 않았습니다. 더 작은 모델을 쓰거나 LLM_TIMEOUT 환경변수를 늘리십시오.). 규칙 기반 점검 결과만 제공됩니다.",
+      "counts": {
+        "issues": 0,
+        "legalBasis": 0,
+        "risks": 0,
+        "redlines": 1,
+        "opinionChars": 68,
+        "draftChars": 1953
+      },
+      "citationExistence": null,
+      "citations": {
+        "measurable": false,
+        "precision": null,
+        "recall": null,
+        "cited": [],
+        "hit": [],
+        "missed": [
+          "개인정보보호법:15",
+          "개인정보보호법:17",
+          "개인정보보호법:22",
+          "개인정보보호법:23",
+          "개인정보보호법:24의2",
+          "개인정보보호법:25",
+          "개인정보보호법:26",
+          "개인정보보호법:28의2"
+        ]
+      },
+      "inputBudget": {
+        "estimatedInputTokens": 27232,
+        "inputLimit": 32256,
+        "reduced": false
+      },
+      "omittedEvidence": 46,
+      "ledger": {
+        "calls": [
+          {
+            "stage": "review",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": null,
+            "schema": false,
+            "ok": false,
+            "truncated": false,
+            "inputTokens": null,
+            "outputTokens": null,
+            "prefillMs": null,
+            "decodeMs": null,
+            "loadMs": null,
+            "thinkingChars": null,
+            "outputChars": null,
+            "wallMs": 900033,
+            "prefixCacheLikely": null,
+            "error": "Ollama 응답이 900초 내에 완료되지 않았습니다. 더 작은 모델을 쓰거나 LLM_TIMEOUT 환경변수를 늘리십시오."
+          }
+        ],
+        "totals": {
+          "calls": 1,
+          "failed": 1,
+          "inputTokens": null,
+          "outputTokens": null,
+          "prefillMs": null,
+          "decodeMs": null,
+          "wallMs": 900033,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "05",
+      "run": 1,
+      "preset": "pre_consulting_audit",
+      "stage": "DONE",
+      "wallMs": 231012,
+      "collectMs": 1374,
+      "primaryLaw": "지방재정법",
+      "reviewEngine": "RULE_BASED_FALLBACK",
+      "reviewStatus": "FAILED",
+      "isFallback": true,
+      "fallbackReason": "LLM 검토를 실행하지 못했습니다 (Ollama Error: prediction aborted, token repeat limit reached). 규칙 기반 점검 결과만 제공됩니다.",
+      "counts": {
+        "issues": 0,
+        "legalBasis": 0,
+        "risks": 0,
+        "redlines": 2,
+        "opinionChars": 68,
+        "draftChars": 2152
+      },
+      "citationExistence": null,
+      "citations": null,
+      "inputBudget": {
+        "estimatedInputTokens": 10884,
+        "inputLimit": 32256,
+        "reduced": false
+      },
+      "omittedEvidence": 2,
+      "ledger": {
+        "calls": [
+          {
+            "stage": "stage1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": null,
+            "schema": false,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 361,
+            "outputTokens": 1057,
+            "prefillMs": 2561,
+            "decodeMs": 56965,
+            "loadMs": 14,
+            "thinkingChars": 4179,
+            "outputChars": 17,
+            "wallMs": 59737,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "review",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": null,
+            "schema": false,
+            "ok": false,
+            "truncated": false,
+            "inputTokens": null,
+            "outputTokens": null,
+            "prefillMs": null,
+            "decodeMs": null,
+            "loadMs": null,
+            "thinkingChars": null,
+            "outputChars": null,
+            "wallMs": 169899,
+            "prefixCacheLikely": null,
+            "error": "Ollama Error: prediction aborted, token repeat limit reached"
+          }
+        ],
+        "totals": {
+          "calls": 2,
+          "failed": 1,
+          "inputTokens": 361,
+          "outputTokens": 1057,
+          "prefillMs": 2561,
+          "decodeMs": 56965,
+          "wallMs": 229636,
+          "prefixCacheHits": 0
+        }
+      }
+    }
+  ]
+}

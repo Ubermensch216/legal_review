@@ -51,14 +51,30 @@
 | 파일 | format | chars | chunks | tables | riskClauses |
 |------|--------|-------|--------|--------|-------------|
 | 01 hwpx | 한글 HWPX 문서 | 2,457 | 16 | 1 | 6 |
-| 02 docx | — | — | — | — | **파싱 실패(아래 참조)** |
+| 02 docx | MS Word 문서 | 1,572 | 10 | 1 | 4 |
 | 03 pdf | PDF 문서 | 2,399 | 7 | 0 | 1 |
 | 04 xlsx | Excel/CSV 스프레드시트 | 1,094 | 1 | 0 | 1 |
 | 04 csv | Excel/CSV 스프레드시트 | 508 | 1 | 0 | 1 |
 | 05 txt | 텍스트 문서 | 1,978 | 4 | 0 | 2 |
 
-### 알려진 이슈 — DOCX 업로드 전면 실패
-`mammoth@1.12.1` 의 `lib/xml/xmldom.js` 는 `parseFromString(string)` 을 mimeType 없이 호출하는데,
-`package.json` 의 `overrides` 가 `@xmldom/xmldom` 을 `^0.9.12` 로 고정하고 있어 0.9에서 필수가 된 mimeType 인자가 빠져
-`DOMParser.parseFromString: the provided mimeType "undefined" is not valid` 로 실패합니다.
-샘플 DOCX 자체는 정상(문단 46개, 표 1개, 행 5개가 XML에서 확인됨)이며, 원인은 의존성 충돌입니다.
+### 해결된 이슈 — DOCX 업로드 전면 실패 (2026-09-23 해결)
+**증상:** 모든 DOCX가 `DOMParser.parseFromString: the provided mimeType "undefined" is not valid` 로 파싱에 실패했습니다.
+
+**원인:** mammoth(최신 1.12.3 포함)의 `lib/xml/xmldom.js` 는 `parseFromString(string)` 을 mimeType 없이 호출하고
+`@xmldom/xmldom@^0.8.6` 을 요구합니다. 그런데 `package.json` 의 `overrides` 가 보안 권고 대응으로 `@xmldom/xmldom` 을
+전역 `^0.9.12` 로 올려 두었고, 0.9에서는 mimeType 인자가 필수입니다.
+
+**해결:** 전역 `^0.9.12` 는 유지하고 mammoth 하위에만 보안 패치된 0.8 계열을 쓰도록 범위를 좁혔습니다.
+
+```json
+"overrides": {
+  "@xmldom/xmldom": "^0.9.12",
+  "mammoth": { "@xmldom/xmldom": "^0.8.15" }
+}
+```
+
+- `@xmldom/xmldom@0.8.15` 는 xmldom의 유지보수 LTS 버전(npm `lts` 태그)이며, 격리 감사 결과 권고가 없습니다.
+  `<=0.8.14` 는 고위험 권고 14건(XML 주입·ReDoS·재귀 DoS 등)에 해당하므로 하한을 0.8.15로 둡니다.
+- mammoth는 1.12.3으로 올렸습니다. `npm audit` 결과는 변경 전후 모두 0건입니다.
+- 회귀 시험: `test/parsers.test.js` 의 "샘플 DOCX 계약서의 조항 본문과 대금 지급 일정표를 추출한다".
+- mammoth가 xmldom 0.9를 지원하는 버전을 내면 이 범위 지정을 없애고 전역 버전 하나로 되돌리십시오.

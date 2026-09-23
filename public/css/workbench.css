@@ -1285,6 +1285,9 @@
 }
 .learning-badge.approved { color: var(--risk-low-text); background: #FFFFFF; border-color: var(--risk-low-border); }
 .learning-badge.revoked { color: var(--text-muted); background: var(--bg-sub); border-color: var(--border-color); }
+.learning-badge.source-external_ai { color: var(--text-secondary); background: var(--bg-sub); border-color: var(--border-color); }
+.learning-badge.source-human_expert { color: var(--text-primary); background: #FFFFFF; border-color: var(--text-secondary); }
+.learning-card-head .learning-badge.source-external_ai, .learning-card-head .learning-badge.source-human_expert { margin-left: auto; }
 
 .learning-field { font-size: 13px; }
 .learning-field > span { display: block; font-size: 11.5px; font-weight: 700; color: var(--text-secondary); margin-bottom: 4px; }
@@ -1306,3 +1309,30 @@
 .learning-message.warn { color: var(--risk-med-text); background: var(--risk-med-bg); border-color: var(--risk-med-border); }
 
 .learning-dropped { margin: 6px 0 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
+
+.learning-q-anchor { display: block; margin-top: 2px; font-size: 11px; font-style: normal; color: var(--text-muted); }
+
+/* 단계형 검토 — 쟁점·요건 보기 (public/js/reasoningView.js) */
+.rv-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 14px; font-size: 13px; color: var(--text-secondary); }
+.rv-issue-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.rv-issue-head h4 { margin: 0; font-size: 15px; font-weight: 700; color: var(--brand-primary); line-height: 1.5; }
+.rv-verdict { flex-shrink: 0; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid var(--border-color); }
+.rv-verdict.rv-ok { color: var(--risk-low-text); border-color: var(--risk-low-text); }
+.rv-verdict.rv-no { color: var(--risk-high-text); background: var(--risk-high-bg); border-color: var(--risk-high-border); }
+.rv-verdict.rv-warn, .rv-verdict.rv-hold { color: var(--risk-med-text); background: var(--risk-med-bg); border-color: var(--risk-med-border); }
+.rv-meta, .rv-reasons { margin: 6px 0 10px; font-size: 12px; color: var(--text-muted); }
+.rv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 10px; }
+.rv-table th, .rv-table td { border: 1px solid var(--border-color); padding: 6px 8px; text-align: left; vertical-align: top; }
+.rv-table th { background: var(--bg-sub); font-size: 12px; font-weight: 700; }
+.rv-table tr.rv-deciding td:first-child { box-shadow: inset 3px 0 0 var(--brand-primary); }
+.rv-status.rv-satisfied { color: var(--risk-low-text); font-weight: 700; }
+.rv-status.rv-not_satisfied { color: var(--risk-high-text); font-weight: 700; }
+.rv-status.rv-unknown, .rv-status.rv-disputed, .rv-status.rv-partially_satisfied { color: var(--risk-med-text); font-weight: 700; }
+.rv-id { display: inline-block; padding: 0 5px; border-radius: 4px; background: var(--bg-sub); font-size: 11.5px; font-family: ui-monospace, monospace; cursor: help; }
+.rv-tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--bg-sub); font-size: 11px; font-weight: 700; color: var(--text-secondary); }
+.rv-route { font-size: 11px; font-weight: 700; color: var(--brand-primary); }
+.rv-note { font-size: 11.5px; font-weight: 700; color: var(--risk-med-text); }
+.rv-narrative { line-height: 1.8; font-size: 14px; color: #334155; }
+.rv-sub { margin-top: 8px; font-size: 13px; }
+.rv-sub ul { margin: 4px 0 0; padding-left: 18px; }
+@media (max-width: 720px) { .rv-table { display: block; overflow-x: auto; } }

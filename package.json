@@ -27,13 +27,17 @@
     "express": "^4.21.2",
     "fast-xml-parser": "^5.11.1",
     "jszip": "^3.10.1",
-    "mammoth": "^1.9.0",
+    "mammoth": "^1.12.3",
     "multer": "^2.4.0",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.16.0",
-    "read-excel-file": "^9.3.10"
+    "read-excel-file": "^9.3.10",
+    "undici": "^7.29.1"
   },
   "overrides": {
-    "@xmldom/xmldom": "^0.9.12"
+    "@xmldom/xmldom": "^0.9.12",
+    "mammoth": {
+      "@xmldom/xmldom": "^0.8.15"
+    }
   }
 }

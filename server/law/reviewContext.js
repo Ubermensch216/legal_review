@@ -34,6 +34,8 @@ export function resolveSectionBudgets() {
   return merged;
 }
 
+const LEARNING_SOURCE_LABEL = Object.freeze({ USER_APPROVED_EXTERNAL_AI: '외부 AI', USER_APPROVED_HUMAN_EXPERT: '외부 전문가(사람)' });
+
 const groupBy = (items, key) => items.reduce((acc, item) => {
   (acc[key(item)] ||= []).push(item);
   return acc;
@@ -60,7 +62,8 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   // "답변을 다 승인했는데 최종 검토에 반영되지 않았다"고만 느낀다.
   const learningExcluded = [...(context.learningExcluded || [])];
   for (const item of context.learningKnowledge || []) {
-    const text = JSON.stringify({ title: item.title, ...item.card });
+    // 사람 전문가 답변인지 외부 AI 답변인지 모델도 알 수 있게 한다. 어느 쪽도 공식 근거는 아니다.
+    const text = JSON.stringify({ title: item.title, answerSource: LEARNING_SOURCE_LABEL[item.source] || '외부 AI', ...item.card });
     if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) {
       learningExcluded.push({ id: item.id, title: item.title, reason: 'BUDGET',
         message: '입력 예산이 부족해 이번 검토에는 싣지 못했습니다.', inCase: Boolean(item.inCase) });
@@ -69,7 +72,11 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     learningKnowledgeText += `${text}\n\n`;
     learningReferences.push({ id: item.id, title: item.title, source: item.source, inCase: Boolean(item.inCase) });
   }
-  if (learningReferences.length) warnings.push(`사용자 승인 외부 AI 참고 지식 ${learningReferences.length}건을 입력에 포함했습니다. 공식 근거나 법리 검증을 대신하지 않습니다.`);
+  if (learningReferences.length) {
+    const human = learningReferences.filter(r => r.source === 'USER_APPROVED_HUMAN_EXPERT').length;
+    const breakdown = human ? ` (외부 AI ${learningReferences.length - human}건, 외부 전문가 ${human}건)` : '';
+    warnings.push(`사용자 승인 외부 참고 지식 ${learningReferences.length}건${breakdown}을 입력에 포함했습니다. 공식 근거나 법리 검증을 대신하지 않습니다.`);
+  }
   for (const [reason, items] of Object.entries(groupBy(learningExcluded, x => x.reason))) {
     warnings.push(`승인된 학습 지식 ${items.length}건을 이번 검토에 적용하지 않았습니다: ${items[0].message} (${reason})`);
   }
@@ -188,8 +195,11 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   provisionEntries.sort((a, b) => Number(b.cited) - Number(a.cited));
   const keyProvisionsText = pack(provisionEntries, entry => entry.text, budgets.keyProvisions ?? limits.keyProvisions);
 
+  // 여기까지는 수집·학습·시점에 관한 제한이다. 아래 두 문장은 이 단일 호출 프롬프트의 예산에만 해당하므로
+  // 단계형 검토(자체 예산으로 근거를 싣는다)는 contextWarnings만 쓴다.
+  const contextWarnings = [...warnings];
   if (omittedEvidence) warnings.push(`입력 예산 때문에 근거 ${omittedEvidence}건을 제외했습니다. 제외한 자료에 관한 판단은 보류하십시오.`);
   if (document.omittedCount || document.truncatedCount) warnings.push('첨부문서는 부분 발췌입니다. 문서 전체를 검토했다고 표현하지 마십시오.');
   return { document, articlesText, precedentsText, interpretationsText, ordinanceArticlesText, adminRuleText, keyProvisionsText,
-    learningKnowledgeText, learningReferences, learningExcluded, warnings, omittedEvidence };
+    learningKnowledgeText, learningReferences, learningExcluded, warnings, contextWarnings, omittedEvidence };
 }

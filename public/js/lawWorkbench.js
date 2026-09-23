@@ -3,6 +3,7 @@ import { state } from './state.js';
 import { openArticleViewer, openPrecedentViewer } from './documentViewer.js';
 import { openStudio } from './documentStudio.js';
 import { setLearningHistory, resetLearningTab } from './learningTab.js';
+import { renderReasoningOpinion } from './reasoningView.js';
 
 export function initWorkbenchTabs() {
   const tabs = document.querySelectorAll('.wb-tab');
@@ -127,7 +128,7 @@ function renderReliabilityBanner() {
 
   const engineLabel = rel.reviewEngine === 'RULE_BASED_FALLBACK'
     ? '규칙 기반 점검 (LLM 법리 검토 미수행)'
-    : rel.reviewEngine;
+    : rel.reviewEngine === 'LLM_STAGED' ? '단계형 LLM 검토 (쟁점·요건 단위)' : rel.reviewEngine;
 
   host.className = 'reliability-banner';
   host.innerHTML = `
@@ -372,40 +373,13 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   // 4. 심층 법률 검토의견 본문 (IRAC 다단계 분석 렌더링)
   const opinionEl = document.getElementById('draft-opinion-content');
-  const opinionText = cleanText(review.legalOpinion || '');
-  const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
-
-  let opinionCardsHtml = '<div class="opinion-section-block">';
-  if (rawParagraphs.length > 0) {
-    rawParagraphs.forEach((block, idx) => {
-      const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
-      let cardTitle = `[쟁점 ${idx + 1}] 심층 법리 해석 및 적법성 판단`;
-      let cardBodyLines = lines;
-
-      if (lines.length > 1 && (lines[0].startsWith('[') || lines[0].startsWith('■') || /^[0-9]\./.test(lines[0]))) {
-        cardTitle = lines[0].replace(/^\[|\]$/g, '').replace(/^■\s*/, '');
-        cardBodyLines = lines.slice(1);
-      }
-
-      const bodyHtml = cardBodyLines.map(line => `<p style="margin-bottom: 8px; line-height: 1.85;">${escapeHtml(line)}</p>`).join('');
-
-      opinionCardsHtml += `
-        <div class="opinion-item-card">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-            <span class="material-symbols-outlined icon-sm" style="color:var(--brand-primary);">gavel</span>
-            <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--brand-primary);">${escapeHtml(cardTitle)}</h4>
-          </div>
-          <div class="opinion-body-text" style="font-size:14px; color:#334155;">
-            ${bodyHtml}
-          </div>
-        </div>
-      `;
-    });
+  // 단계형 검토는 쟁점별 요건 판단이 구조로 있으므로 표로 보여준다.
+  if (review.reasoning?.issues?.length) {
+    opinionEl.innerHTML = renderReasoningOpinion(review.reasoning);
+    opinionEl.querySelector('[data-open-learning]')?.addEventListener('click', () => document.querySelector('[data-tab="tab-learning"]')?.click());
   } else {
-    opinionCardsHtml += `<p class="placeholder-text">검토의견이 없습니다.</p>`;
+    opinionEl.innerHTML = legacyOpinionHtml(review);
   }
-  opinionCardsHtml += '</div>';
-  opinionEl.innerHTML = opinionCardsHtml;
 
   // 5. 보완 권고사항 및 조치 계획 체크리스트
   const recEl = document.getElementById('draft-rec-content');
@@ -603,6 +577,44 @@ function renderDraftTab(review, officialEvidence, meta) {
 /**
  * Tab 2: 공식 근거 (Re-ranking 및 Cascading 연쇄 구조) 렌더링
  */
+/** 단일 호출 검토의 의견 본문을 문단 카드로 보여준다. */
+function legacyOpinionHtml(review) {
+  const opinionText = cleanText(review.legalOpinion || '');
+  const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
+
+  let opinionCardsHtml = '<div class="opinion-section-block">';
+  if (rawParagraphs.length > 0) {
+    rawParagraphs.forEach((block, idx) => {
+      const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      let cardTitle = `[쟁점 ${idx + 1}] 심층 법리 해석 및 적법성 판단`;
+      let cardBodyLines = lines;
+
+      if (lines.length > 1 && (lines[0].startsWith('[') || lines[0].startsWith('■') || /^[0-9]\./.test(lines[0]))) {
+        cardTitle = lines[0].replace(/^\[|\]$/g, '').replace(/^■\s*/, '');
+        cardBodyLines = lines.slice(1);
+      }
+
+      const bodyHtml = cardBodyLines.map(line => `<p style="margin-bottom: 8px; line-height: 1.85;">${escapeHtml(line)}</p>`).join('');
+
+      opinionCardsHtml += `
+        <div class="opinion-item-card">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span class="material-symbols-outlined icon-sm" style="color:var(--brand-primary);">gavel</span>
+            <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--brand-primary);">${escapeHtml(cardTitle)}</h4>
+          </div>
+          <div class="opinion-body-text" style="font-size:14px; color:#334155;">
+            ${bodyHtml}
+          </div>
+        </div>
+      `;
+    });
+  } else {
+    opinionCardsHtml += `<p class="placeholder-text">검토의견이 없습니다.</p>`;
+  }
+  opinionCardsHtml += '</div>';
+  return opinionCardsHtml;
+}
+
 function renderEvidenceTab(evidence, meta) {
   if (!evidence) return;
   const lawName = meta?.primaryLawName || '관련 법령';

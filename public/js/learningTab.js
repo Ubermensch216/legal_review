@@ -18,10 +18,12 @@ const view = {
 };
 
 const draftKey = node => node.id || (node.name ? `${node.name}:${node.value}` : '');
+// 체크박스·라디오는 값이 아니라 선택 여부를 보존해야 다시 그린 뒤에도 사용자의 선택이 남는다.
+const isToggle = node => node.type === 'checkbox' || node.type === 'radio';
 function captureDrafts() {
   for (const node of document.querySelectorAll('#learning-content input, #learning-content textarea')) {
     const key = draftKey(node);
-    if (key && !node.readOnly) view.drafts[key] = node.type === 'checkbox' ? node.checked : node.value;
+    if (key && !node.readOnly) view.drafts[key] = isToggle(node) ? node.checked : node.value;
   }
 }
 function forgetDrafts(...prefixes) {
@@ -167,14 +169,15 @@ const actions = {
   import: () => {
     const answer = el('learning-answer').value.trim();
     const providerLabel = el('learning-provider').value.trim() || undefined;
+    const sourceType = el('learning-source-human')?.checked ? 'HUMAN_EXPERT' : 'EXTERNAL_AI';
     // 구조화 반입은 사용자가 직접 고른다. 붙여넣은 내용에 JSON이 보인다고 자동으로 전환하면
     // 외부 답변의 내용이 시스템 동작을 바꾸는 셈이 된다.
     const mode = el('learning-mode-structured')?.checked ? 'structured' : undefined;
     const id = view.inquiry.id;
     return run('import', async () => {
-      if (!answer) throw new Error('외부 AI에서 받은 답변을 붙여넣으십시오.');
-      await call(`/inquiries/${id}/answers`, { method: 'POST', body: JSON.stringify({ answer, providerLabel, mode }) });
-      forgetDrafts('learning-answer');
+      if (!answer) throw new Error('외부 AI 또는 외부 전문가에게서 받은 답변을 붙여넣으십시오.');
+      await call(`/inquiries/${id}/answers`, { method: 'POST', body: JSON.stringify({ answer, providerLabel, mode, sourceType }) });
+      forgetDrafts('learning-answer', 'learning-source-');
       view.notice = mode
         ? '붙여넣은 구조화 카드를 그대로 받았습니다. 내용과 인용을 확인한 뒤 승인하십시오.'
         : '답변을 지식 카드로 정리했습니다. 내용과 인용을 확인한 뒤 승인하십시오.';
@@ -189,6 +192,16 @@ const actions = {
       await call(`/knowledge/${id}`, { method: 'PATCH', body });
       forgetDrafts(`learning-q-${id}`, `learning-ok-know-${id}`, `learning-ok-priv-${id}`);
       view.notice = '답변이 다룬 질문을 수정했습니다.';
+    });
+  },
+
+  // 반입할 때 주체를 잘못 골랐으면 승인 전에 바로잡는다. 승인 뒤에는 서버가 수정을 막는다.
+  switchSource: id => {
+    const item = view.knowledge.find(k => k.id === id);
+    const sourceType = item.sourceType === 'HUMAN_EXPERT' ? 'EXTERNAL_AI' : 'HUMAN_EXPERT';
+    return run('switchSource', async () => {
+      await call(`/knowledge/${id}`, { method: 'PATCH', body: JSON.stringify({ revision: item.revision, card: item.card, sourceType }) });
+      view.notice = `답변 주체를 '${SOURCE_LABEL[sourceType]}'(으)로 바꿨습니다.`;
     });
   },
 
@@ -316,8 +329,14 @@ const box = (id, label) => `<label class="learning-check"><input type="checkbox"
 
 const STATE_LABEL = { UNANSWERED: '미답변', ANSWERED: '답변됨', APPROVED: '승인됨' };
 const CITATION_LABEL = { VERIFIED_EXISTENCE: '공식 조문에서 확인', OUT_OF_FORCE: '수집했으나 검토 기준일에 시행 중이 아님', UNVERIFIED: '확인 불가' };
+const SOURCE_LABEL = { EXTERNAL_AI: '외부 AI', HUMAN_EXPERT: '외부 전문가' };
+const sourceOf = item => item.sourceType === 'HUMAN_EXPERT' ? 'HUMAN_EXPERT' : 'EXTERNAL_AI';
 const DISTILLATION_LABEL = { LOCAL_SINGLE: '로컬 AI 정리', LOCAL_CHUNKED: '로컬 AI 조각 정리',
-  USER_STRUCTURED_JSON: '외부 AI 구조화 출력 그대로' };
+  USER_STRUCTURED_JSON: '구조화 출력 그대로' };
+
+// 단계형 검토에서 만든 질문은 어느 쟁점·요건의 판단 공백인지 보여준다. 답이 오면 그 쟁점만 다시 판단한다.
+const GAP_LABEL = { LEGAL_INTERPRETATION: '해석 기준', AUTHORITY_CONFLICT: '근거 충돌', MISSING_AUTHORITY: '근거 부재', STAGE_FAILURE: '판단 실패' };
+const anchorLabel = a => `쟁점 ${a.issueId || '-'}${a.elementId ? ` · 요건 ${a.elementId}` : ''} · ${GAP_LABEL[a.type] || a.type}`;
 
 function renderQuestions() {
   const questions = view.coverage?.questions || [];
@@ -325,7 +344,7 @@ function renderQuestions() {
   return `<ul class="learning-questions">${questions.map(q => `
     <li class="learning-q ${q.state.toLowerCase()}">
       <span class="learning-q-no">${q.no}</span>
-      <span class="learning-q-text">${esc(q.text)}</span>
+      <span class="learning-q-text">${esc(q.text)}${q.anchor ? `<em class="learning-q-anchor">${esc(anchorLabel(q.anchor))}</em>` : ''}</span>
       <span class="learning-q-state">${STATE_LABEL[q.state]}</span>
     </li>`).join('')}</ul>`;
 }
@@ -422,13 +441,22 @@ function renderStep3() {
         </div>
         ${view.exportText ? `<textarea class="learning-input learning-textarea" rows="12" readonly
           onclick="this.select()">${esc(view.exportText)}</textarea>` : ''}
-        <p class="learning-desc">복사한 질의서를 원하는 외부 AI(ChatGPT·Claude·Gemini 등)에 붙여넣고,
+        <p class="learning-desc">복사한 질의서를 외부 AI(ChatGPT·Claude·Gemini 등)나 외부 전문가(자문 변호사, 소관 부처 등)에게 전달하고,
           받은 답변을 아래에 그대로 붙여넣으십시오. 답변 하나가 여러 질문을 함께 답할 수 있습니다.</p>
-        <label class="learning-label" for="learning-provider">답변 출처 (선택 · 표시용)</label>
-        <input id="learning-provider" class="learning-input" type="text" maxlength="40" placeholder="예: ChatGPT">
-        <label class="learning-label" for="learning-answer">외부 AI 답변 붙여넣기</label>
+        <span class="learning-label">답변 주체</span>
+        <div class="learning-links">
+          <label class="learning-term"><input type="radio" name="learning-source" id="learning-source-ai" value="EXTERNAL_AI" checked>
+            <span>외부 AI</span></label>
+          <label class="learning-term"><input type="radio" name="learning-source" id="learning-source-human" value="HUMAN_EXPERT">
+            <span>외부 전문가(사람)</span></label>
+        </div>
+        <p class="learning-desc">어느 쪽이든 공식 근거가 아니며, 인용 확인과 재사용 조건은 같습니다. 구분은 표시용입니다.</p>
+        <label class="learning-label" for="learning-provider">답변 출처 이름 (선택 · 표시용)</label>
+        <input id="learning-provider" class="learning-input" type="text" maxlength="40"
+          placeholder="예: ChatGPT, 자문 변호사 — 실명·연락처는 적지 마십시오">
+        <label class="learning-label" for="learning-answer">외부 답변 붙여넣기</label>
         <textarea id="learning-answer" class="learning-input learning-textarea" rows="10"
-          placeholder="외부 AI가 준 답변 전체를 붙여넣으십시오."></textarea>
+          placeholder="받은 답변 전체를 붙여넣으십시오."></textarea>
         <label class="learning-check">
           <input type="checkbox" id="learning-mode-structured">
           <span>질의서가 요청한 <strong>JSON 부분만</strong> 붙여넣었습니다 (로컬 AI 정리 없이 그대로 사용)</span>
@@ -458,12 +486,15 @@ function renderCard(item) {
     <div class="learning-card ${item.state.toLowerCase()}">
       <div class="learning-card-head">
         <h4>${esc(item.card.title)}</h4>
+        <span class="learning-badge source-${sourceOf(item).toLowerCase()}">${SOURCE_LABEL[sourceOf(item)]}</span>
         <span class="learning-badge ${item.state.toLowerCase()}">${item.state === 'APPROVED' ? '승인됨'
           : item.state === 'REVOKED' ? '사용 중지' : '검토 대기'}</span>
       </div>
       <p class="learning-card-meta">
         ${esc(item.sourceLabel)}${item.providerLabel ? ` · ${esc(item.providerLabel)}` : ''} ·
         인용 검증 ${verified}/${checks.length} · ${esc(DISTILLATION_LABEL[item.distillation] || '로컬 AI 정리')} · 법적 효력 미인증
+        ${editable ? `<button class="btn btn-sm btn-outline" data-learning-action="switchSource" data-id="${item.id}">
+          '${SOURCE_LABEL[sourceOf(item) === 'HUMAN_EXPERT' ? 'EXTERNAL_AI' : 'HUMAN_EXPERT']}' 답변으로 변경</button>` : ''}
       </p>
       ${incomplete ? `<div class="learning-message error">답변 ${item.chunkCoverage.total}조각 중
         ${item.chunkCoverage.processed}조각만 정리되었습니다. 내용이 일부만 반영된 지식이므로 승인할 수 없습니다.
@@ -541,7 +572,7 @@ function renderStep5() {
         ${unmet.length ? `<p class="learning-desc learning-warn">아직 충족되지 않은 질문 ${unmet.length}건:
           ${unmet.map(q => `#${q.no}`).join(', ')} — 그대로 실행하면 검토서의 제한사항으로 남습니다.</p>` : ''}
         ${used.length ? `<p class="learning-desc">직전 검토에 실린 지식 ${used.length}건:
-          ${used.map(r => esc(r.title)).join(' · ')}</p>` : ''}
+          ${used.map(r => `${esc(r.title)} (${r.source === 'USER_APPROVED_HUMAN_EXPERT' ? '외부 전문가' : '외부 AI'})`).join(' · ')}</p>` : ''}
         ${dropped.length ? `<div class="learning-message warn">직전 검토에서 적용하지 않은 지식 ${dropped.length}건
           <ul class="learning-dropped">${dropped.map(d =>
             `<li>${esc(d.title || '(제목 없음)')} — ${esc(d.message)}</li>`).join('')}</ul></div>` : ''}
@@ -609,7 +640,7 @@ function render() {
   for (const node of root.querySelectorAll('input, textarea')) {
     const key = draftKey(node);
     if (Object.hasOwn(view.drafts, key)) {
-      if (node.type === 'checkbox') node.checked = view.drafts[key];
+      if (isToggle(node)) node.checked = view.drafts[key];
       else node.value = view.drafts[key];
     }
   }
