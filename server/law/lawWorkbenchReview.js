@@ -305,7 +305,7 @@ ${resolvedProvisionsText}` : ''}
 
     progress.start('budget', '프롬프트 입력 예산 계산', `${provider} / ${model}`, '분석');
     const budget = resolveBudget(provider, { ...llmConfig, model });
-    const callConfig = { ...llmConfig, budget };
+    const callConfig = { ...llmConfig, budget, think: llmConfig.think ?? false };
     const counter = createTokenCounter(provider, { model, apiKey: llmConfig.apiKey || ENV[`${provider.toUpperCase()}_API_KEY`] });
     let userPrompt = renderPrompt(input);
     // 사건 내 재검토의 참고 지식 예산도 축소 대상에 포함시킨다.

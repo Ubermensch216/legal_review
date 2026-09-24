@@ -175,7 +175,9 @@ export async function callOllama(systemPrompt, userPrompt, config = {}) {
         ...(typeof config.think === 'boolean' ? { think: config.think } : {}),
         keep_alive: process.env.OLLAMA_KEEP_ALIVE || '30m', // 매 호출마다 모델을 다시 적재하지 않도록 유지
         options: {
-          temperature: 0.1,
+          temperature: typeof config.temperature === 'number' ? config.temperature : parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
+          repeat_penalty: parseFloat(process.env.OLLAMA_REPEAT_PENALTY || '1.15'),
+          repeat_last_n: parseInt(process.env.OLLAMA_REPEAT_LAST_N || '64', 10),
           // num_ctx는 프롬프트와 생성 토큰이 함께 쓰는 예산이다. Ollama 기본값(4096)은
           // 법령·판례가 포함된 긴 프롬프트에서 출력 여유를 거의 남기지 않아 응답이 잘린다.
           // 한 검토 안에서는 같은 값을 유지해야 모델 재적재와 접두부 캐시 무효화를 피한다.
