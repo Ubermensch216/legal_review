@@ -62,7 +62,8 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   const learningExcluded = [...(context.learningExcluded || [])];
   for (const item of context.learningKnowledge || []) {
     // 사람 전문가 답변인지 외부 AI 답변인지 모델도 알 수 있게 한다. 어느 쪽도 공식 근거는 아니다.
-    const text = JSON.stringify({ title: item.title, answerSource: LEARNING_SOURCE_LABEL[item.source] || '외부 AI', ...item.card });
+    const text = JSON.stringify({ title: item.title, answerSource: LEARNING_SOURCE_LABEL[item.source] || '외부 AI',
+      ...item.card, ...(item.answers?.length ? { answers: item.answers } : {}) });
     if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) {
       learningExcluded.push({ id: item.id, title: item.title, reason: 'BUDGET',
         message: '입력 예산이 부족해 이번 검토에는 싣지 못했습니다.', inCase: Boolean(item.inCase) });

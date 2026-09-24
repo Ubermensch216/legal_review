@@ -13,6 +13,7 @@ import { checkLearningCases, checkLearningCitations, digest, findLearningKnowled
 import { callLearningLocal, learningBudget, localLearningEndpoint } from '../server/law/manualLearningLocal.js';
 import { resolveBudget } from '../server/law/llmBudget.js';
 import { ollamaStream } from './llmStreamStub.js';
+import { buildEvidenceRegistry } from '../server/reasoning/evidenceRegistry.js';
 
 // 예산은 라이브러리 기본값으로 고정한다. 운영 .env의 LLM_MODEL_BUDGETS(모델별 컨텍스트·
 // 토크나이저 계수)를 그대로 쓰면 테스트 결과가 이 PC의 설정에 따라 달라진다.
@@ -389,18 +390,16 @@ test('T10 비식별은 조각 나누기 전에 한 번만 적용해 같은 대�
 // T8. 모델이 추측한 민감어는 제안일 뿐 — 사람이 반출 전에 고른다
 // ─────────────────────────────────────────────────────────────
 
-test('T8 모델이 지목한 단어는 바로 치환하지 않고 제안으로 남기며, 패턴 탐지는 그대로 적용된다', async () => {
-  // 소형 모델은 '관리위탁'·'사용료'처럼 판단에 꼭 필요한 용어까지 민감어로 지목한다.
+test('T8 모델이 지목한 일반 법률 용어는 제안에서 걸러지고 개인정보만 남는다', async () => {
   const s = service(async () => ({ ...analysis(),
-    abstractFacts: ['한 지방자치단체가 공공시설을 관리위탁하였고 연락처는 010-1234-5678이다'],
+    abstractFacts: ['신청인 홍길동은 행정처분 전 사전통지를 받았고 연락처는 010-1234-5678이다'],
     questions: ['관리위탁 권한에 사용료 징수권이 포함되는가'],
-    sensitiveTerms: ['관리위탁', '사용료', '존재하지않는단어'] }));
+    sensitiveTerms: ['홍길동', '행정처분', '사전통지', '관리위탁', '사용료', '존재하지않는단어'] }));
   const { item } = await s.createInquiry({ historyId: 'rev_1' });
 
   // 판단 용어는 살아 있어야 외부 AI가 답할 수 있다.
   assert.match(item.text, /관리위탁 권한에 사용료 징수권이 포함되는가/);
-  // 본문에 실제로 있는 제안만 목록에 남는다.
-  assert.deepEqual(item.proposedTerms.sort(), ['관리위탁', '사용료']);
+  assert.deepEqual(item.proposedTerms, ['홍길동']);
   // 패턴으로 탐지되는 식별자는 제안이 아니라 항상 치환된다.
   assert.doesNotMatch(item.text, /010-1234-5678/);
   assert.equal(item.redactions['전화'], 1);
@@ -415,7 +414,7 @@ test('T8 지식 카드에서도 모델 제안은 적용하지 않는다 — 법�
   // 법령명이 살아 있어야 공식 조문과 대조할 수 있다.
   assert.equal(knowledge.card.citations[0].lawName, law.lawName);
   assert.deepEqual(knowledge.citationChecks.map(c => c.status), ['VERIFIED_EXISTENCE']);
-  assert.deepEqual(knowledge.proposedTerms, [law.lawName]);
+  assert.deepEqual(knowledge.proposedTerms, []);
 
   // 사용자가 굳이 적용하면 적용되지만, 그 결과 인용은 확인 불가가 된다.
   const masked = s.editKnowledge(knowledge.id, { revision: knowledge.revision, card: knowledge.card, privateTerms: [law.lawName] });
@@ -429,16 +428,17 @@ test('T8 지식 카드에서도 모델 제안은 적용하지 않는다 — 법�
   assert.deepEqual(approved.proposedTerms, []);
 });
 
-test('T8 사용자가 고른 제안만 적용되고, 반출을 확인하면 제안 목록은 남지 않는다', async () => {
+test('T8 개인정보 제안만 선택해 적용되고 반출 확인 시 목록은 남지 않는다', async () => {
   const s = service(async () => ({ ...analysis(),
-    questions: ['관리위탁 권한에 사용료 징수권이 포함되는가'], sensitiveTerms: ['관리위탁', '사용료'] }));
+    abstractFacts: ['신청인 홍길동과 담당자 김철수가 관리위탁을 검토했다'],
+    questions: ['관리위탁 권한에 사용료 징수권이 포함되는가'], sensitiveTerms: ['홍길동', '김철수', '관리위탁', '사용료'] }));
   const { item } = await s.createInquiry({ historyId: 'rev_1' });
 
-  // 하나만 골라 적용한다. 나머지는 제안으로 남는다.
-  const edited = s.editInquiry(item.id, { revision: item.revision, text: item.text, privateTerms: ['관리위탁'] });
-  assert.doesNotMatch(edited.text, /관리위탁/);
+  assert.deepEqual(item.proposedTerms, ['홍길동', '김철수']);
+  const edited = s.editInquiry(item.id, { revision: item.revision, text: item.text, privateTerms: ['홍길동'] });
+  assert.doesNotMatch(edited.text, /홍길동/);
   assert.match(edited.text, /사용료 징수권/);
-  assert.deepEqual(edited.proposedTerms, ['사용료']);
+  assert.deepEqual(edited.proposedTerms, ['김철수']);
   // 치환 건수는 단어 종류가 아니라 본문에 나타난 횟수다.
   assert.match(edited.text, /\[비공개_1\]/);
   assert.ok(edited.redactions['비공개'] >= 1);
@@ -632,6 +632,10 @@ test('T4 상한을 넘은 지식은 버려지지 않고 예산 사유로 보고�
   assert.equal(result.used[0].inCase, true, '사건 내 지식이 먼저 실려야 한다');
   assert.deepEqual(reasons(result), ['BUDGET']);
   assert.equal(result.excluded[0].inCase, false);
+
+  const sameCase = find(context(), QUERY, { historyId: knowledge.historyId, onlyInCase: true, limit: 2 });
+  assert.deepEqual(sameCase.used.map(item => item.id), [knowledge.id]);
+  assert.deepEqual(sameCase.excluded, [], '재검토에는 다른 사건 카드의 제외 사유도 싣지 않는다');
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -679,9 +683,11 @@ test('T9 같은 사건으로 재검토하면 그 사건에서 승인한 지식�
   stubOllama(prompts);
   const unrelated = '전혀 다른 표현의 질의';
 
-  // 사건을 지정하지 않으면 쟁점어가 겹치지 않는 질의에는 실리지 않는다.
+  // 최초 검토는 저장된 승인 지식을 조회하거나 제외 경고를 만들지 않는다.
   const plain = await runReview(unrelated, context());
-  assert.ok(plain.warnings.some(w => w.includes('NOT_RELEVANT')), JSON.stringify(plain.warnings));
+  assert.deepEqual(plain.learningReferences, []);
+  assert.deepEqual(plain.learningExcluded, []);
+  assert.ok(!plain.warnings.some(w => /학습 지식|참고 지식/.test(w)), JSON.stringify(plain.warnings));
   assert.doesNotMatch(prompts.join('\n'), /관리위탁 수탁자의 사용료 징수 권한/);
 
   // 사건을 지정하면 실린다. 프롬프트에 격리 문구와 함께 들어간다.
@@ -702,6 +708,9 @@ test('T9 적용하지 않은 지식은 사유와 함께 검토 제한사항에 �
   // 근거 스냅샷이 달라진 상황(법령 개정 등). 사건을 지정해도 완화하지 않는다.
   const changed = context();
   changed.officialEvidence.articles[0].content = '개정된 조문 본문';
+  const initial = await runReview('관리위탁 사용료 징수 권한', changed);
+  assert.deepEqual(initial.learningExcluded, [], '최초 검토에는 이전 카드의 제외 사유가 없어야 한다');
+  assert.ok(!initial.warnings.some(w => /승인된 학습 지식/.test(w)));
   const review = await runReview('관리위탁 사용료 징수 권한', changed, historyId);
 
   assert.doesNotMatch(prompts.join('\n'), /관리위탁 수탁자의 사용료 징수 권한/);
@@ -828,9 +837,9 @@ test('T5 형식이 깨진 로컬 AI 출력은 지식으로 저장되지 않는�
   status(() => ok.editKnowledge(saved.id, { revision: saved.revision, card: { ...card(), keywords: ['하나'] } }),
     400, /검색어 2개 이상/);
 
-  // 24,000자를 넘는 답변은 로컬 AI에 넘기기 전에 거절한다.
+  // 다수 질문의 답변을 받을 수 있도록 64,000자까지 허용하되 그 이상은 거절한다.
   const big = service(async () => ({ card: card(), sensitiveTerms: [] }));
-  await statusAsync(() => big.importAnswer(item.id, { answer: '가'.repeat(24001) }), 400, /외부 답변/);
+  await statusAsync(() => big.importAnswer(item.id, { answer: '가'.repeat(64001) }), 400, /외부 답변/);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -892,7 +901,7 @@ const stagedContext = gaps => {
 const gap = (id, type, route, question, extra = {}) => ({ id, type, route, question, issueId: 'I1', elementId: 'A1.E2', state: 'OPEN', priority: 2, ...extra });
 const stagedService = (ctx, local) => createManualLearningService({ store, history: () => ({ data: ctx }), local });
 
-test('T13 단계형 검토의 법리 공백만 질문으로 옮기고, 로컬 AI에는 사실 추상화만 맡기며 질문과 공백을 잇는다', async () => {
+test('T13 단계형 검토의 모든 외부 확인 사항을 질문으로 옮기고, 로컬 AI에는 사실 추상화만 맡긴다', async () => {
   const calls = [];
   const ctx = stagedContext([
     gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '관리위탁 권한에 사용료 징수권이 포함되는 기준은 무엇인가?'),
@@ -909,16 +918,18 @@ test('T13 단계형 검토의 법리 공백만 질문으로 옮기고, 로컬 AI
   assert.equal(calls.length, 1);
   assert.match(calls[0].system, /비식별로 추상화/);
   assert.deepEqual(calls[0].user.facts, ['민간기관이 시설을 관리위탁 받았다'], '공백이 난 쟁점의 사실만 보낸다');
-  assert.deepEqual(item.questions.map(q => q.text), ['관리위탁 권한에 사용료 징수권이 포함되는 기준은 무엇인가?', '상반된 해석례를 어떻게 평가해야 하는가?', '위탁료와 사용료의 관계는?']);
+  assert.deepEqual(item.questions.map(q => q.text), ['관리위탁 권한에 사용료 징수권이 포함되는 기준은 무엇인가?',
+    '상반된 해석례를 어떻게 평가해야 하는가?', '미뤄진 질문', '위탁료와 사용료의 관계는?']);
   assert.doesNotMatch(item.text, /위탁계약서 원본/, '사실 공백은 외부로 보내지 않는다');
-  assert.deepEqual(item.anchors.map(a => [a.no, a.gapId, a.type]), [[1, 'G1', 'LEGAL_INTERPRETATION'], [2, 'G3', 'AUTHORITY_CONFLICT']]);
-  assert.equal(item.questionSource, 'REASONING_GAPS');
+  assert.deepEqual(item.anchors.map(a => [a.no, a.gapId, a.type]), [[1, 'G1', 'LEGAL_INTERPRETATION'],
+    [2, 'G3', 'AUTHORITY_CONFLICT'], [3, 'G4', 'LEGAL_INTERPRETATION']]);
+  assert.equal(item.questionSource, 'ALL_REVIEW_ISSUES');
   assert.match(item.text, /"answers":\[\{"questionNo":1/);
   assert.match(item.text, /유효한 JSON 객체 하나만 출력하십시오/);
 
   // 질문 문구를 고쳐도 번호가 남아 있으면 연결을 유지하고, 질문이 사라지면 연결도 뺀다.
   const edited = s.editInquiry(item.id, { revision: item.revision, text: item.text.replace(/\n2\. 상반된[^\n]*\n/, '\n') });
-  assert.deepEqual(edited.anchors.map(a => a.no), [1]);
+  assert.deepEqual(edited.anchors.map(a => a.no), [1, 3]);
 });
 
 test('T13 외부로 물을 법리 공백이 없으면 로컬 AI를 부르지 않는다', async () => {
@@ -926,11 +937,98 @@ test('T13 외부로 물을 법리 공백이 없으면 로컬 AI를 부르지 않
   const s = stagedService(stagedContext([gap('G1', 'FACT_UNKNOWN', 'USER', '사실 확인')]), async () => { called = true; return {}; });
   const result = await s.createInquiry({ historyId: 'rev_staged' });
   assert.equal(result.needsHelp, false);
-  assert.match(result.message, /법리 공백이 없습니다/);
+  assert.match(result.message, /외부 전문가에게 보낼 확인 사항이 없습니다/);
   assert.equal(called, false);
 });
 
-test('T13 질문별 답변을 구조화 반입하면 로컬 AI 없이 저장하고, 질의서에 없는 번호는 버리며, 진행 상태에 공백 연결을 싣는다', async () => {
+test('T9 최초 검토에서는 미검증 인용 카드도 경고에 나타나지 않는다', async () => {
+  await seedDefaultStore('rev_old', { card: { ...card(), citations: [{ lawName: law.lawName, articleNo: '제999조' }] } });
+  stubOllama([]);
+  const review = await runReview(QUERY, context());
+  assert.deepEqual(review.learningReferences, []);
+  assert.deepEqual(review.learningExcluded, []);
+  assert.ok(!review.warnings.some(w => /CITATION_UNVERIFIED|승인된 학습 지식/.test(w)), JSON.stringify(review.warnings));
+});
+
+test('T13 실행 경고 21건은 내부 조치로 남기고 법리 공백과 판단 근거만 질의한다', async () => {
+  const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '최소 의견제출 기간의 판단 기준은?')]);
+  ctx.review.reasoning.issues[0].research = { evidenceIds: ['P7'] };
+  ctx.review.reasoning.evidence = [{ id: 'P7', label: '관련 판례', official: true,
+    text: '의견제출 기회는 처분의 성질과 불이익 정도를 고려하여 실질적으로 보장되어야 한다.' }];
+  ctx.review.reasoning.warrants = [{ claimId: 'I1:A1.E12', text: '7일의 의견제출 기간만으로 절차가 위법하다고 단정할 수 없다.' }];
+  ctx.progressTrace = { events: Array.from({ length: 21 }, (_, i) => ({
+    kind: 'warn', key: 's6', detail: `근거-주장 함의 확인 실패(P7, 원문 ${i * 10}-${i * 10 + 9}): I1:A1.E12 판정 없음`
+  })).flatMap((warning, i) => i === 0
+    ? [{ kind: 'step', key: 's6', label: '근거-주장 대응 검증', group: '검증', state: 'RUNNING' }, warning]
+    : [warning]) };
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['처분 상대방에게 의견제출 기한이 부여되었다'],
+    preservedLogic: ['기한의 상당성은 처분 성질과 불이익 정도를 고려한다'], missingFacts: [], sensitiveTerms: [] }));
+
+  const { item } = await s.createInquiry({ historyId: 'rev_staged' });
+  assert.equal(item.questions.length, 1);
+  assert.equal(new Set(item.questions.map(q => q.no)).size, 1);
+  assert.ok(item.questions.every(q => q.text.length > 0));
+  assert.match(item.text, /관련 판례: 의견제출 기회는/);
+  assert.match(item.text, /원 검토의 판단 주장: 7일의 의견제출 기간/);
+  assert.doesNotMatch(item.text, /\bP7\b|\bI1:A1\.E12\b/);
+  assert.deepEqual([...new Set(item.anchors.map(a => a.no))], [1]);
+  assert.doesNotMatch(item.text, /근거-주장 함의 확인 실패/);
+});
+
+test('T13 원문이 빠진 근거 메타데이터에서도 공식 조문을 재구성해 질의서에 싣는다', async () => {
+  const ctx = stagedContext([gap('G1', 'AUTHORITY_CONFLICT', 'EXTERNAL_INQUIRY',
+    '반대 견해 "A1.6x"를 어떻게 평가해야 하는가?', { elementId: null })]);
+  ctx.officialEvidence.articles = [{ ...article, paragraphs: [{ paragraphNo: '⑥',
+    content: '의견제출 기회를 주어야 한다. 다만, 긴급한 경우에는 그 기간을 줄일 수 있다.' }] }];
+  const registry = buildEvidenceRegistry(ctx);
+  assert.ok(registry.get('A1.6x'));
+  ctx.review.reasoning.evidence = registry.toJSON();
+  ctx.review.reasoning.issues[0].research = { evidenceIds: ['A1.6x'] };
+  ctx.review.reasoning.issues[0].counter = { position: 'A1.6x가 단기 기간을 허용한다는 견해',
+    evidenceIds: ['A1.6x'], response: '' };
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['처분 상대방에게 의견제출 기간을 부여했다'],
+    preservedLogic: ['기간의 상당성과 긴급 사유를 따로 판단한다'], missingFacts: [], sensitiveTerms: [] }));
+  const { item } = await s.createInquiry({ historyId: 'rev_staged' });
+  assert.match(item.questions[0].text, /공유재산 및 물품 관리법.*단서/);
+  assert.match(item.text, /다만, 긴급한 경우에는 그 기간을 줄일 수 있다/);
+  assert.match(item.text, /원 검토의 쟁점·요건·미해결 판단/);
+  assert.match(item.text, /가장 강한 반대 논리.*원 검토의 응답 미해결/);
+  assert.doesNotMatch(item.text, /\bA1\.6x\b/);
+});
+
+test('T13 저장된 공식 근거가 바뀌었으면 같은 표제라도 원문을 대신 싣지 않는다', async () => {
+  const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '의견제출 기간의 기준은?')]);
+  const registry = buildEvidenceRegistry(ctx);
+  const original = registry.get('A1');
+  assert.ok(original);
+  ctx.review.reasoning.issues[0].research = { evidenceIds: ['A1'] };
+  ctx.review.reasoning.evidence = [{ ...registry.toJSON().find(e => e.id === 'A1'), textHash: 'changed-evidence-hash' }];
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['추상 사실'], preservedLogic: ['판단 조건'],
+    missingFacts: [], sensitiveTerms: [] }));
+  await statusAsync(() => s.createInquiry({ historyId: 'rev_staged' }), 409, /판단 자료 원문을 저장 자료에서 복원하지 못했습니다/);
+});
+
+test('T13 공식 근거 원문을 복원할 수 없으면 식별자만 든 질의서를 반출하지 않는다', async () => {
+  const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '관련 판례의 기준은?')]);
+  ctx.review.reasoning.issues[0].research = { evidenceIds: ['P7'] };
+  ctx.review.reasoning.evidence = [{ id: 'P7', label: '대법원 판례', official: true, textChars: 120 }];
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['추상 사실'], preservedLogic: ['판단 조건'],
+    missingFacts: [], sensitiveTerms: [] }));
+  await statusAsync(() => s.createInquiry({ historyId: 'rev_staged' }), 409, /판단 자료 원문을 저장 자료에서 복원하지 못했습니다/);
+});
+
+test('T13 첨부문서 조각이 저장된 검토와 일치하지 않으면 질의서를 만들지 않는다', async () => {
+  const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '계약 조항의 효력은?')]);
+  ctx.review.reasoning.issues[0].research = { documentIds: ['D1'] };
+  ctx.review.reasoning.evidence = [{ id: 'D1', label: '첨부문서 제1조', kind: 'DOCUMENT',
+    official: false, textHash: 'original-document-hash', textChars: 80 }];
+  ctx.impactAndRevisions = { documentChunks: [{ articleNo: '제1조', content: '수정된 다른 계약 조항' }] };
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['추상 사실'], preservedLogic: ['판단 조건'],
+    missingFacts: [], sensitiveTerms: [] }));
+  await statusAsync(() => s.createInquiry({ historyId: 'rev_staged' }), 409, /판단 자료 원문을 저장 자료에서 복원하지 못했습니다/);
+});
+
+test('T13 모든 질문의 구조화 답변을 반입하면 로컬 AI 없이 저장하고 진행 상태에 공백 연결을 싣는다', async () => {
   const ctx = stagedContext([gap('G1', 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', '징수권 포함 기준은?'), gap('G2', 'MISSING_AUTHORITY', 'EXTERNAL_INQUIRY', '근거 조문은?')]);
   let localCalls = 0;
   const s = stagedService(ctx, async () => { localCalls++; return { abstractFacts: ['추상 사실'], preservedLogic: ['조건'], missingFacts: [], sensitiveTerms: [] }; });
@@ -940,14 +1038,14 @@ test('T13 질문별 답변을 구조화 반입하면 로컬 AI 없이 저장하�
     answers: [
       { questionNo: 2, position: '공유재산법 제20조가 근거입니다.', conditions: ['관리위탁일 것'], exceptions: [], checklist: ['조례 확인'],
         citations: [{ lawName: law.lawName, articleNo: '제20조' }], cases: ['2019두12345'], confidence: '확실' },
-      { questionNo: 9, position: '없는 질문' },
-      { questionNo: 1, position: '견해가 나뉩니다.', confidence: '아마도' }
+      { questionNo: 1, position: '견해가 나뉩니다.', conditions: [], exceptions: [], checklist: ['관련 법리 확인'],
+        citations: [], cases: [], confidence: '견해 대립' }
     ],
     card: card()
   });
   const knowledge = await s.importAnswer(ready.id, { answer, mode: 'structured', sourceType: 'HUMAN_EXPERT' });
   assert.equal(localCalls, 1, '질의서 작성 1회뿐, 반입에는 로컬 AI를 쓰지 않는다');
-  assert.deepEqual(knowledge.answersByQuestion.map(a => [a.questionNo, a.confidence]), [[1, '미확인'], [2, '확실']]);
+  assert.deepEqual(knowledge.answersByQuestion.map(a => [a.questionNo, a.confidence]), [[1, '견해 대립'], [2, '확실']]);
   assert.deepEqual(knowledge.answersByQuestion[1].citations, [{ lawName: law.lawName, articleNo: '제20조' }]);
   assert.deepEqual(knowledge.answeredQuestions, [1, 2], '질문별 답변이 다룬 번호가 곧 답한 질문이다');
 

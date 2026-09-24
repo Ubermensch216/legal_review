@@ -20,6 +20,21 @@ export function privateTerms(value = []) {
     .filter(x => x.length >= 2 && x.length <= 200).sort((a, b) => b.length - a.length);
 }
 
+// Model output is untrusted: a word appearing in the text is not evidence that it is personal data.
+// Automatic patterns above already remove most structured identifiers before this check runs.
+export function proposedPersonalTerms(value, text) {
+  const body = String(text || '');
+  const surname = '[김이박최정강조윤장임한오서신권황안송류홍전고문손배백허유남심노하곽성차주우구민진지엄채원천방공현함변염양도석]';
+  return privateTerms(value).filter(term => {
+    if (!body.includes(term)) return false;
+    if (/^[가-힣]{3,4}$/.test(term) && new RegExp(`^${surname}[가-힣]{2,3}$`).test(term)) {
+      const role = '(?:성명|신청인|민원인|담당자|대표자|피해자|피고인|원고|피고|정보주체)';
+      return new RegExp(`${role}\\s*[:：]?\\s*${term}(?:은|는|이|가|을|를|의|과|와|에게|씨|님)?(?![가-힣])|(?<![가-힣])${term}\\s*(?:씨|님)(?![가-힣])`).test(body);
+    }
+    return false;
+  });
+}
+
 function redactor(value, terms) {
   const identities = new Map();
   const counts = {};

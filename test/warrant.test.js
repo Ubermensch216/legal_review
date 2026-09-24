@@ -14,10 +14,11 @@ const embed = async texts => ({ vectors: texts.map(() => [1, 0]), warning: null 
 const issue = ids => ({ issueId: 'I1', elements: [{ id: 'A1.E1', text: '허가를 받을 것' }],
   assessments: [{ elementId: 'A1.E1', analysis: '허가 요건', evidenceIds: ids, status: 'SATISFIED' }] });
 const registry = entries => ({ asOf: '20260923', get: id => entries.get(id) || null });
-const response = label => ({ ok: true, body: (async function* () {
-  yield new TextEncoder().encode(`${JSON.stringify({ message: { content: JSON.stringify({ results: [{ pair: 1, label }] }), done: true,
+const responseBody = value => ({ ok: true, body: (async function* () {
+  yield new TextEncoder().encode(`${JSON.stringify({ message: { content: JSON.stringify(value), done: true,
     done_reason: 'stop', prompt_eval_count: 300, eval_count: 40 } })}\n`);
 })() });
+const response = label => responseBody({ label });
 const fakeOllama = handler => {
   const prompts = [];
   globalThis.fetch = async (url, options) => {
@@ -41,6 +42,20 @@ test('S6은 유사도가 높아도 모든 12쌍 초과 근거를 원문으로 �
   assert.equal(result.ledger[0].checks.length, 13);
   assert.equal(result.ledger[0].overall, 'SUPPORTED');
   assert.ok(prompts.every(p => !p.includes('[쟁점 목록]') && p.startsWith('[검토 기준일]')));
+  assert.ok(prompts.every(p => p.includes('출력 JSON 형식: {"label":"SUPPORTS"}')));
+});
+
+test('S6은 번호가 달린 과거 응답을 형식 오류로 재시도하고 단일 판정을 받는다', async () => {
+  const entries = new Map([['P7', { id: 'P7', text: '허가를 받아야 한다.', official: true, inForce: true }]]);
+  const prompts = fakeOllama((_, call) => call === 1
+    ? responseBody({ results: [{ pair: 2, label: 'SUPPORTS' }] }) : response('SUPPORTS'));
+  const result = await verifyWarrants({ issueResults: [issue(['P7'])], registry: registry(entries), provider: 'ollama', config,
+    session: createLlmSession(), embed });
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /직전 출력의 형식 오류/);
+  assert.equal(result.ledger[0].checks[0].entailment, 'SUPPORTS');
+  assert.deepEqual(result.unreviewedPairs, []);
+  assert.deepEqual(result.warnings, []);
 });
 
 test('유사도는 지지 판정을 대신하지 않고 함의 호출 실패는 미확인으로 남는다', async () => {

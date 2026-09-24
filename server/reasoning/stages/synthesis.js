@@ -43,9 +43,10 @@ const schema = ({ issueIds, preConsulting, citableIds }) => {
   return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties };
 };
 
-const TASK = ({ table, preConsulting }) => `[과제: 종합]
+const TASK = ({ table, preConsulting, finalReviewData }) => `[과제: 종합]
 아래는 쟁점별로 확정된 결론 표다. 결론을 바꾸거나 새로 판단하지 말고 표를 요약한다. 판단 유보인 쟁점은 유보라고 쓴다.
 ${table}
+${finalReviewData ? `\n[원 검토 구조에 외부 답변을 보충한 최종 검토 데이터]\n${JSON.stringify(finalReviewData)}\n위 데이터의 요건별 판단·남은 공백을 확인해 요약·위험·권고를 작성한다. 결론 표와 충돌하는 새 결론은 만들지 않는다.\n` : ''}
 - summary: 400자 이내 요약.
 - risks: 위험이 있는 쟁점마다 수준(HIGH/MEDIUM/LOW)과 제목·설명.
 - recommendations: 실무 조치 최대 5개.
@@ -58,13 +59,13 @@ function citableFrom(results, registry) {
 }
 
 /** S5 호출. 실패하면 결론 표만으로 기본 요약을 만든다(결론은 이미 계산되어 있다). */
-export async function synthesize({ issues, issueResults, registry, preset, provider, config, session }) {
+export async function synthesize({ issues, issueResults, registry, preset, provider, config, session, finalReviewData = null }) {
   const preConsulting = preset === 'pre_consulting_audit';
   const table = conclusionTable(issues, issueResults);
   const positions = preConsulting ? issues.flatMap(i => (i.positions || []).map(p => `[${i.id}] ${p.label}: ${p.claim}`)).join('\n') : '';
   const compactPrefix = `[검토 기준일] ${registry.asOf}${positions ? `\n\n[대립 견해]\n${positions}` : ''}`;
   try {
-    const { value } = await runStage({ stage: 's5', provider, system: REASONING_SYSTEM, prefix: compactPrefix, task: TASK({ table, preConsulting }),
+    const { value } = await runStage({ stage: 's5', provider, system: REASONING_SYSTEM, prefix: compactPrefix, task: TASK({ table, preConsulting, finalReviewData }),
       schema: schema({ issueIds: issues.map(i => i.id), preConsulting, citableIds: citableFrom(issueResults, registry) }), config: { ...config, think: false }, session });
     return { ...value, table, source: 'LLM' };
   } catch (err) {

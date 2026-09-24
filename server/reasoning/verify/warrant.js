@@ -20,17 +20,15 @@ export function collectClaims(issueResults) {
   return claims;
 }
 
-const entailmentSchema = { type: 'object', additionalProperties: false, required: ['results'],
-  properties: { results: { type: 'array', minItems: 1, maxItems: 1, items: { type: 'object', additionalProperties: false,
-    required: ['pair', 'label'], properties: { pair: { type: 'integer' },
-      label: { type: 'string', enum: ['SUPPORTS', 'PARTIAL', 'NOT_SUPPORTED'] } } } } } };
+const entailmentSchema = { type: 'object', additionalProperties: false, required: ['label'],
+  properties: { label: { type: 'string', enum: ['SUPPORTS', 'PARTIAL', 'NOT_SUPPORTED'] } } };
 
 const ENTAILMENT_TASK = ({ claim, evidenceId, evidenceText }) => `[과제: 근거-주장 대응 확인]
 [주장] ${claim}
 [근거 ${evidenceId}] ${evidenceText}
 근거 원문만으로 주장을 판정한다. 근거에 없는 내용을 보태지 않는다.
 SUPPORTS: 직접 뒷받침 / PARTIAL: 일부만 또는 적용 범위 불명 / NOT_SUPPORTED: 뒷받침하지 않거나 반대.
-출력 JSON 형식: {"results":[{"pair":1,"label":"SUPPORTS"}]}`;
+출력 JSON 형식: {"label":"SUPPORTS"}`;
 
 /** 원문 전체를 빠짐없이 작은 조각으로 나눈다. 오프셋은 원문 기준이다. */
 export function evidenceFragments(text, maxChars = EVIDENCE_CHARS) {
@@ -57,9 +55,7 @@ async function verifyFragment({ claim, evidenceId, fragment, registry, provider,
       prefix: `[검토 기준일] ${registry.asOf}`,
       task: ENTAILMENT_TASK({ claim, evidenceId, evidenceText: fragment.text }),
       schema: entailmentSchema, config: { ...config, think: false }, session });
-    const answer = value.results.find(r => r.pair === 1);
-    if (!answer) throw new StageError('s6', '쌍 1의 판정이 없습니다.');
-    return { label: answer.label, start: fragment.start, end: fragment.end };
+    return { label: value.label, start: fragment.start, end: fragment.end };
   } catch (err) {
     if (err instanceof StageError && (err.budgetExceeded || err.cause?.truncated) && fragment.text.length > MIN_FRAGMENT_CHARS) {
       const half = Math.floor(fragment.text.length / 2);

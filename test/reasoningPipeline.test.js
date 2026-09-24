@@ -46,7 +46,7 @@ const STAGE_REPLIES = {
         .filter(a => prompt.includes(`[${a.elementId}]`)),
       precedents: [], counter: { position: '사회통념상 합리성이 있으면 동의가 없어도 유효하다', evidenceIds: [], response: '' } };
   },
-  '[과제: 근거-주장 대응 확인]': () => ({ results: [{ pair: 1, label: 'SUPPORTS' }] }),
+  '[과제: 근거-주장 대응 확인]': () => ({ label: 'SUPPORTS' }),
   '[과제: 수정 조문 작성]': () => ({ revisedText: '회사는 근로자에게 불리하게 이 규칙을 변경하려면 근로자 과반수의 동의를 받아야 한다.', reason: '동의 요건 [A1.1x]', evidenceIds: ['A1.1x'] }),
   '[과제: 종합]': () => ({ summary: '불리한 변경 여부가 확인되지 않아 판단을 유보한다.', risks: [{ issueId: 'I1', level: 'HIGH', title: '동의 없는 변경', description: '무효 위험' }], recommendations: ['변경 내용 비교표 확보'] })
 };
@@ -174,7 +174,7 @@ test('REVIEW_PIPELINE=staged이면 검토가 단계형으로 돌고 인용 검�
   assert.equal(calls.at(-1).marker, undefined, '마지막 호출은 기존 단일 호출 프롬프트');
 });
 
-test('재검토: 공식 근거가 같으면 S1·S2를 건너뛰고, 외부 답변이 연결된 쟁점과 후속 쟁점만 다시 판단하며, 이전 공백의 해소 여부를 남긴다', async () => {
+test('재검토: 공식 근거가 같으면 기존 쟁점·조사·요건을 재사용하고 연결된 공백만 다시 판단한다', async () => {
   const stageCache = cache();
   fakeOllama();
   const first = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),
@@ -205,28 +205,39 @@ test('재검토: 공식 근거가 같으면 S1·S2를 건너뛰고, 외부 답�
   const session = createLlmSession();
   const second = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: withKnowledge,
     provider: 'ollama', model: ENV.OLLAMA_MODEL, session, clients, embed, cache: stageCache,
-    previous: { historyId: 'rev_1', reasoning: first.reasoning, rerunIssueIds: ['I1'], knowledgeIssues: new Map([['k-1', ['I1']]]) } });
+    previous: { historyId: 'rev_1', reasoning: first.reasoning, rerunIssueIds: ['I1'],
+      knowledgeIssues: new Map([['k-1', ['I1']]]),
+      knowledgeTargets: new Map([['k-1', [{ issueId: 'I1', elementId: 'A1.E2', gapId: openGap.id }]]]) } });
 
-  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s4:I1', 's4:I2', 's6', 's6', 's6', 's5', 's5r:D1'],
-    'S1·S2는 재사용하고 다시 판단한 쟁점의 근거 쌍을 전부 재검증한다');
+  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s4:I1', 's6', 's6', 's5', 's5r:D1'],
+    'S1·S2·S3과 후속 쟁점의 요건 판단을 재실행하지 않는다');
   assert.ok(calls[0].includes('[K1]') && calls[0].includes('임금 총액이 줄면'), '연결된 쟁점 입력에 질문별 답변이 실린다');
+  assert.match(calls[0], /\[A1\.E2\]/);
+  assert.doesNotMatch(calls[0], /\[A1\.E1\]/, '이미 채워진 요건은 모델에 다시 묻지 않는다');
   assert.deepEqual(second.reasoning.reuse.rerunIssueIds.sort(), ['I1', 'I2']);
+  assert.deepEqual(second.reasoning.reuse.reusedStages, ['S1', 'S2', 'S3']);
+  assert.deepEqual(second.reasoning.issues[0].assessments[0], first.reasoning.issues[0].assessments[0],
+    '기존에 확정한 요건 판단을 그대로 유지한다');
+  assert.deepEqual(second.reasoning.issues[1].assessments, first.reasoning.issues[1].assessments,
+    '후속 쟁점의 요건 판단도 그대로 유지한다');
+  const finalPrompt = calls.find(prompt => prompt.includes('[과제: 종합]'));
+  assert.match(finalPrompt, /원 검토 구조에 외부 답변을 보충한 최종 검토 데이터/);
+  assert.match(finalPrompt, /"elementId":"A1.E1"/);
+  assert.match(finalPrompt, /"elementId":"A1.E2"/);
   assert.equal(second.reasoning.issues[0].conclusion.legal, 'APPLIES');
   const transition = second.reasoning.reuse.gapTransitions.find(t => t.previousGapId === openGap.id);
   assert.equal(transition.state, 'RESOLVED');
 });
 
-test('재검토: 이전 검토 이후 공식 근거가 바뀌었으면 처음부터 다시 하고 그 사실을 알린다', async () => {
+test('재검토: 공식 근거가 바뀌면 기존 구조를 버리고 처음부터 분석하지 않는다', async () => {
   fakeOllama();
   const first = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),
     provider: 'ollama', model: ENV.OLLAMA_MODEL, session: createLlmSession(), clients, embed, cache: cache() });
   const changed = workbenchContext();
   changed.officialEvidence.articles[0].paragraphs[0].content += ' (개정)';
   const session = createLlmSession();
-  const second = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: changed,
+  await assert.rejects(runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: changed,
     provider: 'ollama', model: ENV.OLLAMA_MODEL, session, clients, embed, cache: cache(),
-    previous: { reasoning: first.reasoning, rerunIssueIds: ['I1'], knowledgeIssues: new Map() } });
-  assert.equal(session.ledger.calls[0].stage, 's1');
-  assert.equal(second.reasoning.reuse, null);
-  assert.ok(second.warnings.some(w => /공식 근거가 달라져/.test(w)));
+    previous: { reasoning: first.reasoning, rerunIssueIds: ['I1'], knowledgeIssues: new Map() } }), /공식 근거가 달라졌습니다/);
+  assert.equal(session.ledger.calls.length, 0, '새 최초 검토를 조용히 시작하지 않는다');
 });

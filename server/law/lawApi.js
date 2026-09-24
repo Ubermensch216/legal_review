@@ -224,8 +224,23 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
   try {
     // Following a manually imported answer is always a local operation.
     const sourceHistoryId = String(req.body.sourceHistoryId || '').trim().slice(0, 100) || null;
-    if (sourceHistoryId && !getHistoryById(sourceHistoryId)) {
+    const sourceHistory = sourceHistoryId ? getHistoryById(sourceHistoryId) : null;
+    if (sourceHistoryId && !sourceHistory) {
       return fail(404, { ok: false, error: '원 검토 이력을 찾을 수 없습니다. 검토를 다시 실행한 뒤 시도하십시오.' });
+    }
+    if (sourceHistoryId) {
+      const learningStore = getLearningStore();
+      const inquiries = learningStore.list('inquiry').filter(i => i.historyId === sourceHistoryId);
+      const cards = learningStore.list('knowledge');
+      const unmet = inquiries.flatMap(i => inquiryCoverage(i, cards).questions
+        .filter(q => q.state !== 'APPROVED').map(q => `#${q.no}`));
+      if (unmet.length) {
+        return fail(409, { ok: false,
+          error: `외부 전문가 확인 질문 ${unmet.length}건에 승인된 답변이 없습니다 (${unmet.join(', ')}). 모든 답변을 승인한 뒤 최종 검토를 실행하십시오.` });
+      }
+      if (!sourceHistory.data?.review?.reasoning?.issues?.length) {
+        return fail(409, { ok: false, error: '원 검토에 재사용할 쟁점·요건 구조가 없습니다. 단계형 최초 검토를 완료한 뒤 외부 답변을 연결하십시오.' });
+      }
     }
     const manualLearning = req.body.learningMode === 'manual' || Boolean(sourceHistoryId);
     if (manualLearning) localLearningEndpoint();
@@ -237,6 +252,13 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const targetDate = String(req.body.targetDate || '').trim();
     if (targetDate && !validDate(targetDate)) {
       return fail(400, { ok: false, error: '검토 기준일은 YYYYMMDD 또는 YYYY-MM-DD 형식이어야 합니다.' });
+    }
+    if (sourceHistoryId) {
+      const original = sourceHistory.data?.meta || {};
+      if (query.trim() !== String(original.query || '').trim() || preset !== original.preset
+        || targetDate.replace(/\D/g, '') !== String(original.targetDate || '').replace(/\D/g, '')) {
+        return fail(409, { ok: false, error: '원 검토의 질의·검토 유형·기준일이 달라졌습니다. 저장된 구조에 답변을 끼워 넣으려면 원래 조건을 유지하십시오.' });
+      }
     }
     let documentText = req.body.documentText || '';
     let documentName = '';
@@ -283,16 +305,29 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const llmConfig = {
       provider: manualLearning ? 'ollama' : (req.body.llmProvider || ENV.LLM_PROVIDER || 'ollama'),
       model: chosenModel,
-      apiKey: manualLearning ? undefined : req.body.llmApiKey
+      apiKey: manualLearning ? undefined : req.body.llmApiKey,
+      // 외부 질의 루프의 최초 검토에는 재사용할 쟁점·요건·공백 구조가 필요하다.
+      ...(manualLearning ? { pipeline: 'staged' } : {})
     };
     if (!manualLearning && req.body.llmUrl) {
       llmConfig.url = req.body.llmUrl;
     }
 
-    // 1. 법령 워크벤치 데이터 구축: 목록 선별 후 필요한 공식 본문만 수집한다.
+    // 최초 검토에서만 공식 자료를 수집한다. 후속 검토는 저장된 스냅샷을 사용한다.
     const llmSession = createLlmSession();
-    const workbenchContext = await buildWorkbenchContext({ query, preset, documentText, targetLaw, targetDate,
-      llmConfig, session: llmSession, progress });
+    const workbenchContext = sourceHistoryId
+      ? { meta: structuredClone(sourceHistory.data.meta),
+        officialEvidence: structuredClone(sourceHistory.data.officialEvidence),
+        impactAndRevisions: structuredClone(sourceHistory.data.impactAndRevisions || {}) }
+      : await buildWorkbenchContext({ query, preset, documentText, targetLaw, targetDate,
+        llmConfig, session: llmSession, progress });
+    if (sourceHistoryId) {
+      workbenchContext.meta.dataIntegrity ||= { warnings: [] };
+      workbenchContext.meta.dataIntegrity.warnings ||= [];
+      workbenchContext.meta.dataIntegrity.warnings.push(
+        `최종 재검토는 원 검토의 공식 근거 스냅샷(${workbenchContext.meta.asOfDate || '기준일 미상'})을 재사용했습니다.`);
+      progress.note('learning', '원 검토의 공식 근거 스냅샷과 쟁점 구조를 재사용합니다.');
+    }
 
     // 2. LLM 검토의견서 생성
 

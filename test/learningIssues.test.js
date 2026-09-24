@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectLearningIssues } from '../public/js/learningIssues.js';
+import { collectLearningIssues, collectLearningQuestions } from '../public/js/learningIssues.js';
 
 test('검토 이력의 법리 공백과 준비·수집·분석 실패를 함께 표시한다', () => {
   const issues = collectLearningIssues({
@@ -33,4 +33,28 @@ test('진행 기록이 없는 이전 이력에서도 저장된 제한 사항을 
   });
   assert.equal(issues.length, 3);
   assert.deepEqual(issues.map(issue => issue.group), ['수집', '분석', '분석']);
+});
+
+test('수집·작성·검증 실행 경고를 외부 전문가 질문으로 보내지 않는다', () => {
+  const data = { progressTrace: { events: [
+    { kind: 'step', key: 'write', label: '의견서 작성', group: '작성', state: 'RUNNING' },
+    { kind: 'warn', key: 'write', detail: '서술과 결론 불일치' },
+    { kind: 'step', key: 'verify', label: '근거 검증', group: '검증', state: 'RUNNING' },
+    { kind: 'warn', key: 'verify', detail: 'P7 함의 확인 실패' }
+  ] }, meta: { dataIntegrity: { collectionDiagnostics: ['판례 본문 수집 실패'] } },
+  review: { warnings: ['가장 강한 반대 논리에 대한 응답 없음'] } };
+
+  const questions = collectLearningQuestions(data);
+  assert.equal(questions.length, 0);
+});
+
+test('법리 공백의 내부 조문 ID를 사람이 읽을 수 있는 공식 표제로 바꾼다', () => {
+  const data = { review: { reasoning: {
+    evidence: [{ id: 'A1.6x', label: '행정절차법 제21조 제6항 단서' }],
+    gaps: [{ id: 'G1', route: 'EXTERNAL_INQUIRY', state: 'OPEN', issueId: 'I1', type: 'AUTHORITY_CONFLICT',
+      question: '반대 견해 A1.6x를 어떻게 평가해야 하는가?' }]
+  } } };
+  const questions = collectLearningQuestions(data);
+  assert.equal(questions.length, 1);
+  assert.match(questions[0].text, /행정절차법 제21조 제6항 단서/);
 });

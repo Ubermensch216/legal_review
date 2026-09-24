@@ -16,6 +16,7 @@ import { planCaseAndIssues } from './stages/caseIssues.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
+import { computeIssueConclusion } from './verify/conclusion.js';
 import { verifyWarrants } from './verify/warrant.js';
 import { deriveGaps } from './stages/gaps.js';
 import { draftRedlines, renderReview, synthesize } from './stages/synthesis.js';
@@ -76,6 +77,32 @@ const PIPELINE_FIELDS = ['research', 'elements', 'assessments', 'precedents', 'c
   'stageStatus', 'omittedEvidence', 'warnings', 'gateReasons'];
 const bareIssue = issue => Object.fromEntries(Object.entries(issue).filter(([k]) => !PIPELINE_FIELDS.includes(k)));
 
+/** 확정된 요건 판단은 유지하고, 답변이 연결된 요건의 새 판단만 끼워 넣는다. */
+function patchIssue(prior, fresh, predecessors, registry) {
+  const changed = new Map(fresh.assessments.map(a => [a.elementId, a]));
+  const assessments = prior.assessments.map(a => changed.get(a.elementId) || a);
+  let conclusion = computeIssueConclusion(prior.elements, assessments, predecessors);
+  const omittedEvidence = [...new Set([...(prior.omittedEvidence || []), ...(fresh.omittedEvidence || [])])];
+  if (fresh.stageStatus === 'FAILED' || omittedEvidence.length || prior.elements.some(e => e.fallback)) {
+    conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
+  }
+  const counter = fresh.counter?.position ? fresh.counter : prior.counter;
+  const gateReasons = [];
+  if (fresh.stageStatus === 'FAILED') gateReasons.push('외부 답변으로 보충할 요건 판단 실패');
+  if (omittedEvidence.length) gateReasons.push(`포섭에서 처리하지 못한 근거: ${omittedEvidence.join(', ')}`);
+  if (prior.elements.some(e => e.fallback)) gateReasons.push('골격으로 대체한 미검증 요건이 포함됨');
+  if (!assessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official))) gateReasons.push('공식 근거에 기댄 요건 판단이 없음');
+  if (assessments.filter(a => conclusion.decidingElementIds.includes(a.elementId)).some(a => a.knowledgeOnly))
+    gateReasons.push('결론을 좌우한 요건이 외부 참고 지식에만 기댐');
+  if (counter?.position && !counter.response) gateReasons.push('가장 강한 반대 논리에 대한 응답 없음');
+  return { ...fresh, elements: prior.elements, assessments, conclusion,
+    precedents: [...(prior.precedents || []), ...(fresh.precedents || [])],
+    counter, narrative: fresh.narrative || prior.narrative,
+    openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),
+    evidenceIds: [...new Set([...(prior.research?.evidenceIds || []), ...(fresh.evidenceIds || [])])],
+    omittedEvidence, warnings: [...(fresh.warnings || [])], gateReasons };
+}
+
 /**
  * @param {object} args
  * @param {object} args.session createLlmSession 결과 (호출 원장 공유)
@@ -114,9 +141,10 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     if (evidenceFingerprint(candidate.list()) === evidenceFingerprint(previous.reasoning.evidence || [])) {
       reuse = { registry: candidate, addedItems };
     } else {
-      warnings.push('이전 검토 이후 공식 근거가 달라져 쟁점 정리부터 다시 수행했습니다.');
+      throw new PipelineError('원 검토 이후 공식 근거가 달라졌습니다. 저장된 쟁점 구조에 외부 답변을 끼워 넣을 수 없으므로 최종 재검토를 중단했습니다.');
     }
   }
+  if (previous && !reuse) throw new PipelineError('원 검토의 추론 구조를 재사용할 수 없어 최종 재검토를 중단했습니다.');
 
   let caseIssues;
   let plan;
@@ -132,7 +160,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       byIssue: Object.fromEntries(prior.issues.map(i => [i.id, i.research?.queries || []])) };
     research = { added: prior.diagnostics?.research?.added || {}, addedItems: reuse.addedItems, warnings: [] };
     for (const issue of prior.issues) perIssue.set(issue.id, { ...issue.research });
-    progress.mark('s1', '사건 사실·쟁점 정리', `이전 검토 재사용 — 쟁점 ${countLabel(caseIssues.issues.length, '개')}`, '분석');
+    progress.mark('s1', '사건 사실·쟁점 정리', `이전 검토 재사용 — 쟁점 ${countLabel(caseIssues.issues.length, '개')}`,
+      '분석', 'DONE', { totalIssues: caseIssues.issues.length });
     progress.mark('s2', '쟁점별 판례·해석례 조사', '이전 검토 재사용 (공식 근거 동일)', '수집');
   } else {
     // ── S1 사건·쟁점 ──
@@ -152,7 +181,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     if (d1.skippedDocumentIds?.length) warnings.push(`쟁점 추출에서 문서 조각 ${d1.skippedDocumentIds.join(', ')}를 처리하지 못했습니다.`);
     if (d1.queryTruncated) warnings.push(`쟁점 추출에서 질의 구간 ${(d1.skippedQueryRanges || []).map(([start, end]) => `${start}-${end}`).join(', ')}을 처리하지 못했습니다.`);
     progress.done('s1', `쟁점 ${countLabel(caseIssues.issues.length, '개')} · 사실 ${countLabel(caseIssues.facts.length, '개')}`
-      + `${d1.downgradedFacts.length ? ` · 원문 미확인 사실 ${d1.downgradedFacts.length}` : ''}${d1.rejectedIds.length ? ` · 없는 근거 ID 제거 ${d1.rejectedIds.length}` : ''}`);
+      + `${d1.downgradedFacts.length ? ` · 원문 미확인 사실 ${d1.downgradedFacts.length}` : ''}${d1.rejectedIds.length ? ` · 없는 근거 ID 제거 ${d1.rejectedIds.length}` : ''}`,
+    'DONE', { totalIssues: caseIssues.issues.length });
 
     // ── S2 쟁점별 조사 ──
     progress.start('s2', '쟁점별 판례·해석례 조사', '', '수집');
@@ -170,8 +200,11 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.done('s2', `검색어 ${countLabel(plan.queries.length, '개')} · 새 판례 ${countLabel(research.added.precedents)} · 새 해석례 ${countLabel(research.added.interpretations)}`);
   }
 
-  // 재검토에서 다시 판단할 쟁점. 연결된 답변이 없으면(예전 카드) 모든 쟁점을 다시 판단한다.
+  // 재검토에서는 연결된 공백과 그 결론에 의존하는 쟁점만 갱신한다.
   const allIds = caseIssues.issues.map(i => i.id);
+  const unknownTargets = [...(previous?.knowledgeTargets?.values() || [])].flat()
+    .filter(target => !allIds.includes(target.issueId));
+  if (unknownTargets.length) throw new PipelineError('외부 답변의 쟁점 연결을 원 검토에서 찾을 수 없어 재검토를 중단했습니다.');
   const anchored = (previous?.rerunIssueIds || []).filter(id => allIds.includes(id));
   const rerun = reuse ? withDependents(caseIssues.issues, anchored.length ? anchored : allIds) : new Set(allIds);
   // 외부 참고 지식(K)은 연결된 쟁점의 입력에 싣는다. 연결 정보가 없으면 다시 판단하는 모든 쟁점에 싣는다.
@@ -181,19 +214,26 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   }).map(k => k.id);
 
   // ── S3 요건 분해 ──
-  progress.start('s3', '조문 요건 분해', '같은 조문은 저장된 결과를 재사용', '분석');
-  const articleIds = [...new Set(caseIssues.issues.filter(i => rerun.has(i.id)).flatMap(i => perIssue.get(i.id).evidenceIds)
-    .map(id => registry.get(id)).filter(Boolean).map(e => e.parentId || e.id).filter(id => /^[AO]\d+$/.test(id)))];
-  const decomposed = await decomposeArticles({ articleIds, registry, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}) });
-  warnings.push(...decomposed.warnings);
-  for (const warning of decomposed.warnings) progress.warn('s3', warning);
-  const sources = [...decomposed.byArticle.values()].map(v => v.source);
-  progress.done('s3', `조문 ${countLabel(articleIds.length, '개')} · 재사용 ${sources.filter(s => s === 'CACHE').length} · 새로 분해 ${sources.filter(s => s === 'LLM').length}`
-    + `${sources.some(s => s === 'SKELETON' || s === 'PARTIAL') ? ` · 미검증 요건 ${sources.filter(s => s === 'SKELETON' || s === 'PARTIAL').length}` : ''}`);
+  let decomposed;
+  if (reuse) {
+    decomposed = { byArticle: new Map(), warnings: [] };
+    progress.mark('s3', '조문 요건 분해', '원 검토의 요건 구조 재사용', '분석');
+  } else {
+    progress.start('s3', '조문 요건 분해', '조문에서 요건 추출', '분석');
+    const articleIds = [...new Set(caseIssues.issues.filter(i => rerun.has(i.id)).flatMap(i => perIssue.get(i.id).evidenceIds)
+      .map(id => registry.get(id)).filter(Boolean).map(e => e.parentId || e.id).filter(id => /^[AO]\d+$/.test(id)))];
+    decomposed = await decomposeArticles({ articleIds, registry, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}) });
+    warnings.push(...decomposed.warnings);
+    for (const warning of decomposed.warnings) progress.warn('s3', warning);
+    const sources = [...decomposed.byArticle.values()].map(v => v.source);
+    progress.done('s3', `조문 ${countLabel(articleIds.length, '개')} · 재사용 ${sources.filter(s => s === 'CACHE').length} · 새로 분해 ${sources.filter(s => s === 'LLM').length}`
+      + `${sources.some(s => s === 'SKELETON' || s === 'PARTIAL') ? ` · 미검증 요건 ${sources.filter(s => s === 'SKELETON' || s === 'PARTIAL').length}` : ''}`);
+  }
 
   // ── S4 요건별 포섭 ──
   const think = thinkStages().has('s4');
   const issueResults = [];
+  const directlyUpdated = new Set();
   for (const issue of orderByDependency(caseIssues.issues)) {
     const key = `s4:${issue.id}`;
     if (!rerun.has(issue.id)) {
@@ -204,14 +244,31 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.start(key, `쟁점 ${issue.id} 요건별 포섭`, issue.question.slice(0, 60), '작성');
     const selected = perIssue.get(issue.id);
     const knowledgeIds = knowledgeFor(issue.id);
-    const research = knowledgeIds.length ? { ...selected, evidenceIds: [...selected.evidenceIds, ...knowledgeIds] } : selected;
-    const elements = selectIssueElements({ evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
+    const prior = reuse ? previous.reasoning.issues.find(i => i.id === issue.id) : null;
     const predecessors = issue.dependsOn.map(id => issueResults.find(r => r.issueId === id))
       .filter(Boolean).map(r => ({ issueId: r.issueId, legal: r.conclusion.legal, stageStatus: r.stageStatus }));
+    if (prior && !knowledgeIds.length) {
+      const result = reusedResult(prior);
+      result.conclusion = computeIssueConclusion(result.elements, result.assessments, predecessors);
+      issueResults.push(result);
+      progress.done(key, '기존 요건 판단 유지 · 선결 쟁점 결론만 갱신');
+      continue;
+    }
+    const research = knowledgeIds.length ? { ...selected, evidenceIds: [...selected.evidenceIds, ...knowledgeIds] } : selected;
+    const targets = [...(previous?.knowledgeTargets?.values() || [])].flat().filter(t => t.issueId === issue.id);
+    const targetedIds = new Set(targets.map(t => t.elementId).filter(Boolean));
+    if (prior && [...targetedIds].some(id => !prior.elements.some(e => e.id === id))) {
+      throw new PipelineError(`외부 답변이 연결된 ${issue.id} 요건을 원 검토에서 찾을 수 없어 재검토를 중단했습니다.`);
+    }
+    const narrow = prior && targets.length && targets.every(t => t.elementId) && targetedIds.size;
+    const elements = prior ? (narrow ? prior.elements.filter(e => targetedIds.has(e.id)) : prior.elements)
+      : selectIssueElements({ evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
     const issueFacts = caseIssues.facts.filter(f => issue.factIds.includes(f.id));
-    const result = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
+    const freshResult = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
       runPrefix: buildIssuePrefix(registry, issue, issueFacts), predecessors,
       provider, config: configFor('s4', think), session });
+    const result = narrow ? patchIssue(prior, freshResult, predecessors, registry) : freshResult;
+    directlyUpdated.add(issue.id);
     issueResults.push(result);
     if (result.stageStatus === 'FAILED') progress.fail(key, `판단 실패 — 판단 유보로 처리 (${result.error})`);
     else progress.done(key, `${result.conclusion.legal} · 요건 ${countLabel(elements.length, '개')}${knowledgeIds.length ? ` · 외부 답변 ${knowledgeIds.length}건 반영` : ''}`,
@@ -227,7 +284,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     config: configFor('s6'), session, ...embedOption, entailment: process.env.REVIEW_ENTAILMENT !== 'off' });
   warnings.push(...fresh.warnings);
   for (const warning of fresh.warnings) progress.warn('s6', warning);
-  const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !rerun.has(w.issueId)), ...fresh.ledger];
+  const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !directlyUpdated.has(w.issueId)), ...fresh.ledger];
   for (const result of issueResults) {
     const unresolved = ledger.filter(w => w.issueId === result.issueId && w.overall !== 'SUPPORTED');
     if (!unresolved.length) continue;
@@ -260,7 +317,19 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
 
   // ── S5 종합·조립 ──
   progress.start('s5', '종합 요약·검토의견서 조립', '', '작성');
-  const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider, config: configFor('s5'), session });
+  const finalReviewData = reuse ? {
+    facts: caseIssues.facts.map(f => ({ id: f.id, text: f.text, status: f.status })),
+    issues: caseIssues.issues.map(issue => {
+      const result = issueResults.find(r => r.issueId === issue.id);
+      return { id: issue.id, question: issue.question, dependsOn: issue.dependsOn,
+        assessments: result.assessments.map(a => ({ elementId: a.elementId, status: a.status, proof: a.proof,
+          analysis: a.analysis, evidenceIds: a.evidenceIds })),
+        counter: result.counter, conclusion: result.conclusion };
+    }),
+    remainingGaps: gaps.map(g => ({ issueId: g.issueId, elementId: g.elementId, type: g.type, question: g.question }))
+  } : null;
+  const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider,
+    config: configFor('s5'), session, finalReviewData });
   if (synthesis.warning) warnings.push(synthesis.warning);
   // 수정 조문은 첨부문서가 있고, 견해 비교가 산출물인 사전 컨설팅감사가 아닐 때만 만든다.
   const redline = documentText && preset !== 'pre_consulting_audit'
@@ -302,7 +371,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     }),
     warrants: ledger, gaps,
     gate: gateReasons.length ? 'HUMAN_REVIEW_REQUIRED' : 'OK', gateReasons,
-    reuse: reuse ? { fromHistoryId: previous.historyId || null, evidenceMatched: true, rerunIssueIds: [...rerun], reusedStages: ['S1', 'S2'],
+    reuse: reuse ? { fromHistoryId: previous.historyId || null, evidenceMatched: true, rerunIssueIds: [...rerun], reusedStages: ['S1', 'S2', 'S3'],
       gapTransitions: transitions } : null,
     diagnostics: { s1: caseIssues.diagnostics,
       // 조사로 덧붙인 자료 원문을 남겨 둔다. 재검토에서 등록부를 똑같이 다시 만들려면 필요하다.

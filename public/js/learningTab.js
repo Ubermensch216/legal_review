@@ -286,14 +286,21 @@ const actions = {
     return run('revoke', () => call(`/knowledge/${id}/revoke`, { method: 'POST', body: JSON.stringify({ revision: item.revision }) }));
   },
 
-  // 최종 검토는 별도 경로를 만들지 않고 기존 검토 실행을 그대로 쓴다.
-  // 공식 근거를 다시 수집해야 하고, 그 결과가 승인 지식의 적용 범위와 맞는지도 다시 따져야 한다.
+  // 원 검토의 쟁점·요건·공식 근거 스냅샷에 승인 답변을 연결해 최종 검토한다.
   rerun: () => {
     const meta = state.lastReviewResult?.meta || {};
+    if (!state.lastReviewResult?.review?.reasoning?.issues?.length) {
+      view.error = '원 검토의 쟁점·요건 구조가 없습니다. 단계형 최초 검토를 완료한 뒤 외부 답변을 연결하십시오.';
+      render();
+      return;
+    }
     const c = view.coverage || { total: 0, approved: 0 };
     const unmet = (c.questions || []).filter(q => q.state !== 'APPROVED');
-    if (unmet.length && !confirm(`아직 승인된 지식으로 충족되지 않은 질문이 ${unmet.length}건 있습니다.\n`
-      + '그대로 최종 검토를 실행하면 미충족 쟁점이 검토서의 제한사항으로 남습니다. 계속하시겠습니까?')) return;
+    if (unmet.length) {
+      view.error = `모든 확인 사항의 답변을 승인한 뒤 최종 검토를 실행할 수 있습니다. 미충족 질문: ${unmet.length}건`;
+      render();
+      return;
+    }
     if (meta.hasAttachedDocument && !state.selectedFile
       && !confirm('원 검토에는 첨부문서가 있었습니다. 문서 원문은 보관하지 않으므로 다시 첨부해야 같은 조건으로 검토됩니다.\n'
         + '첨부 없이 계속하시겠습니까?')) return;
@@ -333,9 +340,7 @@ function onClick(event) {
 // ── 렌더 ────────────────────────────────────────────────────────
 
 /**
- * 제안을 적용해도 본문에 남는 짧은 표현을 찾아준다.
- * 예: 제안이 "사하구청 재무과"인데 본문 다른 곳에 "사하구청"만 있는 경우.
- * 기관명은 패턴 탐지로 걸러지지 않으므로 사람이 직접 골라야 한다.
+ * 개인정보 제안에 공백이 있을 때 본문에 남은 부분 표현을 찾아준다.
  */
 function residualTerms(proposals, text) {
   const found = new Set();
@@ -370,7 +375,9 @@ const DISTILLATION_LABEL = { LOCAL_SINGLE: '로컬 AI 정리', LOCAL_CHUNKED: '�
 
 // 단계형 검토에서 만든 질문은 어느 쟁점·요건의 판단 공백인지 보여준다. 답이 오면 그 쟁점만 다시 판단한다.
 const GAP_LABEL = { LEGAL_INTERPRETATION: '해석 기준', AUTHORITY_CONFLICT: '근거 충돌', MISSING_AUTHORITY: '근거 부재', STAGE_FAILURE: '판단 실패' };
-const anchorLabel = a => `쟁점 ${a.issueId || '-'}${a.elementId ? ` · 요건 ${a.elementId}` : ''} · ${GAP_LABEL[a.type] || a.type}`;
+const anchorLabel = a => a.scope === 'ALL_ISSUES'
+  ? `전체 쟁점 · ${a.group || GAP_LABEL[a.type] || a.type}`
+  : `쟁점 ${a.issueId || '-'}${a.elementId ? ` · 요건 ${a.elementId}` : ''} · ${GAP_LABEL[a.type] || a.type}`;
 const foldOpen = (id, defaultOpen) => (Object.hasOwn(view.folds, id) ? view.folds[id] : defaultOpen) ? ' open' : '';
 const foldSummary = (icon, title, status) => `<summary class="learning-fold-summary">
   <span class="material-symbols-outlined icon-sm">${icon}</span><span class="learning-fold-title">${title}</span>
@@ -394,7 +401,7 @@ function renderStep1() {
     const total = view.coverage?.total || view.inquiry.questions?.length || 0;
     return `
       <details class="panel learning-step learning-fold" data-learning-fold="step1"${foldOpen('step1', false)}>
-        ${foldSummary('help', '1. 미해결 쟁점 확인', `${total}개 질문 생성됨`)}
+        ${foldSummary('help', '1. 확인 사항 질문화', `${total}개 질문 생성됨`)}
         <div class="panel-body">
           <p class="learning-desc">이번 검토에서 외부 확인이 필요하다고 분류된 질문입니다. 다음 단계에서 비식별 여부를 확인한 뒤 외부로 반출합니다.</p>
           ${renderQuestions()}
@@ -404,11 +411,11 @@ function renderStep1() {
   return `
     <div class="panel learning-step">
       <div class="panel-header"><div class="panel-title-group">
-        <span class="material-symbols-outlined icon-sm">help</span><h3>1. 미해결 쟁점 확인</h3>
+        <span class="material-symbols-outlined icon-sm">help</span><h3>1. 확인 사항 질문화</h3>
       </div></div>
       <div class="panel-body">
-        <p class="learning-desc">로컬 AI가 이번 검토에서 스스로 판단을 뒷받침하지 못한 쟁점을 찾아
-          비식별 질의서를 만듭니다. 외부 AI를 자동으로 호출하지 않습니다.</p>
+        <p class="learning-desc">법리 판단 공백을 질문으로 만들고, 관련 사실·요건·공식 근거 원문을 질의서에 함께 싣습니다.
+          로컬 AI는 필요한 사실을 비식별로 정리합니다. 자료 수집 오류는 내부에서 보완해야 하며 외부 질문으로 보내지 않습니다.</p>
         <label class="learning-label" for="learning-focus">추가로 묻고 싶은 쟁점 (선택)</label>
         <textarea id="learning-focus" class="learning-input" rows="3"
           placeholder="예: 조례 근거 없이 수탁자가 사용료를 징수할 수 있는지"></textarea>
@@ -442,8 +449,8 @@ function renderStep2() {
 
         ${proposals.length || residual.length ? `
         <div class="learning-proposals">
-          <p class="learning-desc"><strong>로컬 AI가 가릴 것을 제안한 단어입니다. 아직 적용되지 않았습니다.</strong>
-            법률 판단에 필요한 용어까지 가리면 외부 AI가 답할 수 없으므로, 실제로 가려야 할 것만 고르십시오.</p>
+          <p class="learning-desc"><strong>로컬 AI가 발견한 개인정보 후보입니다. 아직 적용되지 않았습니다.</strong>
+            실제 개인을 식별하는 정보인지 확인한 뒤 필요한 항목만 고르십시오.</p>
           ${proposals.map(t => termBox(t, looksLegalReference(t) ? '법령·조문 표기 — 가리면 근거를 특정할 수 없습니다' : '')).join('')}
           ${residual.length ? `<p class="learning-desc learning-warn">본문에 아래 짧은 표현도 남아 있습니다.
             기관·업체 이름은 자동 탐지로 걸러지지 않으므로 직접 확인하십시오.</p>
@@ -452,7 +459,7 @@ function renderStep2() {
 
         ${editable ? `
           <label class="learning-label" for="learning-custom-terms">추가로 가릴 단어 (쉼표 또는 줄바꿈으로 구분)</label>
-          <input id="learning-custom-terms" class="learning-input" type="text" placeholder="예: 사하구청, 대한스포츠">
+          <input id="learning-custom-terms" class="learning-input" type="text" placeholder="예: 홍길동, 개인 식별 정보">
           <label class="learning-label" for="learning-text">질의서 본문 (편집 가능)</label>
           <textarea id="learning-text" class="learning-input learning-textarea" rows="18">${esc(item.text)}</textarea>
           <div class="learning-actions">
@@ -569,8 +576,8 @@ function renderCard(item) {
 
       ${editable && (item.proposedTerms || []).length ? `
       <div class="learning-proposals">
-        <p class="learning-desc"><strong>로컬 AI가 가릴 것을 제안한 단어입니다. 아직 적용되지 않았습니다.</strong>
-          법령명을 가리면 인용 검증이 '확인 불가'가 되어 이 지식은 재사용되지 않습니다.</p>
+        <p class="learning-desc"><strong>로컬 AI가 발견한 개인정보 후보입니다. 아직 적용되지 않았습니다.</strong>
+          실제 개인을 식별하는 정보인지 확인한 뒤 필요한 항목만 고르십시오.</p>
         ${item.proposedTerms.map(t => `<label class="learning-term">
           <input type="checkbox" name="learning-cardterm-${item.id}" value="${esc(t)}">
           <span>${esc(t)}</span>${looksLegalReference(t)
@@ -599,6 +606,7 @@ function renderCard(item) {
 function renderStep5(open = false) {
   const c = view.coverage || { total: 0, approved: 0, questions: [] };
   if (!c.total) return '';
+  const hasBaseline = Boolean(state.lastReviewResult?.review?.reasoning?.issues?.length);
   const unmet = (c.questions || []).filter(q => q.state !== 'APPROVED');
   const used = state.lastReviewResult?.review?.learningReferences || [];
   const dropped = state.lastReviewResult?.review?.learningExcluded || [];
@@ -607,10 +615,11 @@ function renderStep5(open = false) {
     <details class="panel learning-step learning-fold" data-learning-fold="step5"${foldOpen('step5', open)}>
       ${foldSummary('task_alt', '5. 최종 답변서', `충족 ${c.approved} / ${c.total}`)}
       <div class="panel-body">
-        <p class="learning-desc">승인한 지식을 참고 자료로 실어 이 사건의 검토를 다시 실행합니다.
-          공식 법령·판례는 그때 다시 수집하며, 승인된 지식이 공식 근거를 대신하지 않습니다.</p>
+        <p class="learning-desc">원 검토의 쟁점·요건·공식 근거를 유지하고, 승인된 답변이 연결된 공백만 보충해 최종 검토합니다.
+          공식 근거는 원 검토 시점의 스냅샷이며, 승인된 지식이 공식 근거를 대신하지 않습니다.</p>
         ${unmet.length ? `<p class="learning-desc learning-warn">아직 충족되지 않은 질문 ${unmet.length}건:
-          ${unmet.map(q => `#${q.no}`).join(', ')} — 그대로 실행하면 검토서의 제한사항으로 남습니다.</p>` : ''}
+          ${unmet.map(q => `#${q.no}`).join(', ')} — 모든 답변을 승인해야 최종 검토를 다시 실행할 수 있습니다.</p>` : ''}
+        ${!hasBaseline ? '<p class="learning-desc learning-warn">원 검토의 쟁점·요건 구조가 없어 이 답변을 끼워 넣을 수 없습니다. 단계형 최초 검토를 다시 완료하십시오.</p>' : ''}
         ${used.length ? `<div class="learning-message notice">승인된 외부 참고 지식 ${used.length}건을 반영하여 최종 검토를 완료했습니다.
           법률검토의견서 상단의 ‘외부 반영’ 표시와 검토 구분을 확인하십시오.</div>` : ''}
         ${used.length ? `<p class="learning-desc">직전 검토에 실린 지식 ${used.length}건:
@@ -618,7 +627,8 @@ function renderStep5(open = false) {
         ${dropped.length ? `<div class="learning-message warn">직전 검토에서 적용하지 않은 지식 ${dropped.length}건
           <ul class="learning-dropped">${dropped.map(d =>
             `<li>${esc(d.title || '(제목 없음)')} — ${esc(d.message)}</li>`).join('')}</ul></div>` : ''}
-        <button class="btn btn-primary" data-learning-action="rerun" ${view.busy ? 'disabled' : ''}>
+        <button class="btn btn-primary" data-learning-action="rerun" ${view.busy || unmet.length || !hasBaseline ? 'disabled' : ''}
+          ${unmet.length ? 'title="모든 질문의 답변을 승인해야 합니다."' : ''}>
           <span class="material-symbols-outlined icon-sm">restart_alt</span>
           <span>승인된 지식으로 최종 검토 다시 실행</span></button>
       </div>
@@ -646,18 +656,19 @@ function updateBadge() {
   const badge = document.getElementById('badge-learning-status');
   if (!badge) return;
   const c = view.coverage;
+  const externalCount = view.reviewIssues.filter(issue => issue.kind === 'inquiry').length;
   if (!view.inquiry) {
-    badge.className = `tab-badge ${view.reviewIssues.length ? 'warning' : 'off'}`;
-    badge.textContent = view.reviewIssues.length ? `확인 ${view.reviewIssues.length}` : '대기';
+    badge.className = `tab-badge ${externalCount ? 'warning' : 'off'}`;
+    badge.textContent = externalCount ? `질의 ${externalCount}` : '대기';
     return;
   }
   if (!c?.total) {
-    badge.className = `tab-badge ${view.reviewIssues.length ? 'warning' : 'active'}`;
-    badge.textContent = view.reviewIssues.length ? `확인 ${view.reviewIssues.length}` : '작성 중';
+    badge.className = `tab-badge ${externalCount ? 'warning' : 'active'}`;
+    badge.textContent = externalCount ? `질의 ${externalCount}` : '작성 중';
     return;
   }
-  badge.className = view.reviewIssues.length || c.approved < c.total ? 'tab-badge warning' : 'tab-badge active';
-  badge.textContent = `${view.reviewIssues.length ? `확인 ${view.reviewIssues.length} · ` : ''}답변 ${c.approved}/${c.total}`;
+  badge.className = c.approved < c.total ? 'tab-badge warning' : 'tab-badge active';
+  badge.textContent = `답변 ${c.approved}/${c.total}`;
 }
 
 function renderReviewIssues() {
@@ -666,7 +677,7 @@ function renderReviewIssues() {
     <div class="panel-header"><div class="panel-title-group"><span class="material-symbols-outlined icon-sm">report</span>
       <h3>검토 중 확인된 사항 <span class="learning-issue-count">${view.reviewIssues.length}건</span></h3></div></div>
     <div class="panel-body">
-      <p class="learning-desc">준비·수집·분석 중 누락이나 실패, 판단 공백으로 기록된 내용입니다. 내용을 확인한 뒤 외부 전문가에게 질문할지 결정하십시오. 실행 제한 사항은 질의서에 자동으로 포함되지 않습니다.</p>
+      <p class="learning-desc">법리 판단 공백만 외부 전문가 질의서에 포함됩니다. 자료 수집 실패와 실행 경고는 시스템에서 재수집하거나 원인을 확인할 항목이며 자동 질문으로 보내지 않습니다.</p>
       <ul class="learning-review-issue-list">${view.reviewIssues.map(issue => `<li class="learning-review-issue ${issue.kind}">
         <span class="learning-issue-group">${esc(issue.group)}</span><span>${esc(issue.detail)}</span></li>`).join('')}</ul>
     </div>

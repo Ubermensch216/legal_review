@@ -72,19 +72,20 @@ export async function generateLegalReview({ query, preset, documentText, workben
   sourceHistoryId = null, progress = NOOP_PROGRESS }) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
+  const priorReasoning = sourceHistoryId ? getHistoryById(sourceHistoryId)?.data?.review?.reasoning : null;
 
   // Human-imported knowledge stays on the local model path and is never official evidence.
   let learningKnowledge = [];
   let learningExcluded = [];
   let learningWarning = '';
-  // 같은 사건의 재검토에서는 그 사건에서 만든 지식을 더 싣는다. 질문마다 답을 받아 승인했는데
-  // 두 장만 반영되면 "모든 답변이 충족되면 최종 답변서"라는 흐름이 성립하지 않는다.
-  const learningBudgets = sourceHistoryId ? { learningKnowledge: 6000 } : {};
-  if (provider === 'ollama') {
-    progress.start('learning', '승인된 외부 참고 지식 조회', sourceHistoryId ? '같은 사건의 재검토' : '', '준비');
+  // 단계형 재검토는 카드마다 연결된 쟁점의 별도 입력으로 보낸다. 전체 카드 수를
+  // 단일 호출 예산으로 제한하면 승인한 답변 일부가 최종 검토에서 빠진다.
+  const learningBudgets = priorReasoning ? { learningKnowledge: Number.MAX_SAFE_INTEGER } : {};
+  if (provider === 'ollama' && sourceHistoryId) {
+    progress.start('learning', '승인된 외부 참고 지식 조회', '같은 사건의 재검토', '준비');
     try {
       const found = findLearningKnowledge(workbenchContext, query, undefined,
-        { historyId: sourceHistoryId, limit: sourceHistoryId ? 6 : 2 });
+        { historyId: sourceHistoryId, onlyInCase: true, limit: priorReasoning ? Number.MAX_SAFE_INTEGER : 2 });
       learningKnowledge = found.used;
       learningExcluded = found.excluded;
       progress.done('learning', `참고 지식 ${countLabel(learningKnowledge.length, '장')} 반영`
@@ -97,6 +98,13 @@ export async function generateLegalReview({ query, preset, documentText, workben
   workbenchContext = { ...workbenchContext, learningKnowledge, learningExcluded, learningWarning };
 
   let input = buildReviewInput(workbenchContext, documentText, query, learningBudgets);
+  if (priorReasoning) {
+    const missing = input.learningExcluded.filter(item => item.inCase);
+    if (!input.learningReferences.some(item => item.inCase) || missing.length) {
+      const reason = missing.map(item => `${item.title}: ${item.message}`).join(' / ') || learningWarning || '사용 가능한 승인 지식이 없습니다.';
+      throw new PipelineError(`승인된 외부 답변을 원 검토의 공백에 모두 연결할 수 없어 재검토를 중단했습니다. ${reason}`);
+    }
+  }
   // 조문 특정 1단계는 입력이 짧아 축소 대상이 아니다.
   // 축소된 발췌를 쓰면 결정적 단서가 잘려 나가 엉뚱한 조항을 고르게 된다.
   const fullKeyProvisionsText = input.keyProvisionsText;
@@ -282,7 +290,7 @@ ${resolvedProvisionsText}` : ''}
     const stagedForCapacity = capacityRisk && llmConfig.pipeline !== 'monolithic';
 
     // 기본 경로도 단일 입력이 한도를 넘으면 쟁점별 단계형으로 분할한다.
-    if (pipelineEnabled(llmConfig) || stagedForCapacity) {
+    if (priorReasoning || pipelineEnabled(llmConfig) || stagedForCapacity) {
       if (stagedForCapacity && !pipelineEnabled(llmConfig)) progress.note('budget', '단일 입력이 한도를 넘어서 쟁점별 분할 검토로 전환합니다.');
       try {
         // 같은 사건의 재검토: 승인된 외부 답변이 메우는 쟁점만 다시 판단하도록 이전 추론과 연결 정보를 넘긴다.
@@ -290,9 +298,9 @@ ${resolvedProvisionsText}` : ''}
         const stagedContext = anchors?.answersById.size
           ? { ...workbenchContext, learningKnowledge: learningKnowledge.map(k => ({ ...k, answers: anchors.answersById.get(k.id) })) }
           : workbenchContext;
-        const priorReasoning = sourceHistoryId ? getHistoryById(sourceHistoryId)?.data?.review?.reasoning : null;
         const previous = priorReasoning ? { historyId: sourceHistoryId, reasoning: priorReasoning,
-          rerunIssueIds: anchors.rerunIssueIds, knowledgeIssues: anchors.knowledgeIssues } : null;
+          rerunIssueIds: anchors.rerunIssueIds, knowledgeIssues: anchors.knowledgeIssues,
+          knowledgeTargets: anchors.knowledgeTargets } : null;
         const staged = await runReasoningPipeline({ query, preset, documentText, workbenchContext: stagedContext, provider, model,
           apiKey: llmConfig.apiKey, session, progress, previous });
         staged.warnings = [...input.contextWarnings, ...staged.warnings];
@@ -304,6 +312,8 @@ ${resolvedProvisionsText}` : ''}
         progress.done('verify', describeVerification(verifiedReview));
         return verifiedReview;
       } catch (err) {
+        // 후속 검토를 단일 호출로 바꾸면 저장된 논리 구조가 사라진다.
+        if (sourceHistoryId || workbenchContext.meta?.learningMode === 'manual') throw err;
         // 예상한 실패(쟁점 정리 실패)가 아니면 코드 결함일 수 있으므로 스택을 남긴다. 어느 쪽이든 검토는 계속한다.
         if (!(err instanceof PipelineError)) console.error('[LawWorkbenchReview] 단계형 검토 오류:', maskLawSecrets(err.stack || err.message || ''));
         progress.warn('s1', `단계형 검토를 진행하지 못해 단일 호출 검토로 전환합니다: ${maskLawSecrets(err.message || '원인 미상')}`);
@@ -487,6 +497,7 @@ ${resolvedProvisionsText}` : ''}
 
     return verifiedReview;
   } catch (err) {
+    if (sourceHistoryId || workbenchContext.meta?.learningMode === 'manual') throw err;
     console.warn('[LawWorkbenchReview] LLM 호출 실패, 규칙 기반 점검으로 대체합니다:', maskLawSecrets(err.message || ''));
     progress.fail('llm', `LLM 검토 실패 — 규칙 기반 점검으로 대체 (${maskLawSecrets(err.message || '원인 미상')})`);
     const ruleBased = generateRuleBasedReview(query, preset, documentText, workbenchContext);

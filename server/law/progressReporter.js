@@ -20,6 +20,7 @@
  * @property {string} [detail]  단계 진행/결과 요약 한 줄
  * @property {string} [group]   '준비' | '수집' | '분석' | '작성' | '검증'
  * @property {number} [ms]      해당 단계 소요 시간
+ * @property {object} [meta]    화면 진행률 계산에 쓰는 구조화된 작업량 정보
  */
 
 /**
@@ -53,19 +54,19 @@ export function createProgressReporter(emit) {
     },
 
     /** 단계 완료. detail에는 "무엇을 얼마나 얻었는지"를 한 줄로 적는다. */
-    done(key, detail = '', state = 'DONE') {
+    done(key, detail = '', state = 'DONE', meta = undefined) {
       const entry = open.get(key);
       open.delete(key);
       send({
         kind: 'step', state, key,
         label: entry?.label, group: entry?.group,
-        detail, ms: entry ? Date.now() - entry.at : undefined
+        detail, ms: entry ? Date.now() - entry.at : undefined, meta
       });
     },
 
     /** 시작 없이 끝난 단계를 한 번에 기록한다. (동기 집계처럼 즉시 끝나는 단계) */
-    mark(key, label, detail = '', group = '', state = 'DONE') {
-      send({ kind: 'step', state, key, label, detail, group, ms: 0 });
+    mark(key, label, detail = '', group = '', state = 'DONE', meta = undefined) {
+      send({ kind: 'step', state, key, label, detail, group, ms: 0, meta });
     },
 
     /** 단계를 건너뛴 사실을 남긴다. (해당 없음 / 조회 대상 없음) */

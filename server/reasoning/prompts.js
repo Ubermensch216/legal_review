@@ -4,7 +4,7 @@
 // 이후 단계에는 해당 조문·쟁점·주장에 필요한 자료만 싣는다.
 // 여기 문자열을 바꾸면 promptVersion을 올린다.
 
-export const PROMPT_VERSION = 'r2';
+export const PROMPT_VERSION = 'r3';
 
 export const REASONING_SYSTEM = [
   '당신은 대한민국 법률 검토를 돕는 분석 도구입니다.',

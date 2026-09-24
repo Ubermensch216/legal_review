@@ -26,7 +26,7 @@ test('비식별 재편집에서 가명을 재사용하지 않고 JSON 구조와 
   assert.deepEqual(JSON.parse(JSON.stringify(card.value)), card.value);
 });
 
-test('수동 학습과 같은 사건 재검토는 클라우드 요청값을 무시하고 로컬 모델만 호출한다', async () => {
+test('같은 사건 재검토는 모든 외부 질문에 승인된 답변이 있어야 한다', async () => {
   const originalFetch = globalThis.fetch;
   const originalUrl = ENV.OLLAMA_URL;
   ENV.OLLAMA_URL = 'http://127.0.0.1:11434';
@@ -35,7 +35,12 @@ test('수동 학습과 같은 사건 재검토는 클라우드 요청값을 무�
     called.push(String(url));
     assert.ok(String(url).startsWith(ENV.OLLAMA_URL));
     if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }] }) };
-    assert.equal(JSON.parse(options.body).model, ENV.OLLAMA_MODEL);
+    const request = JSON.parse(options.body);
+    assert.equal(request.model, ENV.OLLAMA_MODEL);
+    if (request.messages[1].content.includes('[과제: 사건 사실과 법률 쟁점 정리]')) {
+      return ollamaStream(JSON.stringify({ facts: [], issues: [{ id: 'I1', question: '절차가 적법한가?', type: 'PRIMARY',
+        priority: 'HIGH', dependsOn: [], factIds: [], evidenceIds: [], searchTerms: [] }], unknownFacts: [] }));
+    }
     return ollamaStream(JSON.stringify({ summary: '시험', legalOpinion: '제한', draftOpinion: '초안',
       coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] }));
   };
@@ -51,13 +56,14 @@ test('수동 학습과 같은 사건 재검토는 클라우드 요청값을 무�
     const input = { query: '절차 검토', targetLaw: '행정기본법', llmProvider: 'openai', llmModel: 'must-not-call', llmApiKey: 'test-only' };
     const initial = await post({ ...input, learningMode: 'manual' });
     assert.equal(initial.status, 200); assert.equal(initial.data.meta.learningMode, 'manual');
+    assert.equal(initial.data.review.reviewEngine, 'LLM_STAGED');
+    assert.ok(initial.data.review.reasoning.issues.length, '외부 질의 전에 재사용할 쟁점 구조를 저장한다');
     assert.ok(called.some(url => url.endsWith('/api/chat')));
     const store = getLearningStore();
     store.create('inquiry', initial.data.historyId, { text: '', questions: [{ no: 1, text: '미해결 쟁점' }] });
     const rerun = await post({ ...input, sourceHistoryId: initial.data.historyId });
-    assert.equal(rerun.status, 200); assert.equal(rerun.data.meta.learningMode, 'manual');
-    assert.ok(rerun.data.reliability.warnings.some(w => w.includes('승인된 답변이 연결되지 않은')));
-    assert.notEqual(rerun.data.review.reviewStatus, 'COMPLETE');
+    assert.equal(rerun.status, 409);
+    assert.match(rerun.data.error, /모든 답변을 승인한 뒤/);
   } finally {
     globalThis.fetch = originalFetch; ENV.OLLAMA_URL = originalUrl;
     await new Promise(r => server.close(r));
@@ -120,7 +126,12 @@ test('수동 학습 모드에서 사용자가 선택한 Ollama 모델명을 전�
   globalThis.fetch = async (url, options) => {
     if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: 'gemma4:e4b' }, { name: 'gemma4:e2b' }] }) };
     if (String(url).endsWith('/api/chat')) {
-      calledModel = JSON.parse(options.body).model;
+      const request = JSON.parse(options.body);
+      calledModel = request.model;
+      if (request.messages[1].content.includes('[과제: 사건 사실과 법률 쟁점 정리]')) {
+        return ollamaStream(JSON.stringify({ facts: [], issues: [{ id: 'I1', question: '절차가 적법한가?', type: 'PRIMARY',
+          priority: 'HIGH', dependsOn: [], factIds: [], evidenceIds: [], searchTerms: [] }], unknownFacts: [] }));
+      }
       return ollamaStream(JSON.stringify({ summary: '시험', legalOpinion: '제한', draftOpinion: '초안',
         coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] }));
     }
@@ -139,6 +150,7 @@ test('수동 학습 모드에서 사용자가 선택한 Ollama 모델명을 전�
     const res = await post(input);
     assert.equal(res.status, 200);
     assert.equal(calledModel, 'gemma4:e4b');
+    assert.ok(res.data.review.reasoning?.issues?.length);
   } finally {
     globalThis.fetch = originalFetch; ENV.OLLAMA_URL = originalUrl;
     await new Promise(r => server.close(r));

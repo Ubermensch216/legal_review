@@ -95,7 +95,7 @@ const excluded = (item, reason) => ({ id: item.id, title: item.card?.title || ''
  * 만든 지식이 키워드 게이트에 걸려 조용히 빠지는 것을 막기 위함이다.
  * 승인 상태·질의서 연결·근거 스냅샷·기간·인용 검증 네 조건은 어느 경우에도 완화하지 않는다.
  */
-export function findLearningKnowledge(context, query, store = getLearningStore(), { historyId = null, limit = 2 } = {}) {
+export function findLearningKnowledge(context, query, store = getLearningStore(), { historyId = null, onlyInCase = false, limit = 2 } = {}) {
   const scope = learningScope(context);
   if (!scope.hasOfficialArticles) return { used: [], excluded: [] };
   const needle = String(query || '').toLowerCase();
@@ -103,6 +103,7 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
   const kept = [];
 
   for (const item of store.list('knowledge', 'APPROVED')) {
+    if (onlyInCase && item.historyId !== historyId) continue;
     const inCase = Boolean(historyId) && item.historyId === historyId;
     const tagged = { ...item, inCase };
     const parent = store.get(item.parentId);
@@ -133,6 +134,7 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
 
   return {
     used: kept.slice(0, limit).map(item => ({ id: item.id, title: item.card.title, card: item.card,
+      answers: item.answersByQuestion || [],
       source: item.sourceType === 'HUMAN_EXPERT' ? 'USER_APPROVED_HUMAN_EXPERT' : 'USER_APPROVED_EXTERNAL_AI',
       approvedAt: item.approvedAt, inCase: item.inCase })),
     excluded: drops
@@ -146,6 +148,7 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
  */
 export function knowledgeAnchors(usedItems, sourceHistoryId, store = getLearningStore()) {
   const knowledgeIssues = new Map();
+  const knowledgeTargets = new Map();
   const answersById = new Map();
   for (const used of usedItems || []) {
     const item = store.get(used.id);
@@ -154,8 +157,11 @@ export function knowledgeAnchors(usedItems, sourceHistoryId, store = getLearning
     if (item.answersByQuestion?.length) answersById.set(item.id, item.answersByQuestion);
     if (!sourceHistoryId || item.historyId !== sourceHistoryId) continue;
     const inquiry = store.get(item.parentId);
-    const issues = [...new Set((inquiry?.anchors || []).filter(a => answered.has(a.no) && a.issueId).map(a => a.issueId))];
+    const targets = (inquiry?.anchors || []).filter(a => answered.has(a.no) && a.issueId)
+      .map(a => ({ issueId: a.issueId, elementId: a.elementId || null, gapId: a.gapId || null }));
+    const issues = [...new Set(targets.map(a => a.issueId))];
+    if (targets.length) knowledgeTargets.set(item.id, targets);
     if (issues.length) knowledgeIssues.set(item.id, issues);
   }
-  return { knowledgeIssues, rerunIssueIds: [...new Set([...knowledgeIssues.values()].flat())], answersById };
+  return { knowledgeIssues, knowledgeTargets, rerunIssueIds: [...new Set([...knowledgeIssues.values()].flat())], answersById };
 }

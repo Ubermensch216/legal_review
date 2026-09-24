@@ -9,8 +9,6 @@
 //  - warn: 제한 사항. 노란 줄로 해당 단계 밑에 붙인다. 완료 후에도 남는다.
 // 완료되면 패널을 자동으로 접고 헤더에 요약만 남긴다. (사용자가 직접 펼친 상태면 유지)
 
-// 전체 단계 수는 실행 중 확정되지 않으므로 완료 작업 수로 진행률을 추정한다.
-const EXPECTED_STEPS = 12;
 const PHASES = [
   { group: '준비', id: 'prepare' },
   { group: '수집', id: 'collect' },
@@ -19,6 +17,30 @@ const PHASES = [
   { group: '검증', id: 'verify' }
 ];
 
+// 작업 수가 아니라 실제 파이프라인에서 차지하는 예상 소요량으로 구간을 나눈다.
+// 즉시 끝나는 집계 작업은 좁게, 모델 호출은 넓게 잡아 긴 분석 도중 진행률이 앞서가지 않게 한다.
+const COMMON_PROGRESS = {
+  parse: [2, 4, 2500], doc: [4, 7, 3000], keywords: [7, 9, 1500],
+  law: [9, 15, 12000], articles: [15, 22, 15000], search: [22, 28, 15000],
+  screen: [28, 33, 15000], adminrule: [33, 35, 10000], ordinance: [35, 37, 10000],
+  rerank: [37, 39, 5000], integrity: [39, 40, 1000], learning: [40, 42, 3000]
+};
+const MONOLITHIC_PROGRESS = {
+  budget: [42, 45, 2000], stage1: [45, 52, 60000], llm: [52, 78, 120000],
+  json: [78, 92, 12000], verify: [92, 98, 12000], save: [98, 99, 1500]
+};
+const STAGED_PROGRESS = {
+  s0: [42, 44, 2000], s1: [44, 58, 90000], s2: [58, 63, 20000],
+  s3: [63, 70, 60000], s6: [86, 91, 60000], s7: [91, 92, 1000],
+  s5: [92, 96, 60000], verify: [96, 98, 12000], save: [98, 99, 1500]
+};
+// 단계형 쟁점 정리가 실패한 뒤 단일 호출로 전환되면 이미 표시한 진행률에서 이어 간다.
+const FALLBACK_PROGRESS = {
+  budget: [58, 60, 2000], stage1: [60, 66, 60000], llm: [66, 80, 120000],
+  json: [80, 92, 12000], verify: [92, 98, 12000], save: [98, 99, 1500]
+};
+const SEGMENT_PARTS = ['llm-part-issues', 'llm-part-opinion', 'llm-part-actions', 'llm-part-draft'];
+
 const els = {};
 let steps = new Map();      // key -> { el, notesEl, state }
 let order = [];
@@ -26,6 +48,8 @@ let timerId = null;
 let startedAt = 0;
 let userExpanded = null;    // 사용자가 직접 토글했으면 자동 접기를 하지 않는다
 let finished = false;
+let currentProgress = 0;
+let progressContext = null;
 // 진행 중인 단계. 로컬 모델의 프롬프트 처리처럼 수 분간 이벤트가 없는 구간에서도
 // 이 단계의 경과 시간을 계속 갱신해, 멈춘 것인지 기다리는 것인지 구분되게 한다.
 let running = null;         // { key, startedAt, detail, tickedAt }
@@ -62,6 +86,8 @@ export function resetReviewTrace() {
   userExpanded = null;
   finished = false;
   running = null;
+  currentProgress = 0;
+  progressContext = createProgressContext();
 
   if (!els.root) return;
   els.root.classList.add('hidden');
@@ -71,7 +97,7 @@ export function resetReviewTrace() {
   els.root.removeAttribute('data-phase');
   els.toggle?.setAttribute('aria-expanded', 'true');
   if (els.list) els.list.innerHTML = '';
-  setOverallProgress(0);
+  setOverallProgress(0, true);
   if (els.current) els.current.textContent = '검토를 준비하고 있습니다';
   if (els.sub) els.sub.textContent = '진행 상황이 단계별로 표시됩니다';
   if (els.elapsed) els.elapsed.textContent = '0.0초';
@@ -86,6 +112,8 @@ export function startReviewTrace({ provider = '', model = '' } = {}) {
   finished = false;
   userExpanded = null;
   startedAt = Date.now();
+  currentProgress = 0;
+  progressContext = createProgressContext();
 
   els.list.innerHTML = '';
   els.root.classList.remove('hidden', 'collapsed');
@@ -96,7 +124,7 @@ export function startReviewTrace({ provider = '', model = '' } = {}) {
   els.icon.innerHTML = '<span class="trace-pulse"></span>';
   els.current.textContent = '검토를 시작합니다';
   els.sub.textContent = [provider, model].filter(Boolean).join(' / ') || '진행 상황이 단계별로 표시됩니다';
-  setOverallProgress(2);
+  setOverallProgress(2, true);
 
   running = null;
   clearInterval(timerId);
@@ -111,22 +139,27 @@ export function pushTraceEvent(event) {
     if (event.state === 'RUNNING') {
       setPhase(event.group);
       upsertStep(event, 'RUNNING');
-      running = { key: event.key, startedAt: Date.now(), detail: event.detail || '', tickedAt: 0 };
+      beginProgressStep(event);
       els.current.textContent = event.label || '검토 진행 중';
       els.sub.textContent = event.detail || '';
     } else {
       if (!steps.has(event.key)) setPhase(event.group);
       upsertStep(event, event.state || 'DONE');
+      completeProgressStep(event);
       if (running?.key === event.key) running = null;
       if (event.detail) els.sub.textContent = event.detail;
-      advanceBar();
     }
     return;
   }
 
   if (event.kind === 'tick') {
     // 실시간 수치는 헤더에만 흘린다. 타임라인에 쌓으면 같은 줄이 수백 개가 된다.
-    if (running) running.tickedAt = Date.now();
+    if (running) {
+      running.tickedAt = Date.now();
+      const chars = parseGeneratedChars(event.detail);
+      if (chars != null) running.workDone = chars;
+      updateRunningProgress();
+    }
     els.sub.textContent = event.detail || els.sub.textContent;
     return;
   }
@@ -150,7 +183,7 @@ export function finishReviewTrace({ summary = '', totalMs = null, failed = false
 
   const elapsed = totalMs != null ? totalMs : Date.now() - startedAt;
   els.elapsed.textContent = formatElapsed(elapsed);
-  if (!failed) setOverallProgress(100);
+  if (!failed) setOverallProgress(100, true);
   else {
     if (els.progressValue) els.progressValue.textContent = '중단';
     els.progressbar?.setAttribute('aria-valuetext', '검토 중단');
@@ -205,6 +238,7 @@ function tickClock() {
   const stepMs = Date.now() - running.startedAt;
   const step = steps.get(running.key);
   if (step) step.el.querySelector('.trace-step-ms').textContent = formatElapsed(stepMs);
+  updateRunningProgress(stepMs);
 
   // 실시간 수치(tick)를 한 번도 못 받은 채 5초가 지나면, 무엇을 기다리는지 시간과 함께 알린다.
   if (!running.tickedAt && stepMs > 5000) {
@@ -236,7 +270,7 @@ export function renderTraceFromHistory(trace) {
     + ` · ${formatElapsed(trace.totalMs || 0)}`
     + `${trace.warnCount ? ` · 제한 사항 ${trace.warnCount}건` : ''}`;
   els.elapsed.textContent = formatElapsed(trace.totalMs || 0);
-  setOverallProgress(100);
+  setOverallProgress(100, true);
   els.root.classList.add('collapsed');
   els.toggle.setAttribute('aria-expanded', 'false');
 }
@@ -290,12 +324,114 @@ function setPhase(group) {
   }
 }
 
-function setOverallProgress(percent) {
+function setOverallProgress(percent, allowDecrease = false) {
   const value = Math.max(0, Math.min(100, Math.round(percent)));
-  if (els.bar) els.bar.style.width = `${value}%`;
-  if (els.progressValue) els.progressValue.textContent = value === 100 ? '100% 완료' : `약 ${value}%`;
-  els.progressbar?.setAttribute('aria-valuenow', String(value));
-  els.progressbar?.setAttribute('aria-valuetext', value === 100 ? '검토 완료' : `예상 전체 진행률 약 ${value}%`);
+  currentProgress = allowDecrease ? value : Math.max(currentProgress, value);
+  if (els.bar) els.bar.style.width = `${currentProgress}%`;
+  if (els.progressValue) els.progressValue.textContent = currentProgress === 100 ? '100% 완료' : `약 ${currentProgress}%`;
+  els.progressbar?.setAttribute('aria-valuenow', String(currentProgress));
+  els.progressbar?.setAttribute('aria-valuetext', currentProgress === 100 ? '검토 완료' : `예상 전체 진행률 약 ${currentProgress}%`);
+}
+
+function createProgressContext() {
+  return { profile: 'monolithic', totalIssues: 5, issueKeys: [] };
+}
+
+/**
+ * 한 작업에 배정된 전체 진행률 구간을 반환한다.
+ * 단계형 파이프라인은 s0 이벤트부터 구별하며, S4는 실제 쟁점 수로 16% 구간을 나눈다.
+ */
+export function progressRangeForStep(key, context = {}) {
+  const profile = context.profile || 'monolithic';
+  const common = COMMON_PROGRESS[key];
+  if (common) return common;
+
+  if (key?.startsWith('s4:')) {
+    const issueKeys = context.issueKeys || [];
+    let index = issueKeys.indexOf(key);
+    if (index < 0) index = issueKeys.length;
+    const total = Math.max(1, Number(context.totalIssues) || 5, index + 1);
+    const width = 16 / total;
+    return [70 + width * index, Math.min(86, 70 + width * (index + 1)), 90000];
+  }
+
+  const partIndex = SEGMENT_PARTS.indexOf(key);
+  if (partIndex >= 0) {
+    const width = 14 / SEGMENT_PARTS.length;
+    return [78 + width * partIndex, 78 + width * (partIndex + 1), 75000];
+  }
+
+  const profileSteps = profile === 'staged' ? STAGED_PROGRESS
+    : (profile === 'fallback' ? FALLBACK_PROGRESS : MONOLITHIC_PROGRESS);
+  return profileSteps[key] || null;
+}
+
+/** 긴 작업은 경과 시간과 실제 생성량 중 더 확실한 신호만큼만 자기 구간 안에서 전진한다. */
+export function estimateProgressWithinRange({ range, elapsedMs = 0, completed = false, workDone = 0, workTotal = 0 }) {
+  if (!range) return null;
+  const [start, end, expectedMs = 30000] = range;
+  if (completed) return end;
+  const timeRatio = 1 - Math.exp(-Math.max(0, elapsedMs) / Math.max(1, expectedMs));
+  const workRatio = workTotal > 0 ? Math.min(1, Math.max(0, workDone) / workTotal) : 0;
+  // 실행 중에는 구간 끝을 남겨 둔다. 완료 이벤트만 그 작업의 전체 몫을 확정한다.
+  const fraction = Math.min(0.9, Math.max(0.03, timeRatio * 0.82, workRatio * 0.9));
+  return start + (end - start) * fraction;
+}
+
+function beginProgressStep(event) {
+  if (!progressContext) progressContext = createProgressContext();
+  if (event.key === 's0') progressContext.profile = 'staged';
+  if (progressContext.profile === 'staged' && ['budget', 'stage1', 'llm'].includes(event.key)) {
+    progressContext.profile = 'fallback';
+  }
+  if (event.key?.startsWith('s4:') && !progressContext.issueKeys.includes(event.key)) {
+    progressContext.issueKeys.push(event.key);
+  }
+  const range = progressRangeForStep(event.key, progressContext);
+  const outputTokens = Number(String(event.detail || '').match(/출력\s+([\d,]+)\s*토큰/)?.[1]?.replaceAll(',', '')) || 0;
+  running = {
+    key: event.key,
+    startedAt: Date.now(),
+    detail: event.detail || '',
+    tickedAt: 0,
+    range,
+    workDone: 0,
+    // 한국어 JSON 출력은 토큰당 문자 수 편차가 커서 보수적인 환산값을 쓴다.
+    workTotal: outputTokens ? outputTokens * 2 : (event.key === 'llm' ? 16000 : 0)
+  };
+  const estimate = estimateProgressWithinRange({ range });
+  if (estimate != null) setOverallProgress(estimate);
+}
+
+function completeProgressStep(event) {
+  if (!progressContext) progressContext = createProgressContext();
+  if (event.key === 's0') progressContext.profile = 'staged';
+  if (progressContext.profile === 'staged' && ['budget', 'stage1', 'llm'].includes(event.key)) {
+    progressContext.profile = 'fallback';
+  }
+  if (event.meta?.totalIssues) progressContext.totalIssues = event.meta.totalIssues;
+  if (event.key?.startsWith('s4:') && !progressContext.issueKeys.includes(event.key)) {
+    progressContext.issueKeys.push(event.key);
+  }
+  const range = progressRangeForStep(event.key, progressContext);
+  const estimate = estimateProgressWithinRange({ range, completed: true });
+  if (estimate != null) setOverallProgress(estimate);
+}
+
+function updateRunningProgress(elapsedMs = Date.now() - (running?.startedAt || Date.now())) {
+  if (!running?.range) return;
+  const estimate = estimateProgressWithinRange({
+    range: running.range,
+    elapsedMs,
+    workDone: running.workDone,
+    workTotal: running.workTotal
+  });
+  if (estimate != null) setOverallProgress(estimate);
+}
+
+function parseGeneratedChars(detail) {
+  const match = String(detail || '').match(/([\d,]+)자/);
+  return match ? Number(match[1].replaceAll(',', '')) : null;
 }
 
 function setStepState(key, state, detail, ms) {
@@ -327,11 +463,6 @@ function addNote(key, text, isWarn) {
 function markWarn() {
   if (els.root.dataset.state === 'running') return;
   els.root.dataset.state = 'warn';
-}
-
-function advanceBar() {
-  const closed = els.list.querySelectorAll('.trace-step:not([data-state="RUNNING"])').length;
-  setOverallProgress(Math.max(2, Math.min(95, closed / EXPECTED_STEPS * 100)));
 }
 
 function formatElapsed(ms) {
