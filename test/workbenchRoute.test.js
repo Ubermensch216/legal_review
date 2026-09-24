@@ -46,5 +46,19 @@ test('워크벤치 HTTP 응답·이력·다운로드가 제한 상태를 유지�
     const badDate = await request('/workbench', { query: '검토', targetLaw: '개인정보 보호법', targetDate: '21-1-1', llmProvider: 'rule_based' });
     assert.equal(badDate.status, 400);
     assert.ok(JSON.parse(badDate.text).error.includes('검토 기준일'));
+
+    // /models 엔드포인트 조회 테스트
+    const modelsRes = await request('/models?provider=ollama');
+    assert.equal(modelsRes.status, 200);
+    const modelsPayload = JSON.parse(modelsRes.text);
+    assert.equal(modelsPayload.provider, 'ollama');
+    assert.ok(Array.isArray(modelsPayload.models));
+    assert.ok(modelsPayload.models.length > 0);
+
+    const openaiModels = await request('/models?provider=openai');
+    assert.equal(openaiModels.status, 200);
+    const openaiPayload = JSON.parse(openaiModels.text);
+    assert.equal(openaiPayload.ok, true);
+    assert.ok(openaiPayload.models.some(m => m.name === 'gpt-4o'));
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

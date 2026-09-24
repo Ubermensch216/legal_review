@@ -599,23 +599,24 @@
                 <option value="gemini">Google Gemini</option>
               </select>
             </div>
-            <div class="form-group" id="group-ollama-url">
-              <label>Ollama URL</label>
-              <input type="text" id="setting-ollama-url" value="http://localhost:11434">
-            </div>
             <div class="form-group">
-              <label>모델명</label>
-              <input type="text" id="setting-model-name" value="gemma4:e2b">
+              <label for="setting-model-select">모델명</label>
+              <div class="model-select-row">
+                <select id="setting-model-select" class="form-select">
+                  <option value="gemma4:e4b">gemma4:e4b (서버 설치 확인 중...)</option>
+                  <option value="gemma4:e2b">gemma4:e2b</option>
+                </select>
+                <button type="button" id="btn-refresh-models" class="btn btn-secondary btn-refresh" title="서버에 설치된 모델 목록 다시 조회">
+                  <span class="material-symbols-outlined" style="font-size: 18px;">refresh</span>
+                </button>
+              </div>
+              <input type="text" id="setting-model-name" class="hidden" placeholder="직접 모델명 입력 (예: gemma4:e4b)" style="margin-top: 6px;">
+              <small id="setting-model-hint" class="input-hint" style="margin-top: 4px; display: block;"></small>
             </div>
-            <div class="form-group">
-              <label>API Key (클라우드 모델 사용 시)</label>
-              <input type="password" id="setting-api-key" placeholder="sk-...">
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px; line-height: 1.5;">
+              ※ Ollama URL, 클라우드 API Key, 법제처 인증키(LAW_OC)는 환경설정 파일(<code>.env</code>)에서 안전하게 관리됩니다.
             </div>
-            <div class="form-group">
-              <label>법제처 인증키 (LAW_OC)</label>
-              <input type="text" id="setting-law-oc" placeholder="발급받은 오픈API 계정 ID">
-            </div>
-            <div class="modal-footer">
+            <div class="modal-footer" style="margin-top: 20px;">
               <button type="button" class="btn btn-secondary" id="btn-reset-cache">캐시 초기화</button>
               <button type="submit" class="btn btn-primary">설정 저장</button>
             </div>

@@ -68,6 +68,16 @@ export function trimLawNamePrefix(rawName) {
     // "행정대집행법 및 약관의 규제에 관한 법률"처럼 완결된 제명 뒤에 오는 '및'은
     // 제명 내부의 '및'이 아니라 두 법령을 잇는 나열 구분자다. 거기서 끊는다.
     if ((token === '및' || token === '또는') && i > 0 && LAW_HEAD_SUFFIX_REGEX.test(tokens[i - 1])) break;
+    // '약관의 규제에 관한 법률'처럼 제명에 쓰이는 '의'를 제외하고,
+    // 제명 끝 어절(근로기준법 등) 바로 앞의 '연장근로 조항의', '징계해고 절차의' 등
+    // 문장의 관형격 수식어는 제명 구성 요소가 될 수 없다.
+    if (token.endsWith('의')) {
+      if (LAW_HEAD_SUFFIX_REGEX.test(tokens[i + 1])) break;
+      if (tokens[i + 1].endsWith('의')) break;
+      const remainingTokens = tokens.slice(i + 1);
+      const hasConnective = remainingTokens.some(t => NAME_CONNECTIVE_TOKENS.has(t));
+      if (!hasConnective) break;
+    }
     if (!isLawNameToken(token)) break;
     start = i;
   }

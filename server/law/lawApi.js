@@ -45,6 +45,99 @@ router.get('/config', (req, res) => {
 });
 
 /**
+ * GET /api/law/models (또는 /api/law/installed-models) - 프로바이더별 설치/지원 모델 목록 조회
+ */
+router.get(['/models', '/installed-models'], async (req, res) => {
+  const provider = String(req.query.provider || 'ollama').toLowerCase();
+
+  if (provider === 'ollama') {
+    let targetUrl = String(req.query.url || ENV.OLLAMA_URL || 'http://localhost:11434').trim();
+    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+      targetUrl = `http://${targetUrl}`;
+    }
+
+    try {
+      const parsed = new URL(targetUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+        return res.status(400).json({ ok: false, error: '유효한 Ollama URL이 아닙니다.' });
+      }
+    } catch {
+      return res.status(400).json({ ok: false, error: '잘못된 URL 형식입니다.' });
+    }
+
+    try {
+      const probeTimeoutMs = parseInt(process.env.LLM_PROBE_TIMEOUT || '4000', 10);
+      const response = await fetch(`${targetUrl}/api/tags`, {
+        signal: AbortSignal.timeout(probeTimeoutMs)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const rawModels = Array.isArray(data.models) ? data.models : [];
+
+      const models = rawModels.map(m => {
+        const name = m.name || m.model || '';
+        const details = m.details || {};
+        const capabilities = m.capabilities || [];
+        const isEmbeddingOnly = capabilities.length === 1 && capabilities[0] === 'embedding';
+
+        return {
+          name,
+          parameterSize: details.parameter_size || '',
+          quantization: details.quantization_level || '',
+          family: details.family || '',
+          isEmbeddingOnly,
+          capabilities
+        };
+      }).filter(m => m.name);
+
+      return res.json({
+        ok: true,
+        provider: 'ollama',
+        models
+      });
+    } catch (err) {
+      return res.json({
+        ok: false,
+        provider: 'ollama',
+        models: [
+          { name: 'gemma4:e4b', parameterSize: '8.0B', quantization: 'Q4_K_M', family: 'gemma4', isEmbeddingOnly: false },
+          { name: 'gemma4:e2b', parameterSize: '5.1B', quantization: 'Q4_K_M', family: 'gemma4', isEmbeddingOnly: false }
+        ],
+        error: `Ollama 서버에 연결할 수 없습니다 (${targetUrl}): ${err.message}`
+      });
+    }
+  }
+
+  const cloudModels = {
+    openai: [
+      { name: 'gpt-4o', parameterSize: '', description: 'GPT-4o (권장)' },
+      { name: 'gpt-4o-mini', parameterSize: '', description: 'GPT-4o mini (경량)' },
+      { name: 'o1-preview', parameterSize: '', description: 'o1 Preview (추론 특화)' },
+      { name: 'o1-mini', parameterSize: '', description: 'o1 Mini' }
+    ],
+    anthropic: [
+      { name: 'claude-3-5-sonnet-20241022', parameterSize: '', description: 'Claude 3.5 Sonnet (권장)' },
+      { name: 'claude-3-5-haiku-20241022', parameterSize: '', description: 'Claude 3.5 Haiku' }
+    ],
+    gemini: [
+      { name: 'gemini-1.5-pro', parameterSize: '', description: 'Gemini 1.5 Pro (권장)' },
+      { name: 'gemini-1.5-flash', parameterSize: '', description: 'Gemini 1.5 Flash' },
+      { name: 'gemini-2.0-flash-exp', parameterSize: '', description: 'Gemini 2.0 Flash (실험)' }
+    ]
+  };
+
+  return res.json({
+    ok: true,
+    provider,
+    models: cloudModels[provider] || []
+  });
+});
+
+/**
  * POST /api/law/parse-document - 첨부문서(HWPX, PDF, DOCX 등) 텍스트 파싱
  */
 router.post('/parse-document', upload.single('file'), async (req, res) => {
@@ -177,11 +270,33 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     });
 
     // 2. LLM 10대 검토의견서 생성
+    let chosenModel = req.body.llmModel;
+    if (manualLearning) {
+      // 수동 학습 모드는 반드시 로컬 Ollama만 사용한다.
+      // 클라우드 프로바이더가 지정되어 있거나 모델이 없으면 로컬 기본 모델을 사용하되,
+      // Ollama 모델명이 전달된 경우 해당 모델을 사용한다.
+      if (req.body.llmProvider && req.body.llmProvider !== 'ollama') {
+        chosenModel = ENV.OLLAMA_MODEL;
+      } else {
+        chosenModel = req.body.llmModel || ENV.OLLAMA_MODEL;
+      }
+    } else {
+      chosenModel = req.body.llmModel || ({
+        openai: ENV.OPENAI_MODEL,
+        anthropic: ENV.ANTHROPIC_MODEL,
+        gemini: ENV.GEMINI_MODEL,
+        ollama: ENV.OLLAMA_MODEL
+      })[req.body.llmProvider || ENV.LLM_PROVIDER];
+    }
+
     const llmConfig = {
-      provider: manualLearning ? 'ollama' : req.body.llmProvider,
-      model: manualLearning ? ENV.OLLAMA_MODEL : req.body.llmModel,
+      provider: manualLearning ? 'ollama' : (req.body.llmProvider || ENV.LLM_PROVIDER || 'ollama'),
+      model: chosenModel,
       apiKey: manualLearning ? undefined : req.body.llmApiKey
     };
+    if (!manualLearning && req.body.llmUrl) {
+      llmConfig.url = req.body.llmUrl;
+    }
 
     if (manualLearning) workbenchContext.meta.learningMode = 'manual';
 

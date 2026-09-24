@@ -111,3 +111,36 @@ test('HTTP 질의서 수정·확정·반출·답변 반입·승인·회수와 �
     assert.deepEqual((await request('GET', '/')).data.knowledge, []);
   } finally { await new Promise(r => server.close(r)); store.close(); }
 });
+
+test('수동 학습 모드에서 사용자가 선택한 Ollama 모델명을 전달하면 해당 모델을 사용한다', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalUrl = ENV.OLLAMA_URL;
+  ENV.OLLAMA_URL = 'http://127.0.0.1:11434';
+  let calledModel = null;
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: 'gemma4:e4b' }, { name: 'gemma4:e2b' }] }) };
+    if (String(url).endsWith('/api/chat')) {
+      calledModel = JSON.parse(options.body).model;
+      return ollamaStream(JSON.stringify({ summary: '시험', legalOpinion: '제한', draftOpinion: '초안',
+        coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] }));
+    }
+    return { ok: false };
+  };
+  const app = express(); app.use(express.json()); app.use('/api/law', lawRouter);
+  const server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  const post = body => new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: '/api/law/workbench', method: 'POST',
+      headers: { 'Content-Type': 'application/json' } }, res => {
+      let raw = ''; res.on('data', c => raw += c); res.on('end', () => resolve({ status: res.statusCode, data: JSON.parse(raw) }));
+    }); req.on('error', reject); req.end(JSON.stringify(body));
+  });
+  try {
+    const input = { query: '절차 검토', targetLaw: '행정기본법', llmProvider: 'ollama', llmModel: 'gemma4:e4b', learningMode: 'manual' };
+    const res = await post(input);
+    assert.equal(res.status, 200);
+    assert.equal(calledModel, 'gemma4:e4b');
+  } finally {
+    globalThis.fetch = originalFetch; ENV.OLLAMA_URL = originalUrl;
+    await new Promise(r => server.close(r));
+  }
+});

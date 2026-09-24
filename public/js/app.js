@@ -216,11 +216,15 @@ function initReviewForm() {
     // 진행 상황을 NDJSON으로 받는다. 스트림을 읽을 수 없는 환경이면 서버가 단일 JSON으로 답한다.
     const canStream = typeof ReadableStream !== 'undefined' && typeof TextDecoder !== 'undefined';
     if (canStream) formData.append('stream', '1');
-    if (manualLearning) formData.append('learningMode', 'manual');
-    else {
+    if (manualLearning) {
+      formData.append('learningMode', 'manual');
+      formData.append('llmProvider', 'ollama');
+      if (state.settings.modelName) {
+        formData.append('llmModel', state.settings.modelName);
+      }
+    } else {
       formData.append('llmProvider', state.settings.provider);
       formData.append('llmModel', state.settings.modelName);
-      formData.append('llmApiKey', state.settings.apiKey);
     }
 
     // 같은 사건의 재검토라면 그 이력을 알려, 그 사건에서 승인한 지식을 검토에 싣는다.
@@ -230,10 +234,15 @@ function initReviewForm() {
       formData.append('file', state.selectedFile);
     }
 
+    const activeProvider = manualLearning ? 'ollama' : state.settings.provider;
+    const activeModel = (manualLearning && state.settings.provider !== 'ollama')
+      ? (state.config?.models?.ollama || 'gemma4:e2b')
+      : (state.settings.modelName || state.config?.models?.[activeProvider] || '');
+
     if (canStream) {
       startReviewTrace({
-        provider: manualLearning ? 'ollama' : state.settings.provider,
-        model: manualLearning ? '' : state.settings.modelName
+        provider: activeProvider,
+        model: activeModel
       });
     } else {
       showTraceFallback();
@@ -415,17 +424,146 @@ function initSettingsModal() {
   const btnResetCache = document.getElementById('btn-reset-cache');
 
   const providerSelect = document.getElementById('setting-provider');
-  const ollamaUrlInput = document.getElementById('setting-ollama-url');
+  const modelSelect = document.getElementById('setting-model-select');
   const modelNameInput = document.getElementById('setting-model-name');
-  const apiKeyInput = document.getElementById('setting-api-key');
-  const lawOcInput = document.getElementById('setting-law-oc');
+  const btnRefreshModels = document.getElementById('btn-refresh-models');
+  const modelHint = document.getElementById('setting-model-hint');
+
+  async function loadAvailableModels(provider, currentModel) {
+    if (!modelSelect) return;
+    modelSelect.disabled = true;
+    if (btnRefreshModels) btnRefreshModels.disabled = true;
+    modelSelect.innerHTML = '<option value="">서버 설치 모델 조회 중...</option>';
+    if (modelHint) {
+      modelHint.textContent = '';
+      modelHint.style.color = 'var(--text-muted, #64748b)';
+    }
+
+    try {
+      const q = new URLSearchParams({ provider });
+      const res = await fetch(`/api/law/models?${q.toString()}`);
+      const data = await res.json();
+      const models = Array.isArray(data.models) ? data.models : [];
+
+      modelSelect.innerHTML = '';
+
+      if (models.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '__custom__';
+        opt.textContent = '(조회된 모델 없음 - 직접 입력)';
+        modelSelect.appendChild(opt);
+      } else {
+        const inferenceModels = models.filter(m => !m.isEmbeddingOnly);
+        const embedModels = models.filter(m => m.isEmbeddingOnly);
+
+        inferenceModels.forEach(m => {
+          const opt = document.createElement('option');
+          opt.value = m.name;
+          const details = [];
+          if (m.parameterSize) details.push(m.parameterSize);
+          if (m.quantization) details.push(m.quantization);
+          if (m.description) details.push(m.description);
+          opt.textContent = details.length ? `${m.name} (${details.join(' · ')})` : m.name;
+          modelSelect.appendChild(opt);
+        });
+
+        if (embedModels.length > 0) {
+          const group = document.createElement('optgroup');
+          group.label = '임베딩 전용 모델 (법리 추론 불가)';
+          embedModels.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.name;
+            opt.disabled = true;
+            opt.textContent = `${m.name} (임베딩 전용)`;
+            group.appendChild(opt);
+          });
+          modelSelect.appendChild(group);
+        }
+
+        const customOpt = document.createElement('option');
+        customOpt.value = '__custom__';
+        customOpt.textContent = '직접 입력...';
+        modelSelect.appendChild(customOpt);
+      }
+
+      if (!data.ok && data.error && modelHint) {
+        modelHint.textContent = `※ ${data.error}`;
+        modelHint.style.color = '#ef4444';
+      } else if (modelHint) {
+        const count = models.filter(m => !m.isEmbeddingOnly).length;
+        modelHint.textContent = provider === 'ollama'
+          ? `Ollama 서버에 설치된 법리 추론 가능 모델 ${count}개 확인됨`
+          : '';
+        modelHint.style.color = 'var(--text-muted, #64748b)';
+      }
+
+      const targetModel = currentModel || state.settings.modelName || 'gemma4:e4b';
+      const matchingOpt = Array.from(modelSelect.options).find(o => o.value === targetModel && !o.disabled);
+      if (matchingOpt) {
+        modelSelect.value = targetModel;
+        modelNameInput.classList.add('hidden');
+        modelNameInput.value = targetModel;
+      } else {
+        modelSelect.value = '__custom__';
+        modelNameInput.classList.remove('hidden');
+        modelNameInput.value = targetModel;
+      }
+    } catch (err) {
+      modelSelect.innerHTML = `
+        <option value="gemma4:e4b">gemma4:e4b</option>
+        <option value="gemma4:e2b">gemma4:e2b</option>
+        <option value="__custom__">직접 입력...</option>
+      `;
+      if (modelHint) {
+        modelHint.textContent = `※ 모델 목록 조회 실패: ${err.message}`;
+        modelHint.style.color = '#ef4444';
+      }
+      const targetModel = currentModel || state.settings.modelName || 'gemma4:e4b';
+      const matchingOpt = Array.from(modelSelect.options).find(o => o.value === targetModel);
+      if (matchingOpt) {
+        modelSelect.value = targetModel;
+        modelNameInput.classList.add('hidden');
+        modelNameInput.value = targetModel;
+      } else {
+        modelSelect.value = '__custom__';
+        modelNameInput.classList.remove('hidden');
+        modelNameInput.value = targetModel;
+      }
+    } finally {
+      modelSelect.disabled = false;
+      if (btnRefreshModels) btnRefreshModels.disabled = false;
+    }
+  }
+
+  modelSelect?.addEventListener('change', () => {
+    if (modelSelect.value === '__custom__') {
+      modelNameInput.classList.remove('hidden');
+      modelNameInput.focus();
+    } else {
+      modelNameInput.classList.add('hidden');
+      modelNameInput.value = modelSelect.value;
+    }
+  });
+
+  btnRefreshModels?.addEventListener('click', () => {
+    const selected = modelSelect.value === '__custom__' ? modelNameInput.value.trim() : modelSelect.value;
+    loadAvailableModels(providerSelect.value, selected);
+  });
+
+  providerSelect?.addEventListener('change', () => {
+    const isOllama = providerSelect.value === 'ollama';
+    if (btnRefreshModels) btnRefreshModels.style.display = isOllama ? 'inline-flex' : 'none';
+    loadAvailableModels(providerSelect.value, '');
+  });
 
   btnOpen.addEventListener('click', () => {
     providerSelect.value = state.settings.provider;
-    ollamaUrlInput.value = state.settings.ollamaUrl;
     modelNameInput.value = state.settings.modelName;
-    apiKeyInput.value = state.settings.apiKey;
-    lawOcInput.value = state.settings.lawOc;
+
+    const isOllama = state.settings.provider === 'ollama';
+    if (btnRefreshModels) btnRefreshModels.style.display = isOllama ? 'inline-flex' : 'none';
+
+    loadAvailableModels(state.settings.provider, state.settings.modelName);
     modal.classList.remove('hidden');
   });
 
@@ -433,12 +571,13 @@ function initSettingsModal() {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
+    const finalModel = (modelSelect.value === '__custom__'
+      ? modelNameInput.value.trim()
+      : modelSelect.value) || state.settings.modelName;
+
     saveSettings({
       provider: providerSelect.value,
-      ollamaUrl: ollamaUrlInput.value.trim(),
-      modelName: modelNameInput.value.trim(),
-      apiKey: apiKeyInput.value.trim(),
-      lawOc: lawOcInput.value.trim()
+      modelName: finalModel
     });
 
     updateLlmDisplay();
@@ -467,9 +606,11 @@ async function loadServerConfig() {
 function updateLlmDisplay() {
   const display = document.getElementById('current-llm-display');
   if (display) {
-    display.textContent = document.getElementById('manual-learning-mode')?.checked
-      ? `로컬 Ollama (${state.config?.models?.ollama || '서버 설정 모델'}) · 외부 AI 직접 질의`
-      : `AI 엔진: ${state.settings.provider.toUpperCase()} (${state.settings.modelName})`;
+    const isManual = document.getElementById('manual-learning-mode')?.checked;
+    const model = state.settings.modelName || (isManual ? (state.config?.models?.ollama || 'gemma4:e2b') : '');
+    display.textContent = isManual
+      ? `로컬 Ollama (${model}) · 외부 AI 직접 질의`
+      : `AI 엔진: ${state.settings.provider.toUpperCase()} (${model})`;
   }
 }
 

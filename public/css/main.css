@@ -424,6 +424,25 @@ body {
   font-size: 14px;
 }
 
+.model-select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-select-row select {
+  flex: 1;
+}
+
+.model-select-row .btn-refresh {
+  padding: 8px 12px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
 /* Spinner */
 .spinner {
   width: 16px;
