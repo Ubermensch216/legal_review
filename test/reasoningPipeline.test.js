@@ -53,7 +53,7 @@ const STAGE_REPLIES = {
 const reply = content => ({ ok: true, body: (async function* () {
   yield new TextEncoder().encode(`${JSON.stringify({ message: { content }, done: true, done_reason: 'stop', prompt_eval_count: 2000, eval_count: 100 })}\n`);
 })() });
-const fakeOllama = ({ failS1 = false } = {}) => {
+const fakeOllama = ({ failS1 = false, failS6 = false, allSatisfied = false } = {}) => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }] }) };
@@ -63,7 +63,10 @@ const fakeOllama = ({ failS1 = false } = {}) => {
     calls.push({ marker, prompt, body });
     if (!marker) return reply(JSON.stringify({ summary: '단일 호출', facts: '', legalOpinion: '의견', draftOpinion: '초안', coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] }));
     if (failS1 && marker.includes('사건 사실')) return reply('깨진 출력');
-    return reply(JSON.stringify(STAGE_REPLIES[marker](prompt)));
+    if (failS6 && marker.includes('근거-주장 대응')) return { ok: false, status: 500 };
+    const value = STAGE_REPLIES[marker](prompt);
+    if (allSatisfied && marker.includes('요건별 포섭')) value.assessments = value.assessments.map(a => ({ ...a, status: 'SATISFIED', proof: 'SUFFICIENT', factIds: ['F1'], openQuestion: '' }));
+    return reply(JSON.stringify(value));
   };
   return calls;
 };
@@ -77,13 +80,16 @@ test('단계형 파이프라인은 캐시를 살리는 순서로 호출하고 �
   const review = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),
     provider: 'ollama', model: ENV.OLLAMA_MODEL, session, clients, embed, cache: cache() });
 
-  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s1', 's3', 's4:I1', 's4:I2', 's5', 's5r:D1']);
-  // S1·S3는 같은 공통 접두부, S4·S5는 그 뒤에 사실·쟁점 목록을 붙인 같은 실행 접두부로 시작한다.
-  const p0 = calls[0].prompt.split('\n\n[과제:')[0];
-  assert.ok(calls[1].prompt.startsWith(p0));
+  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s1', 's3', 's4:I1', 's4:I2', 's6', 's6', 's6', 's5', 's5r:D1']);
+  // S3·S4·S6에는 사건 전체 접두부 대신 해당 작업의 자료만 싣는다.
+  assert.ok(calls[1].prompt.startsWith('[검토 기준일] '));
   const runPrefix = calls[2].prompt.split('\n\n[검토 쟁점')[0];
-  assert.ok(runPrefix.startsWith(p0) && runPrefix.includes('[쟁점 목록]'));
-  assert.ok(calls[3].prompt.startsWith(runPrefix) && calls[4].prompt.startsWith(runPrefix));
+  assert.ok(runPrefix.startsWith('[검토 기준일] ') && runPrefix.includes('[이 쟁점의 사실'));
+  assert.ok(!runPrefix.includes('[수집한 근거 색인'));
+  assert.ok(calls[3].prompt.startsWith(runPrefix));
+  assert.ok(calls[4].prompt.startsWith('[검토 기준일] '));
+  assert.ok(calls[7].prompt.startsWith('[검토 기준일] ') && !calls[7].prompt.includes('[수집한 근거 색인'),
+    '종합 단계는 쟁점 결론 표만 사용한다');
   assert.ok(calls.every(c => c.body.options.num_ctx === calls[0].body.options.num_ctx), '실행 내내 같은 num_ctx');
   assert.ok(calls.every(c => c.body.think === false));
 
@@ -122,6 +128,17 @@ test('단계형 파이프라인은 캐시를 살리는 순서로 호출하고 �
 test('선결 쟁점은 뒤에 적혀 있어도 먼저 판단한다', () => {
   const order = orderByDependency([{ id: 'I1', dependsOn: ['I2'] }, { id: 'I2', dependsOn: [] }, { id: 'I3', dependsOn: ['I1'] }]);
   assert.deepEqual(order.map(i => i.id), ['I2', 'I1', 'I3']);
+});
+
+test('S6 함의 확인 실패는 검토 상태와 쟁점 결론을 판단 유보로 낮춘다', async () => {
+  fakeOllama({ failS6: true, allSatisfied: true });
+  const review = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText,
+    workbenchContext: workbenchContext(), provider: 'ollama', model: ENV.OLLAMA_MODEL,
+    session: createLlmSession(), clients, embed, cache: cache() });
+  assert.equal(review.reviewStatus, 'PARTIAL');
+  assert.ok(review.reasoning.issues.every(i => i.conclusion.legal === 'CONDITIONAL'));
+  assert.ok(review.reasoning.diagnostics.warrantVerification.unreviewedPairs.length > 0);
+  assert.ok(review.reasoning.gateReasons.some(reason => reason.includes('함의 확인 미완료 쌍')));
 });
 
 test('공식 요건이 없어 모든 쟁점을 생략하면 검토 필요 게이트와 근거 공백을 남긴다', async () => {
@@ -181,6 +198,7 @@ test('재검토: 공식 근거가 같으면 S1·S2를 건너뛰고, 외부 답�
           { elementId: 'A1.E2', status: answered ? 'SATISFIED' : 'UNKNOWN', proof: 'SUFFICIENT', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1x'], analysis: '', openQuestion: '' }]
           .filter(a => prompt.includes(`[${a.elementId}]`)) }));
     }
+    if (prompt.includes('[과제: 근거-주장 대응 확인]')) return reply(JSON.stringify(STAGE_REPLIES['[과제: 근거-주장 대응 확인]']()));
     const marker = prompt.includes('[과제: 수정 조문 작성]') ? '[과제: 수정 조문 작성]' : '[과제: 종합]';
     return reply(JSON.stringify(STAGE_REPLIES[marker]()));
   };
@@ -189,7 +207,8 @@ test('재검토: 공식 근거가 같으면 S1·S2를 건너뛰고, 외부 답�
     provider: 'ollama', model: ENV.OLLAMA_MODEL, session, clients, embed, cache: stageCache,
     previous: { historyId: 'rev_1', reasoning: first.reasoning, rerunIssueIds: ['I1'], knowledgeIssues: new Map([['k-1', ['I1']]]) } });
 
-  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s4:I1', 's4:I2', 's5', 's5r:D1'], 'S1·S2는 재사용, S3는 저장된 요건, I2는 I1의 후속이라 함께 다시 판단');
+  assert.deepEqual(session.ledger.calls.map(c => c.stage), ['s4:I1', 's4:I2', 's6', 's6', 's6', 's5', 's5r:D1'],
+    'S1·S2는 재사용하고 다시 판단한 쟁점의 근거 쌍을 전부 재검증한다');
   assert.ok(calls[0].includes('[K1]') && calls[0].includes('임금 총액이 줄면'), '연결된 쟁점 입력에 질문별 답변이 실린다');
   assert.deepEqual(second.reasoning.reuse.rerunIssueIds.sort(), ['I1', 'I2']);
   assert.equal(second.reasoning.issues[0].conclusion.legal, 'APPLIES');

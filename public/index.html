@@ -37,6 +37,10 @@
       </div>
 
       <div class="header-right">
+        <button id="btn-new-review" class="btn btn-primary btn-sm" title="현재 입력·첨부·결과 화면을 초기화하고 새 리뷰 시작">
+          <span class="material-symbols-outlined icon-sm">add_circle</span>
+          <span>새 리뷰 시작</span>
+        </button>
         <button id="btn-open-history" class="btn btn-secondary btn-sm" title="과거 검토 이력 조회 및 복원">
           <span class="material-symbols-outlined icon-sm">history</span>
           <span>검토 이력</span>
@@ -46,7 +50,7 @@
           <span class="material-symbols-outlined icon-sm">build</span>
           <span>19대 법령 도구</span>
         </button>
-        <button id="btn-open-studio" class="btn btn-secondary btn-sm">
+        <button id="btn-open-studio" class="btn btn-secondary btn-sm" data-studio-trigger>
           <span class="material-symbols-outlined icon-sm">edit_document</span>
           <span>보고서 스튜디오</span>
         </button>
@@ -67,21 +71,47 @@
           <div class="step-card step-document">
             <div class="step-header">
               <div class="step-badge">
-                <span class="step-num">1</span>
+                <span class="step-num step-num-roman">I</span>
                 <span class="step-label">검토 대상 문서 첨부</span>
               </div>
-              <span class="step-hint">내부 지침서, 계약서, 조례안, 규정안, 민원서류 등 (선택)</span>
+              <button type="button" class="step-toggle" aria-expanded="true" aria-controls="file-dropzone" aria-label="검토 대상 문서 첨부 접기">
+                <span class="step-toggle-label">접기</span>
+                <span class="material-symbols-outlined" aria-hidden="true">expand_less</span>
+              </button>
             </div>
             
             <div class="file-dropzone" id="file-dropzone">
               <input type="file" id="file-input" accept=".hwpx,.pdf,.docx,.xlsx,.xls,.csv,.txt" style="display:none;">
+              <div class="dropzone-hint">내부 지침서, 계약서, 조례안, 규정안, 민원서류 등 (선택)</div>
               <div class="dropzone-content" id="dropzone-content">
-                <div class="dropzone-icon-wrap">
+                <div class="dropzone-icon-wrap" title="문서 첨부" aria-label="문서 첨부">
                   <span class="material-symbols-outlined dropzone-icon">upload_file</span>
                 </div>
-                <div class="dropzone-text">
-                  <strong>검토할 문서를 여기에 끌어다 놓거나 클릭하여 선택하세요</strong>
-                  <p>지원 형식: HWPX(한글), PDF, DOCX(워드), XLSX/CSV(엑셀) · 문서 없이 직접 질의만으로도 검토 가능합니다</p>
+                <div class="dropzone-format-icons" role="list" aria-label="지원 파일 형식">
+                  <span class="dropzone-format-icon" role="img" title="HWPX (한글)" aria-label="HWPX (한글)">
+                    <span class="material-symbols-outlined">description</span>
+                    <span class="dropzone-format-label">HWPX</span>
+                  </span>
+                  <span class="dropzone-format-icon" role="img" title="PDF" aria-label="PDF">
+                    <span class="material-symbols-outlined">picture_as_pdf</span>
+                    <span class="dropzone-format-label">PDF</span>
+                  </span>
+                  <span class="dropzone-format-icon" role="img" title="DOCX (워드)" aria-label="DOCX (워드)">
+                    <span class="material-symbols-outlined">article</span>
+                    <span class="dropzone-format-label">DOCX</span>
+                  </span>
+                  <span class="dropzone-format-icon" role="img" title="XLSX/XLS (엑셀)" aria-label="XLSX/XLS (엑셀)">
+                    <span class="material-symbols-outlined">table_chart</span>
+                    <span class="dropzone-format-label">XLSX/XLS</span>
+                  </span>
+                  <span class="dropzone-format-icon" role="img" title="CSV" aria-label="CSV">
+                    <span class="material-symbols-outlined">grid_on</span>
+                    <span class="dropzone-format-label">CSV</span>
+                  </span>
+                  <span class="dropzone-format-icon" role="img" title="TXT (텍스트)" aria-label="TXT (텍스트)">
+                    <span class="material-symbols-outlined">text_snippet</span>
+                    <span class="dropzone-format-label">TXT</span>
+                  </span>
                 </div>
               </div>
               <div class="attached-file-info hidden" id="attached-file-info">
@@ -95,79 +125,111 @@
                 </button>
               </div>
             </div>
+            <div class="step-collapsed-summary" id="document-collapsed-summary" aria-hidden="true">
+              <span class="material-symbols-outlined step-summary-icon">description</span>
+              <span id="document-summary-text"></span>
+            </div>
           </div>
 
           <!-- [STEP 2] 검토 질의 & 기준 법령 (프리셋 보조 연동) -->
           <div class="step-card step-query">
             <div class="step-header">
               <div class="step-badge">
-                <span class="step-num">2</span>
+                <span class="step-num step-num-roman">II</span>
                 <span class="step-label">검토 질의 / 쟁점 사안 작성</span>
+                <span class="required-badge">필수 조건</span>
               </div>
-              
-              <!-- 6대 검토 유형 보조 프리셋 (질의 도우미) -->
-              <div class="preset-helper">
-                <div class="preset-chips" id="preset-chips">
-                  <button type="button" class="chip" data-preset="compliance">
-                    <span class="material-symbols-outlined chip-icon">verified_user</span>
-                    <span>적법성/규제 준수</span>
-                  </button>
-                  <button type="button" class="chip" data-preset="contract_risk">
-                    <span class="material-symbols-outlined chip-icon">description</span>
-                    <span>계약서 리스크</span>
-                  </button>
-                  <button type="button" class="chip" data-preset="ordinance_conflict">
-                    <span class="material-symbols-outlined chip-icon">account_balance</span>
-                    <span>조례/내규 충돌</span>
-                  </button>
-                  <button type="button" class="chip" data-preset="admin_dispute">
-                    <span class="material-symbols-outlined chip-icon">policy</span>
-                    <span>행정처분/민원</span>
-                  </button>
-                  <button type="button" class="chip" data-preset="privacy_security">
-                    <span class="material-symbols-outlined chip-icon">lock</span>
-                    <span>개인정보/보안</span>
-                  </button>
-                  <button type="button" class="chip" data-preset="labor_hr">
-                    <span class="material-symbols-outlined chip-icon">group</span>
-                    <span>인사/노무/근로</span>
-                  </button>
-                </div>
+              <button type="button" class="step-toggle" aria-expanded="true" aria-controls="query-template-panel query-primary-panel query-details" aria-label="검토 질의 / 쟁점 사안 작성 접기">
+                <span class="step-toggle-label">접기</span>
+                <span class="material-symbols-outlined" aria-hidden="true">expand_less</span>
+              </button>
+            </div>
+
+            <!-- 빠른 질의 작성 보조: 필수 질의 입력창 바로 위에 항상 노출한다. -->
+            <div class="query-template-panel" id="query-template-panel">
+              <div class="query-template-header">
+                <span class="query-template-title">
+                  <span class="material-symbols-outlined query-details-icon">lightbulb</span>
+                  <strong>빠른 질의 템플릿</strong>
+                </span>
+                <button type="button" class="btn-reset-query" id="btn-reset-query" title="질의 내용 및 프리셋 초기화">
+                  <span class="material-symbols-outlined" style="font-size:15px;">restart_alt</span>
+                  <span>질의 초기화</span>
+                </button>
+              </div>
+              <div class="preset-chips" id="preset-chips">
+                <button type="button" class="chip" data-preset="compliance">
+                  <span class="material-symbols-outlined chip-icon">verified_user</span>
+                  <span>적법성/규제 준수</span>
+                </button>
+                <button type="button" class="chip" data-preset="contract_risk">
+                  <span class="material-symbols-outlined chip-icon">description</span>
+                  <span>계약서 리스크</span>
+                </button>
+                <button type="button" class="chip" data-preset="ordinance_conflict">
+                  <span class="material-symbols-outlined chip-icon">account_balance</span>
+                  <span>조례/내규 충돌</span>
+                </button>
+                <button type="button" class="chip" data-preset="admin_dispute">
+                  <span class="material-symbols-outlined chip-icon">policy</span>
+                  <span>행정처분/민원</span>
+                </button>
+                <button type="button" class="chip" data-preset="privacy_security">
+                  <span class="material-symbols-outlined chip-icon">lock</span>
+                  <span>개인정보/보안</span>
+                </button>
+                <button type="button" class="chip" data-preset="labor_hr">
+                  <span class="material-symbols-outlined chip-icon">group</span>
+                  <span>인사/노무/근로</span>
+                </button>
               </div>
             </div>
 
-            <div class="input-row">
-              <div class="input-group flex-2">
-                <div class="query-label-row">
-                  <label for="input-query">검토 질의 및 핵심 쟁점 <span class="required">*</span></label>
-                  <button type="button" class="btn-reset-query" id="btn-reset-query" title="질의 내용 및 프리셋 초기화">
-                    <span class="material-symbols-outlined" style="font-size:15px;">restart_alt</span>
-                    <span>초기화</span>
-                  </button>
-                </div>
-                <textarea id="input-query" placeholder="자유롭게 입력하거나 상단의 빠른 질의 템플릿을 클릭하세요" rows="3"></textarea>
-              </div>
-              <div class="input-group flex-1">
-                <label for="input-target-law">기준 대상 법령 (선택)</label>
-                <input type="text" id="input-target-law" placeholder="예: 개인정보 보호법, 행정기본법">
-                <span class="input-hint">미입력 시 질문 및 문서를 분석하여 AI가 자동 판별</span>
-              </div>
-              <div class="input-group flex-1">
-                <label for="input-target-date">검토 기준 시점 (선택)</label>
-                <input type="date" id="input-target-date">
-                <span class="input-hint">사건 발생일 등 과거 시점을 지정하면 그때 시행 중이던 법령으로 검토합니다. 미입력 시 현행 법령 기준</span>
-              </div>
+            <div class="query-primary-panel" id="query-primary-panel">
+              <textarea id="input-query" placeholder="예: 이 계약서의 손해배상 조항이 과도한지, 수정이 필요한 부분은 무엇인지 검토해주세요." rows="5"></textarea>
             </div>
+
+            <!-- 선택형 보조 입력: 기본 화면에서는 접어 핵심 질의의 집중도를 높인다. -->
+            <details class="query-details" id="query-details">
+              <summary>
+                <span class="query-details-heading">
+                  <span class="material-symbols-outlined query-details-icon">tune</span>
+                  <span>
+                    <strong>선택 항목</strong>
+                    <small id="query-options-summary">AI 자동 판별 · 현행 법령 기준</small>
+                  </span>
+                </span>
+                <span class="query-details-toggle">
+                  <span>확인 및 입력</span>
+                  <span class="material-symbols-outlined">expand_more</span>
+                </span>
+              </summary>
+              <div class="query-details-body">
+                <div class="query-optional-grid">
+                  <div class="input-group">
+                    <label for="input-target-law">기준 대상 법령 <span class="optional-label">선택</span></label>
+                    <input type="text" id="input-target-law" placeholder="예: 개인정보 보호법, 행정기본법">
+                    <span class="input-hint">미입력 시 질의와 문서를 분석해 AI가 관련 법령을 판별합니다.</span>
+                  </div>
+                  <div class="input-group">
+                    <label for="input-target-date">검토 기준 시점 <span class="optional-label">선택</span></label>
+                    <input type="date" id="input-target-date">
+                    <span class="input-hint">과거 시점을 지정하면 해당 시점에 시행 중이던 법령으로 검토합니다.</span>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <div class="step-collapsed-summary" id="query-collapsed-summary" aria-hidden="true">
+              <span class="material-symbols-outlined step-summary-icon">auto_awesome</span>
+              <span id="query-summary-text"></span>
+            </div>
+
           </div>
 
           <!-- [STEP 3] 실행 액션 바 -->
           <div class="form-actions-bar">
-            <label class="learning-check"><input type="checkbox" id="manual-learning-mode" checked>
-              <span>로컬 검토 · 외부 AI는 직접 질의</span></label>
-            <div class="llm-indicator">
-              <span class="indicator-dot online"></span>
-              <span id="current-llm-display">AI 엔진: Ollama (gemma4:e2b)</span>
-            </div>
+            <input type="checkbox" id="manual-learning-mode" checked hidden>
             <button type="submit" class="btn btn-primary btn-lg" id="btn-run-review">
               <span class="material-symbols-outlined icon-md">search_insights</span>
               <span class="btn-text">종합 법령검토 실행</span>
@@ -189,7 +251,21 @@
               <span class="trace-elapsed" id="trace-elapsed">0.0초</span>
               <span class="material-symbols-outlined trace-chevron" id="trace-chevron">expand_less</span>
             </button>
-            <div class="trace-progressbar"><div class="trace-progressbar-fill" id="trace-bar"></div></div>
+            <div class="trace-overall">
+              <div class="trace-overall-head">
+                <span class="trace-overall-label"><span class="material-symbols-outlined">monitoring</span>전체 검토 진행률 <small>완료 작업 기준 추정</small></span>
+                <strong class="trace-overall-value" id="trace-progress-value">약 0%</strong>
+              </div>
+              <div class="trace-progressbar" id="trace-progressbar" role="progressbar" aria-label="예상 전체 검토 진행률" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="trace-progressbar-fill" id="trace-bar"></div></div>
+            </div>
+            <div class="trace-phase-track" id="trace-phase-track" aria-label="검토 진행 단계">
+              <div class="trace-phase-caption">현재 작업 단계 <small>강조된 칸이 지금 수행 중인 분류입니다</small></div>
+              <div class="trace-phase" data-phase="prepare"><span class="material-symbols-outlined">tune</span><span>준비</span></div>
+              <div class="trace-phase" data-phase="collect"><span class="material-symbols-outlined">manage_search</span><span>수집</span></div>
+              <div class="trace-phase" data-phase="analyze"><span class="material-symbols-outlined">psychology</span><span>분석</span></div>
+              <div class="trace-phase" data-phase="write"><span class="material-symbols-outlined">edit_note</span><span>작성</span></div>
+              <div class="trace-phase" data-phase="verify"><span class="material-symbols-outlined">verified</span><span>검증</span></div>
+            </div>
             <div class="trace-body" id="trace-body">
               <ol class="trace-list" id="trace-list"></ol>
             </div>
@@ -197,132 +273,34 @@
         </form>
       </section>
 
-      <!-- 2. 워크벤치 결과 3단계 탭 섹션 -->
-      <section class="workbench-section card" id="workbench-section">
+      <!-- 2. 워크벤치 결과 4단계 탭 섹션 -->
+      <section class="workbench-section card hidden" id="workbench-section">
         <!-- 탭 네비게이션 (4대 탭) -->
         <div class="workbench-tabs">
-          <button class="wb-tab active" data-tab="tab-draft">
+          <button class="wb-tab active" data-tab="tab-evidence">
             <span class="tab-num">1</span>
-            <span class="tab-title">검토 초안</span>
-            <span class="tab-badge off" id="badge-draft-status">대기</span>
-          </button>
-          <button class="wb-tab" data-tab="tab-evidence">
-            <span class="tab-num">2</span>
             <span class="tab-title">공식 법령 & 근거</span>
             <span class="tab-count" id="count-evidence">0건</span>
           </button>
           <button class="wb-tab" data-tab="tab-revisions">
-            <span class="tab-num">3</span>
+            <span class="tab-num">2</span>
             <span class="tab-title">개정 & 영향 분석</span>
             <span class="tab-status-dot" id="dot-impact"></span>
           </button>
-          <button class="wb-tab" data-tab="tab-official-report">
-            <span class="tab-num">4</span>
-            <span class="tab-title">공식 법률검토의견서</span>
-            <span class="tab-badge off" id="badge-report-status">대기</span>
-          </button>
           <button class="wb-tab" data-tab="tab-learning">
-            <span class="tab-num">5</span>
+            <span class="tab-num">3</span>
             <span class="tab-title">외부 전문가 질의</span>
             <span class="tab-badge off" id="badge-learning-status">대기</span>
           </button>
+          <button class="wb-tab" data-tab="tab-official-report">
+            <span class="tab-num">4</span>
+            <span class="tab-title">법률검토의견서</span>
+            <span class="tab-badge off" id="badge-report-status">대기</span>
+          </button>
         </div>
 
-        <!-- 탭 1: 검토 초안 (구조화된 테이블 및 법리 분석) -->
-        <div class="tab-pane active" id="tab-draft">
-          <div class="draft-grid">
-            
-            <!-- 1. 핵심 요약 하이라이트 -->
-            <div class="panel summary-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">summarize</span>
-                  <h3>핵심 검토 결론 요약</h3>
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div id="draft-factuality-badge"></div>
-                  <button class="btn btn-xs btn-outline" id="btn-copy-summary">
-                    <span class="material-symbols-outlined" style="font-size:14px;">content_copy</span>
-                    <span>요약 복사</span>
-                  </button>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-summary-content">
-                <p class="placeholder-text">검토를 실행하면 핵심 요약이 여기에 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 2. 핵심 쟁점 및 법적 리스크 분석 테이블 -->
-            <div class="panel risk-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">warning</span>
-                  <h3>핵심 쟁점 및 법적 리스크 분석표</h3>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-risk-content">
-                <p class="placeholder-text">법적 리스크 및 제재 위험도가 테이블로 분석되어 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 3. 실무형 수정 조문 (Redline Diff) 신구 조문 대비표 -->
-            <div class="panel redline-panel" id="panel-redline">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm" style="color:#2563EB;">rate_review</span>
-                  <h3>실무형 조항 수정 권고안 (신·구 조문 대비표)</h3>
-                </div>
-                <span class="badge badge-gov" style="font-size:11px;">위법 조항 대체안</span>
-              </div>
-              <div class="panel-body" id="draft-redline-content">
-                <p class="placeholder-text">위법·불리한 독소조항에 대한 수정 권고안 대비표가 여기에 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 4. 심층 법률 검토의견 본문 (IRAC) -->
-            <div class="panel opinion-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">balance</span>
-                  <h3>심층 법률 검토의견 (IRAC 다단계 분석)</h3>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-opinion-content">
-                <p class="placeholder-text">법리 검토의견이 여기에 구조화되어 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 5. 보완 권고사항 및 조치 계획 체크리스트 -->
-            <div class="panel rec-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">checklist</span>
-                  <h3>보완 권고사항 및 조치 가이드</h3>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-rec-content">
-                <p class="placeholder-text">보완 권고사항 체크리스트가 여기에 표시됩니다.</p>
-              </div>
-            </div>
-
-            <!-- 6. 적용 법령 및 조문 근거 테이블 (하단 배치) -->
-            <div class="panel basis-panel">
-              <div class="panel-header">
-                <div class="panel-title-group">
-                  <span class="material-symbols-outlined icon-sm">account_balance</span>
-                  <h3>관련 법령 및 적용 조문 근거표</h3>
-                </div>
-              </div>
-              <div class="panel-body" id="draft-basis-content">
-                <p class="placeholder-text">적용 법령 근거가 여기에 테이블로 정돈되어 표시됩니다.</p>
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        <!-- 탭 2: 공식 근거 -->
-        <div class="tab-pane" id="tab-evidence">
+        <!-- 탭 1: 공식 근거 -->
+        <div class="tab-pane active" id="tab-evidence">
           <div class="evidence-layout">
             <div class="evidence-section">
               <div class="evidence-section-header">
@@ -350,61 +328,75 @@
           </div>
         </div>
 
-        <!-- 탭 3: 개정 및 영향 분석 -->
+        <!-- 탭 2: 개정 및 영향 분석 -->
         <div class="tab-pane" id="tab-revisions">
           <div class="impact-layout">
             
             <!-- 상단 종합 진단 카드 -->
             <div class="impact-header-card">
-              <div class="panel-title-group">
-                <span class="material-symbols-outlined icon-sm" style="color:var(--brand-primary);">fact_check</span>
+              <div class="impact-header-copy">
+                <span class="impact-header-icon material-symbols-outlined">fact_check</span>
                 <div>
-                  <h4 style="margin:0; font-size:15px; font-weight:700;">법령 개정 및 내부 조항 영향도 종합 진단</h4>
-                  <p style="margin:2px 0 0 0; font-size:12px; color:#64748B;">인용 조문의 실시간 법령 유효성, 개정 전 구법 인용 충돌 및 위험 조항을 분석합니다.</p>
+                  <h4>개정 및 영향 분석 요약</h4>
+                  <p>내부 문서의 위험 신호와 인용 조문의 현행 유효성을 함께 확인합니다.</p>
                 </div>
               </div>
               <div id="impact-summary-badge" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;"></div>
             </div>
 
             <!-- 1. 내부 문서 쟁점 및 위험 조항 영향도 분석 -->
-            <div class="impact-section" id="section-risk-clauses" style="margin-top: 16px;">
+            <section class="impact-section" id="section-risk-clauses">
               <div class="impact-section-header">
-                <span class="material-symbols-outlined icon-sm" style="color:#DC2626;">warning</span>
-                <h4>1. 내부 문서 쟁점 및 위험 조항 영향도 분석</h4>
+                <span class="impact-section-num">1</span>
+                <div>
+                  <h4>내부 문서 쟁점 및 위험 조항</h4>
+                  <p>우선 검토할 조항과 탐지 근거를 중요도 순으로 정리했습니다.</p>
+                </div>
               </div>
               <div class="impact-risk-list" id="impact-risk-container"></div>
-            </div>
+            </section>
 
             <!-- 2. 조문 인용 충돌 및 개정 적합성 대조표 -->
-            <div class="impact-section" style="margin-top: 20px;">
+            <section class="impact-section">
               <div class="impact-section-header">
-                <span class="material-symbols-outlined icon-sm" style="color:#2563EB;">rule</span>
-                <h4>2. 조문 인용 충돌 및 현행 법령 적합성 대조표</h4>
+                <span class="impact-section-num">2</span>
+                <div>
+                  <h4>조문 인용 충돌 및 현행 법령 적합성</h4>
+                  <p>문서의 인용 내용과 현재 시행 중인 공식 조문을 나란히 비교합니다.</p>
+                </div>
               </div>
               <div class="impact-list" id="impact-items-container"></div>
-            </div>
+            </section>
 
             <!-- 3. 소관 법령 최근 개정 연혁 및 시행 타임라인 -->
-            <div class="impact-section" id="section-law-history" style="margin-top: 20px;">
+            <section class="impact-section" id="section-law-history">
               <div class="impact-section-header">
-                <span class="material-symbols-outlined icon-sm" style="color:#16A34A;">history_edu</span>
-                <h4>3. 소관 법령 최근 개정 연혁 및 시행 타임라인</h4>
+                <span class="impact-section-num">3</span>
+                <div>
+                  <h4>소관 법령 최근 개정 연혁</h4>
+                  <p>공포일과 시행일을 기준으로 최신 법령 상태를 확인합니다.</p>
+                </div>
               </div>
               <div class="history-timeline-box" id="impact-history-container"></div>
-            </div>
+            </section>
 
           </div>
         </div>
 
-        <!-- 탭 4: 공식 법률검토의견서 (최종 결론 및 공문서 표준 서식) -->
+        <!-- 탭 3: 외부 전문가 질의 (비식별 질의서 → 외부 AI → 답변 반입 → 지식 승인) -->
+        <div class="tab-pane" id="tab-learning">
+          <div class="learning-tab" id="learning-content"></div>
+        </div>
+
+        <!-- 탭 4: 법률검토의견서 (최종 결론 및 공문서 표준 서식) -->
         <div class="tab-pane" id="tab-official-report">
           <div class="official-report-tab-container">
             <div class="official-report-top-bar">
               <div class="official-report-top-info">
                 <span class="material-symbols-outlined" style="color:#1E3A8A; font-size:24px;">verified</span>
                 <div>
-                  <h3 style="font-size:16px; font-weight:800; color:#1E3A8A; margin:0;">공식 법률검토의견서 (최종 결론)</h3>
-                  <p style="font-size:12.5px; color:#64748B; margin:2px 0 0 0;">실무 및 결재용으로 즉시 활용 가능한 공공 표준 서식 보고서입니다.</p>
+                  <h3 style="font-size:16px; font-weight:800; color:#1E3A8A; margin:0;">법률검토의견서 · 쟁점별 IRAC와 종합 결론</h3>
+                  <p style="font-size:12.5px; color:#64748B; margin:2px 0 0 0;">각 쟁점의 적용 규범, 사실 포섭, 결론을 따라 읽고 전체 판단을 확인합니다.</p>
                 </div>
               </div>
               <div class="official-report-top-actions">
@@ -420,7 +412,7 @@
                   <span class="material-symbols-outlined icon-sm">description</span>
                   <span>DOCX</span>
                 </button>
-                <button class="btn btn-sm btn-primary" id="btn-tab-send-to-studio" style="font-weight:700;">
+                <button class="btn btn-sm btn-primary" id="btn-tab-send-to-studio" data-studio-trigger style="font-weight:700;">
                   <span class="material-symbols-outlined icon-sm">edit_document</span>
                   <span>스튜디오에서 편집</span>
                 </button>
@@ -433,11 +425,6 @@
               </div>
             </div>
           </div>
-        </div>
-
-        <!-- 탭 5: 외부 전문가 질의 (비식별 질의서 → 외부 AI → 답변 반입 → 지식 승인) -->
-        <div class="tab-pane" id="tab-learning">
-          <div class="learning-tab" id="learning-content"></div>
         </div>
       </section>
 
@@ -544,37 +531,35 @@
       </div>
     </div>
 
-    <!-- 모달 2: 19대 도구 빠른 실행 모달 -->
-    <div class="modal-overlay hidden" id="tools-modal">
-      <div class="modal-card modal-lg">
-        <div class="modal-header">
+    <!-- 드로어: 19대 도구 빠른 실행 -->
+    <aside class="tools-drawer" id="tools-modal">
+      <div class="drawer-header">
           <div class="panel-title-group">
             <span class="material-symbols-outlined icon-sm">build</span>
             <h3>19대 법령 도구 개별 실행</h3>
           </div>
-          <button class="btn-close-modal" id="btn-close-tools" title="닫기">
+          <button class="btn-close-drawer" id="btn-close-tools" title="닫기">
             <span class="material-symbols-outlined">close</span>
           </button>
-        </div>
-        <div class="modal-body">
-          <div class="tools-layout">
-            <div class="tools-sidebar" id="tools-list"></div>
-            <div class="tools-runner-area">
-              <h4 id="selected-tool-title">도구를 선택하세요</h4>
-              <p id="selected-tool-desc" class="tool-desc-text"></p>
-              <div id="tool-params-form" class="tool-params-form"></div>
-              <button id="btn-exec-tool" class="btn btn-primary btn-sm">
-                <span class="material-symbols-outlined icon-sm">play_arrow</span>
-                <span>실행</span>
-              </button>
-              <div class="tool-result-box" id="tool-result-box">
-                <pre><code id="tool-result-json">실행 결과가 여기에 표시됩니다.</code></pre>
+      </div>
+      <div class="modal-body tools-drawer-body">
+        <div class="tools-layout">
+          <div class="tools-sidebar" id="tools-list"></div>
+          <div class="tools-runner-area">
+            <h4 id="selected-tool-title">도구를 선택하세요</h4>
+            <p id="selected-tool-desc" class="tool-desc-text"></p>
+            <div id="tool-params-form" class="tool-params-form"></div>
+            <button id="btn-exec-tool" class="btn btn-primary btn-sm">
+              <span class="material-symbols-outlined icon-sm">play_arrow</span>
+              <span>실행</span>
+            </button>
+            <div class="tool-result-box" id="tool-result-box">
+              <pre><code id="tool-result-json">실행 결과가 여기에 표시됩니다.</code></pre>
               </div>
-            </div>
           </div>
         </div>
       </div>
-    </div>
+    </aside>
 
     <!-- 모달 3: 설정 모달 -->
     <div class="modal-overlay hidden" id="settings-modal">

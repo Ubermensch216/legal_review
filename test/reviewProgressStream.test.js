@@ -62,7 +62,8 @@ const workbenchContext = {
 
 test('LLM 생성 중 누적 글자 수가 진행 이벤트로 흘러나온다', async () => {
   // 한 줄에 200자씩 20번 흘려보내, 400ms 솎아내기를 넘겨 여러 번 통지되게 한다.
-  const body = JSON.stringify({ summary: '검토 요약', coreIssues: ['쟁점'], legalOpinion: '의견' });
+  const body = JSON.stringify({ summary: '검토 요약', coreIssues: ['쟁점'], facts: '사실', legalOpinion: '의견',
+    legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [], draftOpinion: '초안' });
   const chunks = [...Array(20)].map((_, i) => (i === 19 ? body : `${' '.repeat(200)}`));
 
   await withFakeOllama(chunks, async (url) => {
@@ -75,9 +76,10 @@ test('LLM 생성 중 누적 글자 수가 진행 이벤트로 흘러나온다', 
       progress
     });
 
-    const ticks = events.filter(e => e.kind === 'tick');
+    // 불완전 JSON이면 복구용 분할 호출의 tick도 생길 수 있다. 본 호출의
+    // 누적 글자 수 계측은 기존처럼 llm 단계의 이벤트만 확인한다.
+    const ticks = events.filter(e => e.kind === 'tick' && e.key === 'llm');
     assert.ok(ticks.length >= 1, '생성 중 tick 이벤트가 없습니다');
-    assert.ok(ticks.every(e => e.key === 'llm'));
     assert.ok(/생성 중 · [\d,]+자/.test(ticks[0].detail), `예상과 다른 tick 내용: ${ticks[0].detail}`);
     // 누적 글자 수는 증가만 한다.
     const counts = ticks.map(e => Number(e.detail.replace(/[^\d]/g, '')));

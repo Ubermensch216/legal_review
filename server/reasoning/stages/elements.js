@@ -3,14 +3,14 @@
 // 조문의 적용 요건은 사건과 무관하다. 조문 원문 해시를 키로 캐시해 두면 같은 조문을 다시 만나는
 // 검토에서는 이 단계의 LLM 호출이 0회가 된다. 모델이 실패해도 코드가 항·호·단서로 나눈
 // 골격 요건으로 대체하므로 이후 단계가 멈추지 않는다.
-import { runStage } from '../stageRunner.js';
+import { runStage, StageError } from '../stageRunner.js';
 import { PROMPT_VERSION, REASONING_SYSTEM } from '../prompts.js';
 import { getStageCache, stageCacheKey } from '../stageCache.js';
 
 const ARTICLE_KINDS = new Set(['ARTICLE', 'ORDINANCE_ARTICLE']);
-const BATCH = 4;           // 한 호출에 싣는 조문 수 (출력 약 250토큰/조문)
-const MAX_ELEMENTS = 8;    // 조문당 요건 상한
-const MAX_ISSUE_ELEMENTS = 10;
+const BATCH = 1;           // 조문 사이에 사건 전체 입력을 반복하지 않는다.
+const UNIT_BATCH = 4;      // 긴 조문은 항·호·단서 묶음별로 분해한다.
+const MAX_ELEMENTS = 8;    // 한 호출의 출력 상한. 조문 전체 결과의 상한은 아니다.
 
 export const elementsSchema = {
   type: 'object', additionalProperties: false, required: ['articles'],
@@ -42,16 +42,88 @@ export function skeletonElements(registry, articleId) {
 }
 
 const articleHash = (registry, id) => [registry.get(id).textHash, ...registry.children(id).map(c => c.textHash)].join(':');
+const FORMAT_VERSION = 'unit-batches-v1';
+
+const splitText = text => {
+  const middle = Math.floor(text.length / 2);
+  const marks = [...text.matchAll(/[.。;；\n]\s*/g)].map(m => m.index + m[0].length)
+    .filter(i => i > text.length / 3 && i < text.length * 2 / 3);
+  const cut = marks.length ? marks.reduce((best, i) => Math.abs(i - middle) < Math.abs(best - middle) ? i : best) : middle;
+  return [text.slice(0, cut), text.slice(cut)];
+};
+
+function fragmentsFor(registry, id) {
+  const children = registry.children(id).filter(u => u.kind === 'ARTICLE_UNIT' || u.kind === 'ARTICLE_PROVISO');
+  return (children.length ? children : [registry.get(id)]).filter(Boolean)
+    .map(u => ({ id: u.id, text: String(u.text || ''), isException: Boolean(u.isException) }));
+}
+
+function chunk(items, size) {
+  const groups = [];
+  for (let i = 0; i < items.length; i += size) groups.push(items.slice(i, i + size));
+  return groups;
+}
+
+/** 한 조문의 일부 원문만 모델에 싣고, 예산 초과 때 해당 묶음만 다시 나눈다. */
+async function decomposeGroup({ id, fragments, registry, provider, config, session, warnings }) {
+  if (fragments.every(f => !f.text.trim())) {
+    warnings.push(`조문 ${id}에 분해할 원문이 없어 미검증으로 남겼습니다.`);
+    return { elements: [], burden: '', partial: true };
+  }
+  const own = new Set(fragments.map(f => f.id));
+  const header = registry.get(id);
+  const articlesText = `[${id}] ${header.label}${header.title ? `(${header.title})` : ''}\n`
+    + fragments.map(f => `  [${f.id}] ${f.isException ? '(단서) ' : ''}${f.text}`).join('\n');
+  try {
+    const { value } = await runStage({ stage: 's3', provider, system: REASONING_SYSTEM,
+      prefix: `[검토 기준일] ${registry.asOf}`, task: TASK(articlesText), schema: elementsSchema,
+      config: { ...config, think: false }, session });
+    const answer = value.articles.find(a => String(a.articleId).match(/[AO]\d+/)?.[0] === id);
+    if (!answer?.elements?.length) throw new StageError('s3', `${id} 응답에 요건이 없습니다.`);
+    const elements = answer.elements.map(e => ({ text: String(e.text).trim(), mandatory: e.mandatory,
+      isException: e.isException, sourceIds: e.sourceIds.filter(s => own.has(s)) }))
+      .filter(e => e.text && e.sourceIds.length);
+    if (!elements.length) throw new StageError('s3', `${id} 응답에 유효한 출처 ID가 없습니다.`);
+    const covered = new Set(elements.flatMap(e => e.sourceIds));
+    const missing = fragments.filter(f => f.text.trim() && !covered.has(f.id));
+    if (missing.length) {
+      warnings.push(`조문 ${id}의 원문 단위 ${missing.map(f => f.id).join(', ')}가 요건 응답에서 누락되어 골격 요건으로 보충했습니다.`);
+      elements.push(...missing.map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
+        isException: f.isException, sourceIds: [f.id], fallback: true })));
+    }
+    return { elements, burden: String(answer.burden || '').trim(), partial: Boolean(missing.length) };
+  } catch (err) {
+    if (err instanceof StageError && (err.budgetExceeded || err.cause?.truncated)) {
+      if (fragments.length > 1) {
+        const middle = Math.ceil(fragments.length / 2);
+        const left = await decomposeGroup({ id, fragments: fragments.slice(0, middle), registry, provider, config, session, warnings });
+        const right = await decomposeGroup({ id, fragments: fragments.slice(middle), registry, provider, config, session, warnings });
+        return { elements: [...left.elements, ...right.elements], burden: left.burden || right.burden,
+          partial: left.partial || right.partial };
+      }
+      if (fragments[0].text.length > 400) {
+        const [leftText, rightText] = splitText(fragments[0].text);
+        const left = await decomposeGroup({ id, fragments: [{ ...fragments[0], text: leftText }], registry, provider, config, session, warnings });
+        const right = await decomposeGroup({ id, fragments: [{ ...fragments[0], text: rightText }], registry, provider, config, session, warnings });
+        return { elements: [...left.elements, ...right.elements], burden: left.burden || right.burden,
+          partial: left.partial || right.partial };
+      }
+    }
+    warnings.push(`조문 요건 분해 실패(${id}: ${fragments.map(f => f.id).join(', ')}) — 골격 요건으로 대체: ${err.message}`);
+    return { elements: fragments.map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
+      isException: f.isException, sourceIds: [f.id], fallback: true })), burden: '', partial: true };
+  }
+}
 
 /**
  * 조문들을 요건으로 분해한다.
- * @returns {Promise<{ byArticle: Map<string, { elements: object[], burden: string, source: 'CACHE'|'LLM'|'SKELETON' }>, warnings: string[] }>}
+ * @returns {Promise<{ byArticle: Map<string, { elements: object[], burden: string, source: 'CACHE'|'LLM'|'PARTIAL'|'SKELETON' }>, warnings: string[] }>}
  */
 export async function decomposeArticles({ articleIds, registry, prefix, provider, config, session, cache = getStageCache() }) {
   const result = new Map();
   const warnings = [];
   const misses = [];
-  const keyOf = id => stageCacheKey('elements', PROMPT_VERSION, provider, config.model || '', articleHash(registry, id));
+  const keyOf = id => stageCacheKey('elements', PROMPT_VERSION, FORMAT_VERSION, provider, config.model || '', articleHash(registry, id));
   for (const id of [...new Set(articleIds)]) {
     const entry = registry.get(id);
     if (!entry || !ARTICLE_KINDS.has(entry.kind)) continue;
@@ -60,39 +132,17 @@ export async function decomposeArticles({ articleIds, registry, prefix, provider
     else misses.push(id);
   }
 
-  for (let i = 0; i < misses.length; i += BATCH) {
-    const batch = misses.slice(i, i + BATCH);
-    let parsed = null; // 실패하면 null로 남는다
-    try {
-      const articlesText = registry.renderFull(batch).text;
-      ({ value: parsed } = await runStage({ stage: 's3', provider, system: REASONING_SYSTEM, prefix, task: TASK(articlesText),
-        schema: elementsSchema, config: { ...config, think: false }, session }));
-    } catch (err) {
-      // 아래에서 골격 요건으로 대체한다. 대체 사실은 결과에 남겨 요건 품질이 낮을 수 있음을 알린다.
-      warnings.push(`조문 요건 분해 실패(${batch.join(', ')}) — 항·호 단위 골격 요건으로 대체: ${err.message}`);
+  for (const id of misses) {
+    const fragments = fragmentsFor(registry, id);
+    const parts = [];
+    for (const group of chunk(fragments, UNIT_BATCH)) {
+      parts.push(await decomposeGroup({ id, fragments: group, registry, provider, config, session, warnings }));
     }
-
-    // 모델이 articleId를 "A5 (근로기준법 제27조)"처럼 꾸며 쓰는 일이 있다(실측). ID만 뽑아 맞추고,
-    // 그래도 안 맞으면 조문 수가 같을 때에 한해 순서대로 맞춘다.
-    const answers = parsed?.articles || [];
-    const idOf = value => String(value || '').match(/[AO]\d+/)?.[0] || '';
-    const byOrder = answers.length === batch.length && !answers.some(a => batch.includes(idOf(a.articleId)));
-    for (const [index, id] of batch.entries()) {
-      const own = new Set([id, ...registry.children(id).map(c => c.id)]);
-      const answer = answers.find(a => idOf(a.articleId) === id) || (byOrder ? answers[index] : null);
-      if (parsed && !answer) warnings.push(`조문 요건 분해 응답에 ${id}가 없어 항·호 단위 골격 요건으로 대체했습니다.`);
-      const elements = (answer?.elements || []).map(e => ({ ...e, text: String(e.text).trim(), sourceIds: e.sourceIds.filter(s => own.has(s)) }))
-        .filter(e => e.text).slice(0, MAX_ELEMENTS)
-        .map((e, n) => ({ id: `${id}.E${n + 1}`, text: e.text, mandatory: e.mandatory, isException: e.isException,
-          sourceIds: e.sourceIds.length ? e.sourceIds : [id] }));
-      if (!elements.length) {
-        result.set(id, { elements: skeletonElements(registry, id), burden: '', source: 'SKELETON' });
-        continue;
-      }
-      const value = { elements, burden: String(answer.burden || '').trim() };
-      cache?.set(keyOf(id), 's3', value);
-      result.set(id, { ...value, source: 'LLM' });
-    }
+    const elements = parts.flatMap(p => p.elements).map((e, n) => ({ ...e, id: `${id}.E${n + 1}` }));
+    const value = { elements, burden: parts.map(p => p.burden).filter(Boolean).join(' / ') };
+    const source = parts.some(p => p.partial) ? (parts.every(p => p.elements.every(e => e.fallback)) ? 'SKELETON' : 'PARTIAL') : 'LLM';
+    if (source === 'LLM') cache?.set(keyOf(id), 's3', value);
+    result.set(id, { ...value, source });
   }
   return { byArticle: result, warnings };
 }
@@ -121,10 +171,5 @@ export function selectIssueElements(issue, decomposed, registry) {
       if (!units.size || element.sourceIds.some(s => units.has(s) || s === articleId)) selected.push(element);
     }
   }
-  if (selected.length <= MAX_ISSUE_ELEMENTS) return selected;
-  // 상한을 넘으면 예외 요건은 모두 남기고 나머지를 앞에서부터 채운다(원래 순서 유지).
-  const exceptions = selected.filter(e => e.isException);
-  const room = Math.max(0, MAX_ISSUE_ELEMENTS - exceptions.length);
-  const keep = new Set([...exceptions, ...selected.filter(e => !e.isException).slice(0, room)]);
-  return selected.filter(e => keep.has(e));
+  return selected;
 }

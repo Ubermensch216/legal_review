@@ -2,6 +2,7 @@
 // 비식별 질의서 생성 → 사용자 검토·반출 → 외부 AI 답변 반입 → 지식 카드 승인.
 // 외부 AI API는 호출하지 않는다. 반출과 반입은 모두 사람이 한다.
 import { state } from './state.js';
+import { collectLearningIssues } from './learningIssues.js';
 
 const API = '/api/law/learning';
 
@@ -10,11 +11,13 @@ const view = {
   inquiry: null,
   knowledge: [],
   coverage: null,
+  reviewIssues: [],
   notice: '',        // 성공/안내 메시지
   exportText: '',    // 클립보드가 막혔을 때 직접 복사할 질의서 본문
   error: '',
   busy: '',          // 진행 중인 동작 이름. 버튼 중복 클릭을 막는다.
-  drafts: {}         // 실패·진행 표시 때문에 다시 그려도 사용자가 붙여넣은 답변을 잃지 않는다.
+  drafts: {},        // 실패·진행 표시 때문에 다시 그려도 사용자가 붙여넣은 답변을 잃지 않는다.
+  folds: {}          // 완료된 단계의 접힘 상태. 사용자가 펼친 섹션은 다시 그리지 않는다.
 };
 
 const draftKey = node => node.id || (node.name ? `${node.name}:${node.value}` : '');
@@ -34,10 +37,37 @@ const esc = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * 검토 완료 직후에는 개발 서버가 재시작되거나 포트가 잠깐 재바인딩될 수 있다.
+ * 이때 브라우저 fetch는 HTTP 응답 없이 TypeError('Failed to fetch')만 던지므로,
+ * 짧게 재시도해 정상적인 학습 API 응답을 받을 기회를 준다.
+ */
+async function request(path, options = {}) {
+  const init = {
+    cache: 'no-store',
+    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+    ...options
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetch(`${API}${path}`, init);
+    } catch (err) {
+      if (attempt === 2) break;
+      await wait(250 * (attempt + 1));
+    }
+  }
+  throw new Error('학습 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인한 뒤 다시 시도하십시오.');
+}
+function captureFolds() {
+  for (const node of document.querySelectorAll('#learning-content details[data-learning-fold]')) {
+    view.folds[node.dataset.learningFold] = node.open;
+  }
+}
+
 async function call(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined, ...options
-  });
+  const res = await request(path, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.ok === false) throw new Error(data.error || `요청에 실패했습니다 (HTTP ${res.status}).`);
   return data;
@@ -61,6 +91,7 @@ async function refresh() {
 async function run(name, fn) {
   if (view.busy) return;
   captureDrafts();
+  captureFolds();
   view.busy = name; view.error = ''; view.notice = '';
   render();
   try {
@@ -92,11 +123,12 @@ export function initLearningTab() {
 }
 
 /** 검토가 끝나면 그 이력을 이 탭에 연결한다. */
-export function setLearningHistory(historyId) {
+export function setLearningHistory(historyId, reviewData = {}) {
   view.historyId = historyId || null;
   view.inquiry = null; view.knowledge = []; view.coverage = null;
+  view.reviewIssues = view.historyId ? collectLearningIssues(reviewData) : [];
   view.error = ''; view.notice = '';
-  view.exportText = ''; view.drafts = {};
+  view.exportText = ''; view.drafts = {}; view.folds = {};
   if (!view.historyId) return render();
   refresh().catch(err => { view.error = err.message; }).finally(render);
 }
@@ -152,7 +184,7 @@ const actions = {
 
   // 복사는 반드시 서버 export를 거친다. 이 경로가 복사 직전에 식별정보를 다시 검사한다.
   copy: () => run('copy', async () => {
-    const res = await fetch(`${API}/inquiries/${view.inquiry.id}/export`);
+    const res = await request(`/inquiries/${view.inquiry.id}/export`);
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || '질의서를 내보내지 못했습니다.');
     const text = await res.text();
     try {
@@ -176,9 +208,11 @@ const actions = {
     const id = view.inquiry.id;
     return run('import', async () => {
       if (!answer) throw new Error('외부 AI 또는 외부 전문가에게서 받은 답변을 붙여넣으십시오.');
-      await call(`/inquiries/${id}/answers`, { method: 'POST', body: JSON.stringify({ answer, providerLabel, mode, sourceType }) });
+      const data = await call(`/inquiries/${id}/answers`, { method: 'POST', body: JSON.stringify({ answer, providerLabel, mode, sourceType }) });
       forgetDrafts('learning-answer', 'learning-source-');
-      view.notice = mode
+      view.notice = !data.item?.answeredQuestions?.length
+        ? '답변 카드는 생성되었습니다. 아래 카드에서 답변한 질문을 체크하고 “질문 연결 저장”을 누른 뒤 승인하십시오.'
+        : mode
         ? '붙여넣은 구조화 카드를 그대로 받았습니다. 내용과 인용을 확인한 뒤 승인하십시오.'
         : '답변을 지식 카드로 정리했습니다. 내용과 인용을 확인한 뒤 승인하십시오.';
     });
@@ -337,6 +371,12 @@ const DISTILLATION_LABEL = { LOCAL_SINGLE: '로컬 AI 정리', LOCAL_CHUNKED: '�
 // 단계형 검토에서 만든 질문은 어느 쟁점·요건의 판단 공백인지 보여준다. 답이 오면 그 쟁점만 다시 판단한다.
 const GAP_LABEL = { LEGAL_INTERPRETATION: '해석 기준', AUTHORITY_CONFLICT: '근거 충돌', MISSING_AUTHORITY: '근거 부재', STAGE_FAILURE: '판단 실패' };
 const anchorLabel = a => `쟁점 ${a.issueId || '-'}${a.elementId ? ` · 요건 ${a.elementId}` : ''} · ${GAP_LABEL[a.type] || a.type}`;
+const foldOpen = (id, defaultOpen) => (Object.hasOwn(view.folds, id) ? view.folds[id] : defaultOpen) ? ' open' : '';
+const foldSummary = (icon, title, status) => `<summary class="learning-fold-summary">
+  <span class="material-symbols-outlined icon-sm">${icon}</span><span class="learning-fold-title">${title}</span>
+  ${status ? `<span class="learning-fold-status">${status}</span>` : ''}
+  <span class="material-symbols-outlined learning-fold-chevron">expand_more</span>
+</summary>`;
 
 function renderQuestions() {
   const questions = view.coverage?.questions || [];
@@ -350,6 +390,17 @@ function renderQuestions() {
 }
 
 function renderStep1() {
+  if (view.inquiry) {
+    const total = view.coverage?.total || view.inquiry.questions?.length || 0;
+    return `
+      <details class="panel learning-step learning-fold" data-learning-fold="step1"${foldOpen('step1', false)}>
+        ${foldSummary('help', '1. 미해결 쟁점 확인', `${total}개 질문 생성됨`)}
+        <div class="panel-body">
+          <p class="learning-desc">이번 검토에서 외부 확인이 필요하다고 분류된 질문입니다. 다음 단계에서 비식별 여부를 확인한 뒤 외부로 반출합니다.</p>
+          ${renderQuestions()}
+        </div>
+      </details>`;
+  }
   return `
     <div class="panel learning-step">
       <div class="panel-header"><div class="panel-title-group">
@@ -361,7 +412,8 @@ function renderStep1() {
         <label class="learning-label" for="learning-focus">추가로 묻고 싶은 쟁점 (선택)</label>
         <textarea id="learning-focus" class="learning-input" rows="3"
           placeholder="예: 조례 근거 없이 수탁자가 사용료를 징수할 수 있는지"></textarea>
-        <button class="btn btn-primary" data-learning-action="create" ${view.busy ? 'disabled' : ''}>
+        <button class="btn btn-primary ai-task-button${view.busy === 'create' ? ' ai-processing' : ''}" data-learning-action="create"
+          ${view.busy ? 'disabled' : ''} ${view.busy === 'create' ? 'aria-busy="true"' : ''}>
           <span class="material-symbols-outlined icon-sm">auto_awesome</span>
           <span>${view.busy === 'create' ? '로컬 AI가 쟁점을 분석 중입니다...' : '질의서 생성'}</span>
         </button>
@@ -371,6 +423,7 @@ function renderStep1() {
 
 function renderStep2() {
   const item = view.inquiry;
+  const editable = item.state === 'DRAFT';
   const counts = Object.entries(item.redactions || {});
   const proposals = item.proposedTerms || [];
   const residual = residualTerms(proposals, item.text);
@@ -379,14 +432,10 @@ function renderStep2() {
     <span>${esc(value)}</span>${hint ? `<em>${esc(hint)}</em>` : ''}</label>`;
 
   return `
-    <div class="panel learning-step">
-      <div class="panel-header">
-        <div class="panel-title-group">
-          <span class="material-symbols-outlined icon-sm">shield</span><h3>2. 외부 반출 전 검토</h3>
-        </div>
-        <button class="btn btn-sm btn-outline" data-learning-action="discard">질의서 삭제</button>
-      </div>
+    <details class="panel learning-step learning-fold" data-learning-fold="step2"${foldOpen('step2', editable)}>
+      ${foldSummary('shield', '2. 외부 반출 전 검토', editable ? '진행 중' : '반출 준비 완료')}
       <div class="panel-body">
+        <div class="learning-actions learning-fold-action"><button class="btn btn-sm btn-outline" data-learning-action="discard">질의서 삭제</button></div>
         <div class="learning-chips">
           ${counts.length ? counts.map(([kind, n]) => chip(kind, `${n}건`)).join('') : '<span class="learning-chip">자동 치환 없음</span>'}
         </div>
@@ -401,37 +450,31 @@ function renderStep2() {
             ${residual.map(t => termBox(t, '본문에 남음')).join('')}` : ''}
         </div>` : ''}
 
-        <label class="learning-label" for="learning-custom-terms">추가로 가릴 단어 (쉼표 또는 줄바꿈으로 구분)</label>
-        <input id="learning-custom-terms" class="learning-input" type="text" placeholder="예: 사하구청, 대한스포츠">
-
-        <label class="learning-label" for="learning-text">질의서 본문 (편집 가능)</label>
-        <textarea id="learning-text" class="learning-input learning-textarea" rows="18">${esc(item.text)}</textarea>
-
-        <div class="learning-actions">
-          <button class="btn btn-secondary" data-learning-action="save" ${view.busy ? 'disabled' : ''}>
-            선택한 단어 적용 · 본문 저장</button>
-        </div>
-
-        <div class="learning-confirm">
-          ${box('learning-check-privacy', '개인정보·민감정보·기관 비밀정보가 제거되었음을 확인했습니다.')}
-          ${box('learning-check-logic', '판단에 필요한 사실과 조건이 보존되었음을 확인했습니다.')}
-          <button class="btn btn-primary" data-learning-action="confirm" ${view.busy ? 'disabled' : ''}>
-            <span class="material-symbols-outlined icon-sm">lock_open</span><span>반출 준비 확인</span></button>
-        </div>
+        ${editable ? `
+          <label class="learning-label" for="learning-custom-terms">추가로 가릴 단어 (쉼표 또는 줄바꿈으로 구분)</label>
+          <input id="learning-custom-terms" class="learning-input" type="text" placeholder="예: 사하구청, 대한스포츠">
+          <label class="learning-label" for="learning-text">질의서 본문 (편집 가능)</label>
+          <textarea id="learning-text" class="learning-input learning-textarea" rows="18">${esc(item.text)}</textarea>
+          <div class="learning-actions">
+            <button class="btn btn-secondary" data-learning-action="save" ${view.busy ? 'disabled' : ''}>선택한 단어 적용 · 본문 저장</button>
+          </div>
+          <div class="learning-confirm">
+            ${box('learning-check-privacy', '개인정보·민감정보·기관 비밀정보가 제거되었음을 확인했습니다.')}
+            ${box('learning-check-logic', '판단에 필요한 사실과 조건이 보존되었음을 확인했습니다.')}
+            <button class="btn btn-primary" data-learning-action="confirm" ${view.busy ? 'disabled' : ''}>
+              <span class="material-symbols-outlined icon-sm">lock_open</span><span>반출 준비 확인</span></button>
+          </div>` : `
+          <p class="learning-desc learning-warn">이 질의서는 반출 준비가 끝났습니다. 아래 본문은 당시 외부에 전달된 원문입니다.</p>
+          <pre class="learning-readonly-text">${esc(item.text)}</pre>`}
       </div>
-    </div>`;
+    </details>`;
 }
 
-function renderStep3() {
+function renderStep3(open = true) {
   const c = view.coverage || { total: 0, answered: 0, approved: 0 };
   return `
-    <div class="panel learning-step">
-      <div class="panel-header">
-        <div class="panel-title-group">
-          <span class="material-symbols-outlined icon-sm">forum</span><h3>3. 답변 접수</h3>
-        </div>
-        <span class="learning-count">승인 ${c.approved} / 답변 ${c.answered} / 전체 ${c.total}</span>
-      </div>
+    <details class="panel learning-step learning-fold" data-learning-fold="step3"${foldOpen('step3', open)}>
+      ${foldSummary('forum', '3. 답변 접수', `승인 ${c.approved} / 답변 ${c.answered} / 전체 ${c.total}`)}
       <div class="panel-body">
         ${renderQuestions()}
         <div class="learning-actions">
@@ -459,16 +502,17 @@ function renderStep3() {
           placeholder="받은 답변 전체를 붙여넣으십시오."></textarea>
         <label class="learning-check">
           <input type="checkbox" id="learning-mode-structured">
-          <span>질의서가 요청한 <strong>JSON 부분만</strong> 붙여넣었습니다 (로컬 AI 정리 없이 그대로 사용)</span>
+          <span>질의서가 요청한 <strong>질문별 JSON 부분만</strong> 붙여넣었습니다 (각 질문 1건 + card, 로컬 AI 정리 없이 그대로 사용)</span>
         </label>
-        <button class="btn btn-primary" data-learning-action="import" ${view.busy ? 'disabled' : ''}>
+        <button class="btn btn-primary ai-task-button${view.busy === 'import' ? ' ai-processing' : ''}" data-learning-action="import"
+          ${view.busy ? 'disabled' : ''} ${view.busy === 'import' ? 'aria-busy="true"' : ''}>
           <span class="material-symbols-outlined icon-sm">download</span>
           <span>${view.busy === 'import' ? '로컬 AI가 지식으로 정리 중입니다...' : '답변 반입'}</span>
         </button>
         <p class="learning-desc">답변이 길면 로컬 AI가 조각으로 나눠 읽습니다. 시간이 더 걸리고,
           일부 조각이 실패하면 그 카드는 미완으로 표시되어 승인할 수 없습니다.</p>
       </div>
-    </div>`;
+    </details>`;
 }
 
 function renderCard(item) {
@@ -514,6 +558,7 @@ function renderCard(item) {
         </li>`).join('')}</ul></div>` : ''}
 
       ${questions.length ? `<div class="learning-field"><span>이 답변이 다룬 질문</span>
+        ${editable && !answered.length ? `<p class="learning-desc learning-warn">아직 질문과 연결되지 않았습니다. 답변한 질문을 체크한 뒤 ‘질문 연결 저장’을 누르십시오.</p>` : ''}
         <div class="learning-links">${questions.map(q => `<label class="learning-term">
           <input type="checkbox" name="learning-q-${item.id}" value="${q.no}"
             ${answered.includes(q.no) ? 'checked' : ''} ${editable ? '' : 'disabled'}>
@@ -551,7 +596,7 @@ function renderCard(item) {
     </div>`;
 }
 
-function renderStep5() {
+function renderStep5(open = false) {
   const c = view.coverage || { total: 0, approved: 0, questions: [] };
   if (!c.total) return '';
   const unmet = (c.questions || []).filter(q => q.state !== 'APPROVED');
@@ -559,18 +604,15 @@ function renderStep5() {
   const dropped = state.lastReviewResult?.review?.learningExcluded || [];
 
   return `
-    <div class="panel learning-step">
-      <div class="panel-header">
-        <div class="panel-title-group">
-          <span class="material-symbols-outlined icon-sm">task_alt</span><h3>5. 최종 답변서</h3>
-        </div>
-        <span class="learning-count">충족 ${c.approved} / ${c.total}</span>
-      </div>
+    <details class="panel learning-step learning-fold" data-learning-fold="step5"${foldOpen('step5', open)}>
+      ${foldSummary('task_alt', '5. 최종 답변서', `충족 ${c.approved} / ${c.total}`)}
       <div class="panel-body">
         <p class="learning-desc">승인한 지식을 참고 자료로 실어 이 사건의 검토를 다시 실행합니다.
           공식 법령·판례는 그때 다시 수집하며, 승인된 지식이 공식 근거를 대신하지 않습니다.</p>
         ${unmet.length ? `<p class="learning-desc learning-warn">아직 충족되지 않은 질문 ${unmet.length}건:
           ${unmet.map(q => `#${q.no}`).join(', ')} — 그대로 실행하면 검토서의 제한사항으로 남습니다.</p>` : ''}
+        ${used.length ? `<div class="learning-message notice">승인된 외부 참고 지식 ${used.length}건을 반영하여 최종 검토를 완료했습니다.
+          법률검토의견서 상단의 ‘외부 반영’ 표시와 검토 구분을 확인하십시오.</div>` : ''}
         ${used.length ? `<p class="learning-desc">직전 검토에 실린 지식 ${used.length}건:
           ${used.map(r => `${esc(r.title)} (${r.source === 'USER_APPROVED_HUMAN_EXPERT' ? '외부 전문가' : '외부 AI'})`).join(' · ')}</p>` : ''}
         ${dropped.length ? `<div class="learning-message warn">직전 검토에서 적용하지 않은 지식 ${dropped.length}건
@@ -580,17 +622,15 @@ function renderStep5() {
           <span class="material-symbols-outlined icon-sm">restart_alt</span>
           <span>승인된 지식으로 최종 검토 다시 실행</span></button>
       </div>
-    </div>`;
+    </details>`;
 }
 
-function renderStep4() {
+function renderStep4(open = false) {
   if (!view.knowledge.length) return '';
   const unassigned = view.coverage?.unassigned || [];
   return `
-    <div class="panel learning-step">
-      <div class="panel-header"><div class="panel-title-group">
-        <span class="material-symbols-outlined icon-sm">library_books</span><h3>4. 지식 카드 검토</h3>
-      </div></div>
+    <details class="panel learning-step learning-fold" data-learning-fold="step4"${foldOpen('step4', open)}>
+      ${foldSummary('library_books', '4. 지식 카드 검토', `${view.knowledge.length}건`)}
       <div class="panel-body">
         <p class="learning-desc">외부 AI 답변은 검증 대상 후보 지식입니다. 공식 근거를 대신하지 않습니다.
           적용 조건과 예외를 확인하고 승인해야 이후 검토에 참고 자료로 쓰입니다.</p>
@@ -599,17 +639,38 @@ function renderStep4() {
           로컬 AI가 연결을 놓쳤을 수 있으니 아래에서 직접 지정하십시오.</p>` : ''}
         ${view.knowledge.map(renderCard).join('')}
       </div>
-    </div>`;
+    </details>`;
 }
 
 function updateBadge() {
   const badge = document.getElementById('badge-learning-status');
   if (!badge) return;
   const c = view.coverage;
-  if (!view.inquiry) { badge.className = 'tab-badge off'; badge.textContent = '대기'; return; }
-  if (!c?.total) { badge.className = 'tab-badge active'; badge.textContent = '작성 중'; return; }
-  badge.className = c.approved >= c.total ? 'tab-badge active' : 'tab-badge warning';
-  badge.textContent = `답변 ${c.approved}/${c.total}`;
+  if (!view.inquiry) {
+    badge.className = `tab-badge ${view.reviewIssues.length ? 'warning' : 'off'}`;
+    badge.textContent = view.reviewIssues.length ? `확인 ${view.reviewIssues.length}` : '대기';
+    return;
+  }
+  if (!c?.total) {
+    badge.className = `tab-badge ${view.reviewIssues.length ? 'warning' : 'active'}`;
+    badge.textContent = view.reviewIssues.length ? `확인 ${view.reviewIssues.length}` : '작성 중';
+    return;
+  }
+  badge.className = view.reviewIssues.length || c.approved < c.total ? 'tab-badge warning' : 'tab-badge active';
+  badge.textContent = `${view.reviewIssues.length ? `확인 ${view.reviewIssues.length} · ` : ''}답변 ${c.approved}/${c.total}`;
+}
+
+function renderReviewIssues() {
+  if (!view.reviewIssues.length) return `<div class="learning-message notice">이 검토에서 기록된 미해결 법리 쟁점이나 실행 제한 사항이 없습니다. 필요한 질문은 직접 입력할 수 있습니다.</div>`;
+  return `<section class="panel learning-review-issues" aria-label="검토 중 확인된 사항">
+    <div class="panel-header"><div class="panel-title-group"><span class="material-symbols-outlined icon-sm">report</span>
+      <h3>검토 중 확인된 사항 <span class="learning-issue-count">${view.reviewIssues.length}건</span></h3></div></div>
+    <div class="panel-body">
+      <p class="learning-desc">준비·수집·분석 중 누락이나 실패, 판단 공백으로 기록된 내용입니다. 내용을 확인한 뒤 외부 전문가에게 질문할지 결정하십시오. 실행 제한 사항은 질의서에 자동으로 포함되지 않습니다.</p>
+      <ul class="learning-review-issue-list">${view.reviewIssues.map(issue => `<li class="learning-review-issue ${issue.kind}">
+        <span class="learning-issue-group">${esc(issue.group)}</span><span>${esc(issue.detail)}</span></li>`).join('')}</ul>
+    </div>
+  </section>`;
 }
 
 function render() {
@@ -632,11 +693,13 @@ function render() {
     일반 검토 모델 설정은 <strong>${esc(state.settings.provider)}</strong>입니다. 이 탭의 질의서 작성·답변 정리·최종 재검토는
     로컬 Ollama로 수행합니다. 외부 AI에는 사용자가 직접 전달합니다.</div>` : '';
 
-  const body = !view.inquiry ? renderStep1()
-    : view.inquiry.state === 'DRAFT' ? renderStep2()
-    : `${renderStep3()}${renderStep4()}${renderStep5()}`;
+  const coverage = view.coverage || { total: 0, approved: 0 };
+  const body = !view.inquiry
+    ? renderStep1()
+    : `${renderStep1()}${renderStep2()}${view.inquiry.state === 'DRAFT' ? ''
+      : `${renderStep3(!view.knowledge.length)}${renderStep4(Boolean(view.knowledge.length && coverage.approved < coverage.total))}${renderStep5(Boolean(coverage.total && coverage.approved >= coverage.total))}`}`;
 
-  root.innerHTML = `${providerNote}${messages}${body}`;
+  root.innerHTML = `${providerNote}${messages}${renderReviewIssues()}${body}`;
   for (const node of root.querySelectorAll('input, textarea')) {
     const key = draftKey(node);
     if (Object.hasOwn(view.drafts, key)) {

@@ -5,6 +5,7 @@ import { optimizeDocumentContext } from '../server/parsers/contextOptimizer.js';
 import { chunkLegalDocument } from '../server/parsers/legalDocChunker.js';
 import { resolveBudget, readTokenUsage, estimatePromptTokens, resetCalibration, resolveTokenizerFamily, createTokenCounter } from '../server/law/llmBudget.js';
 import { generateLegalReview } from '../server/law/lawWorkbenchReview.js';
+import { createProgressReporter } from '../server/law/progressReporter.js';
 import { openAiStream, anthropicStream, providerStream } from './llmStreamStub.js';
 
 const noNetwork = globalThis.fetch;
@@ -13,7 +14,7 @@ const previous = Object.fromEntries(keys.map(k => [k, process.env[k]]));
 afterEach(() => { globalThis.fetch = noNetwork; resetCalibration(); for (const k of keys) { if (previous[k] === undefined) delete process.env[k]; else process.env[k] = previous[k]; } });
 const review = { summary: '검토', facts: '사실', legalOpinion: '근거 부족', draftOpinion: '검토 초안', coreIssues: [], legalBasis: [], risks: [], recommendations: [], redlineDiffs: [], furtherChecks: [] };
 const context = { meta: { primaryLawName: '민법' }, officialEvidence: {} };
-const run = (provider, config = {}, documentText = '', query = '면책 검토') => generateLegalReview({ query, preset: 'contract_risk', documentText, workbenchContext: context, llmConfig: { provider, model: 'fixture-model', apiKey: 'fixture', ...config } });
+const run = (provider, config = {}, documentText = '', query = '면책 검토') => generateLegalReview({ query, preset: 'contract_risk', documentText, workbenchContext: context, llmConfig: { provider, model: 'fixture-model', apiKey: 'fixture', pipeline: 'monolithic', ...config } });
 
 test('큰 조항의 말미와 여러 후반 조항을 함께 회수하고 발췌 위치를 추적한다', () => {
   const doc = `제1조(일반) ${'배경 '.repeat(3000)}책임을 일체 부담하지 않는다. TAIL_A 다만 고의는 제외한다.\n제2조(보관) ${'자료 '.repeat(2500)}영구 보관한다. TAIL_B\n제3조(해지) 최고 없이 해지한다. TAIL_C`;
@@ -96,6 +97,47 @@ test('출력이 잘려도 제공자의 사용량과 입력 제한을 보존한�
   assert.equal(result.reviewStatus, 'FAILED');
   assert.equal(result.tokenUsage.outputTokens, 500);
   assert.ok(result.inputBudget.inputLimit > 0);
+});
+
+test('전체 JSON이 잘리면 IRAC를 분할 생성해 합치고 진행 단계를 남긴다', async () => {
+  let calls = 0;
+  const events = [];
+  globalThis.fetch = async (_url, options) => {
+    calls++;
+    if (calls === 1) return openAiStream('{"summary":"', { finishReason: 'length', usage: { prompt_tokens: 1000, completion_tokens: 900 } });
+    return openAiStream(JSON.stringify(review), { usage: { prompt_tokens: 1000, completion_tokens: 120 } });
+  };
+  const result = await generateLegalReview({
+    query: '면책 검토', preset: 'contract_risk', documentText: '', workbenchContext: context,
+    llmConfig: { provider: 'openai', model: 'fixture-model', apiKey: 'fixture', contextTokens: 32000, outputTokens: 900 },
+    progress: createProgressReporter(e => events.push(e))
+  });
+  assert.equal(result.reviewEngine, 'LLM');
+  assert.notEqual(result.reviewStatus, 'FAILED');
+  assert.equal(calls, 5, '최초 전체 호출 + 4개 분할 호출');
+  for (const key of ['llm-part-issues', 'llm-part-opinion', 'llm-part-actions', 'llm-part-draft']) {
+    assert.ok(events.some(e => e.key === key && e.state === 'DONE'), `${key} 완료 이벤트 없음`);
+  }
+  assert.equal(result.llmLedger.totals.calls, 5);
+});
+
+test('필수 항목이 빠진 LLM 응답은 규칙 기반으로 즉시 강등하지 않고 분할 재생성한다', async () => {
+  let calls = 0;
+  globalThis.fetch = async (_url, options) => {
+    calls++;
+    if (calls === 1) return openAiStream(JSON.stringify({ summary: '요약만 반환' }), { usage: { prompt_tokens: 1000, completion_tokens: 30 } });
+    const parts = [
+      { summary: '분할 요약', facts: '확인된 사실', coreIssues: ['쟁점'], legalBasis: [], opposingViews: [], auditConclusion: null },
+      { legalOpinion: '공식 근거 범위 안에서 조건부로 검토합니다.', risks: [], furtherChecks: [] },
+      { recommendations: ['계약서 원문과 공식 근거를 대조합니다.'], redlineDiffs: [] },
+      { draftOpinion: '확인된 사실과 근거만으로 작성한 제한 의견입니다.', disclaimer: '전문가 감수가 필요합니다.' }
+    ];
+    return openAiStream(JSON.stringify(parts[calls - 2]), { usage: { prompt_tokens: 1000, completion_tokens: 40 } });
+  };
+  const result = await run('openai', { contextTokens: 32000, outputTokens: 900 });
+  assert.equal(result.reviewEngine, 'LLM');
+  assert.notEqual(result.reviewStatus, 'FAILED');
+  assert.equal(calls, 5);
 });
 
 test('위험 키워드도 질의어도 없는 조항 말미의 조건을 회수한다', () => {

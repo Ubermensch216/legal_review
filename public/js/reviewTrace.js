@@ -9,8 +9,15 @@
 //  - warn: 제한 사항. 노란 줄로 해당 단계 밑에 붙인다. 완료 후에도 남는다.
 // 완료되면 패널을 자동으로 접고 헤더에 요약만 남긴다. (사용자가 직접 펼친 상태면 유지)
 
-// 파이프라인의 예상 단계 수. 진행 바 길이 계산에만 쓰이며, 실제 단계 수는 사안마다 다르다.
+// 전체 단계 수는 실행 중 확정되지 않으므로 완료 작업 수로 진행률을 추정한다.
 const EXPECTED_STEPS = 12;
+const PHASES = [
+  { group: '준비', id: 'prepare' },
+  { group: '수집', id: 'collect' },
+  { group: '분석', id: 'analyze' },
+  { group: '작성', id: 'write' },
+  { group: '검증', id: 'verify' }
+];
 
 const els = {};
 let steps = new Map();      // key -> { el, notesEl, state }
@@ -32,6 +39,9 @@ export function initReviewTrace() {
   els.sub = document.getElementById('trace-sub');
   els.elapsed = document.getElementById('trace-elapsed');
   els.bar = document.getElementById('trace-bar');
+  els.progressValue = document.getElementById('trace-progress-value');
+  els.progressbar = document.getElementById('trace-progressbar');
+  els.phaseTrack = document.getElementById('trace-phase-track');
   els.body = document.getElementById('trace-body');
   els.list = document.getElementById('trace-list');
 
@@ -40,6 +50,32 @@ export function initReviewTrace() {
     userExpanded = !collapsed;
     els.toggle.setAttribute('aria-expanded', String(!collapsed));
   });
+}
+
+/** 현재 검토의 진행 기록을 버리고 새 검토 전 상태로 되돌린다. */
+export function resetReviewTrace() {
+  clearInterval(timerId);
+  timerId = null;
+  steps = new Map();
+  order = [];
+  startedAt = 0;
+  userExpanded = null;
+  finished = false;
+  running = null;
+
+  if (!els.root) return;
+  els.root.classList.add('hidden');
+  els.root.classList.remove('collapsed');
+  els.root.removeAttribute('data-state');
+  els.root.removeAttribute('data-source');
+  els.root.removeAttribute('data-phase');
+  els.toggle?.setAttribute('aria-expanded', 'true');
+  if (els.list) els.list.innerHTML = '';
+  setOverallProgress(0);
+  if (els.current) els.current.textContent = '검토를 준비하고 있습니다';
+  if (els.sub) els.sub.textContent = '진행 상황이 단계별로 표시됩니다';
+  if (els.elapsed) els.elapsed.textContent = '0.0초';
+  if (els.icon) els.icon.innerHTML = '<span class="trace-pulse"></span>';
 }
 
 /** 새 검토 시작. 패널을 비우고 펼친 상태로 보여준다. */
@@ -55,11 +91,12 @@ export function startReviewTrace({ provider = '', model = '' } = {}) {
   els.root.classList.remove('hidden', 'collapsed');
   els.root.dataset.state = 'running';
   els.root.removeAttribute('data-source');
+  setPhase('준비');
   els.toggle.setAttribute('aria-expanded', 'true');
   els.icon.innerHTML = '<span class="trace-pulse"></span>';
   els.current.textContent = '검토를 시작합니다';
   els.sub.textContent = [provider, model].filter(Boolean).join(' / ') || '진행 상황이 단계별로 표시됩니다';
-  els.bar.style.width = '2%';
+  setOverallProgress(2);
 
   running = null;
   clearInterval(timerId);
@@ -72,11 +109,13 @@ export function pushTraceEvent(event) {
 
   if (event.kind === 'step') {
     if (event.state === 'RUNNING') {
+      setPhase(event.group);
       upsertStep(event, 'RUNNING');
       running = { key: event.key, startedAt: Date.now(), detail: event.detail || '', tickedAt: 0 };
       els.current.textContent = event.label || '검토 진행 중';
       els.sub.textContent = event.detail || '';
     } else {
+      if (!steps.has(event.key)) setPhase(event.group);
       upsertStep(event, event.state || 'DONE');
       if (running?.key === event.key) running = null;
       if (event.detail) els.sub.textContent = event.detail;
@@ -111,7 +150,11 @@ export function finishReviewTrace({ summary = '', totalMs = null, failed = false
 
   const elapsed = totalMs != null ? totalMs : Date.now() - startedAt;
   els.elapsed.textContent = formatElapsed(elapsed);
-  els.bar.style.width = '100%';
+  if (!failed) setOverallProgress(100);
+  else {
+    if (els.progressValue) els.progressValue.textContent = '중단';
+    els.progressbar?.setAttribute('aria-valuetext', '검토 중단');
+  }
 
   running = null;
   // 아직 RUNNING으로 남은 단계는 여기서 닫는다. (스트림이 중간에 끊긴 경우)
@@ -140,10 +183,14 @@ export function finishReviewTrace({ summary = '', totalMs = null, failed = false
 export function showTraceFallback(message) {
   if (!els.root) return;
   startReviewTrace();
+  els.root.dataset.source = 'fallback';
   els.current.textContent = '검토 진행 중';
   els.sub.textContent = message || '진행 상황을 수신할 수 없어 완료까지 기다립니다.';
   els.list.innerHTML = '<li class="trace-empty">이 브라우저에서는 단계별 진행 상황을 받을 수 없습니다.</li>';
   els.bar.style.width = '35%';
+  if (els.progressValue) els.progressValue.textContent = '산정 중';
+  els.progressbar?.removeAttribute('aria-valuenow');
+  els.progressbar?.setAttribute('aria-valuetext', '진행률 산정 중');
 }
 
 /**
@@ -179,9 +226,9 @@ export function renderTraceFromHistory(trace) {
   startReviewTrace();
   clearInterval(timerId);
   finished = true;
+  els.root.dataset.source = 'history';
   for (const event of trace.events) pushTraceEvent(event);
 
-  els.root.dataset.source = 'history';
   els.root.dataset.state = trace.warnCount ? 'warn' : 'done';
   els.icon.innerHTML = `<span class="material-symbols-outlined">${trace.warnCount ? 'warning' : 'history'}</span>`;
   els.current.textContent = '지난 검토의 추론 과정';
@@ -189,7 +236,7 @@ export function renderTraceFromHistory(trace) {
     + ` · ${formatElapsed(trace.totalMs || 0)}`
     + `${trace.warnCount ? ` · 제한 사항 ${trace.warnCount}건` : ''}`;
   els.elapsed.textContent = formatElapsed(trace.totalMs || 0);
-  els.bar.style.width = '100%';
+  setOverallProgress(100);
   els.root.classList.add('collapsed');
   els.toggle.setAttribute('aria-expanded', 'false');
 }
@@ -206,6 +253,7 @@ function upsertStep(event, state) {
   const li = document.createElement('li');
   li.className = 'trace-step';
   li.dataset.state = state;
+  li.dataset.phase = PHASES.find(phase => phase.group === event.group)?.id || '';
   li.innerHTML = `
     <div class="trace-step-head">
       ${event.group ? `<span class="trace-step-group">${escapeHtml(event.group)}</span>` : ''}
@@ -226,6 +274,28 @@ function upsertStep(event, state) {
   // 진행 중인 단계가 항상 보이도록 따라간다.
   if (!els.root.classList.contains('collapsed')) els.body.scrollTop = els.body.scrollHeight;
   return entry;
+}
+
+function setPhase(group) {
+  const index = PHASES.findIndex(phase => phase.group === group);
+  if (index < 0 || !els.phaseTrack) return;
+  const phase = PHASES[index].id;
+  if (els.root.dataset.phase === phase) return;
+  els.root.dataset.phase = phase;
+  for (const [position, node] of [...els.phaseTrack.querySelectorAll('.trace-phase')].entries()) {
+    node.classList.toggle('is-active', position === index);
+    node.classList.toggle('is-past', position < index);
+    if (position === index) node.setAttribute('aria-current', 'step');
+    else node.removeAttribute('aria-current');
+  }
+}
+
+function setOverallProgress(percent) {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  if (els.bar) els.bar.style.width = `${value}%`;
+  if (els.progressValue) els.progressValue.textContent = value === 100 ? '100% 완료' : `약 ${value}%`;
+  els.progressbar?.setAttribute('aria-valuenow', String(value));
+  els.progressbar?.setAttribute('aria-valuetext', value === 100 ? '검토 완료' : `예상 전체 진행률 약 ${value}%`);
 }
 
 function setStepState(key, state, detail, ms) {
@@ -261,8 +331,7 @@ function markWarn() {
 
 function advanceBar() {
   const closed = els.list.querySelectorAll('.trace-step:not([data-state="RUNNING"])').length;
-  const ratio = Math.min(0.95, closed / EXPECTED_STEPS);
-  els.bar.style.width = `${Math.max(2, ratio * 100).toFixed(1)}%`;
+  setOverallProgress(Math.max(2, Math.min(95, closed / EXPECTED_STEPS * 100)));
 }
 
 function formatElapsed(ms) {
@@ -278,4 +347,4 @@ function escapeHtml(text) {
   ));
 }
 
-export default { initReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, renderTraceFromHistory, showTraceFallback };
+export default { initReviewTrace, resetReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, renderTraceFromHistory, showTraceFallback };

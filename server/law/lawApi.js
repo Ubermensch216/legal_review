@@ -5,6 +5,7 @@ import multer from 'multer';
 import { parseDocument } from '../parsers/index.js';
 import { buildWorkbenchContext } from './lawWorkbench.js';
 import { generateLegalReview } from './lawWorkbenchReview.js';
+import { createLlmSession } from '../reasoning/llmGateway.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
 import { validDate } from './evidence.js';
@@ -259,17 +260,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       });
     }
 
-    // 1. 법령 워크벤치 데이터 구축 (공식 조문, 판례, 영향분석 등)
-    const workbenchContext = await buildWorkbenchContext({
-      query,
-      preset,
-      documentText,
-      targetLaw,
-      targetDate,
-      progress
-    });
-
-    // 2. LLM 10대 검토의견서 생성
+    // 목록 선별부터 최종 검토까지 같은 제공자 설정과 호출 원장을 사용한다.
     let chosenModel = req.body.llmModel;
     if (manualLearning) {
       // 수동 학습 모드는 반드시 로컬 Ollama만 사용한다.
@@ -298,6 +289,13 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       llmConfig.url = req.body.llmUrl;
     }
 
+    // 1. 법령 워크벤치 데이터 구축: 목록 선별 후 필요한 공식 본문만 수집한다.
+    const llmSession = createLlmSession();
+    const workbenchContext = await buildWorkbenchContext({ query, preset, documentText, targetLaw, targetDate,
+      llmConfig, session: llmSession, progress });
+
+    // 2. LLM 검토의견서 생성
+
     if (manualLearning) workbenchContext.meta.learningMode = 'manual';
 
     // 같은 사건의 재검토. 이 값이 있으면 그 검토에서 승인한 지식을 쟁점어 일치 없이도 싣는다.
@@ -317,6 +315,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       documentText,
       workbenchContext,
       llmConfig,
+      llmSession,
       sourceHistoryId,
       progress
     });
@@ -327,6 +326,13 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     const dataIntegrity = workbenchContext.meta?.dataIntegrity || {};
     const reviewIsFallback = Boolean(reviewResult?.isFallback);
     const warnings = reportWarnings({ meta: workbenchContext.meta, review: reviewResult });
+    const learningReferences = Array.isArray(reviewResult?.learningReferences) ? reviewResult.learningReferences : [];
+    const externalKnowledge = {
+      applied: learningReferences.length > 0,
+      count: learningReferences.length,
+      humanExpertCount: learningReferences.filter(r => r.source === 'USER_APPROVED_HUMAN_EXPERT').length,
+      externalAiCount: learningReferences.filter(r => r.source !== 'USER_APPROVED_HUMAN_EXPERT').length
+    };
 
     const responsePayload = {
       ok: true,
@@ -337,6 +343,8 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         dataSources: dataIntegrity.sources || {},
         citationConfidence: reviewResult?.factualityVerification?.citationConfidence ?? null,
         isCitationMeasurable: Boolean(reviewResult?.factualityVerification?.isMeasurable),
+        reviewOrigin: externalKnowledge.applied ? 'EXTERNAL_KNOWLEDGE_RERUN' : 'INITIAL_REVIEW',
+        externalKnowledge,
         warnings
       },
       // 이 검토가 어느 사건의 후속이고 어떤 지식을 썼는지 남긴다.

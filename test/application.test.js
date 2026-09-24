@@ -134,3 +134,62 @@ test('요건이 없으면 모델을 부르지 않는다', async () => {
   assert.equal(bodies.length, 0);
   assert.equal(result.stageStatus, 'SKIPPED');
 });
+
+test('한 호출에 안 들어가는 근거는 여러 묶음으로 판단하고 누락 없이 합친다', async () => {
+  const largeRegistry = buildEvidenceRegistry({ meta: { primaryLawName: law, asOfDate: '20260923' },
+    officialEvidence: { lawDetail: { ...OFFICIAL, lawName: law }, articles: [{ ...OFFICIAL, lawName: law,
+      fullArticleNo: '94', title: '변경 절차', enforceDate: '20200101', content: '불리한 변경에는 동의가 필요하다.', paragraphs: [] }],
+    precedents: ['1', '2'].map(id => ({ ...OFFICIAL, id, contentStatus: 'FULL_TEXT', courtName: '대법원',
+      caseNo: `2020다${id}`, summary: `변경 절차 ${'설명 '.repeat(1300)}` })) } });
+  const bodies = [];
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }] }) };
+    bodies.push(JSON.parse(options.body));
+    return reply(JSON.stringify({ reasoning: '', narrative: '', assessments: [{ elementId: 'A1.E1', status: 'SATISFIED',
+      proof: 'SUFFICIENT', factIds: [], contraryFactIds: [], evidenceIds: [], analysis: '', openQuestion: '' }],
+    precedents: [], counter: { position: '', evidenceIds: [], response: '' } }));
+  };
+  const result = await run({ registry: largeRegistry, elements: [el('A1.E1')], facts: [],
+    research: { evidenceIds: ['A1', 'P1', 'P2'], adverseCandidateIds: [], documentIds: [] } });
+  assert.ok(bodies.length >= 2);
+  assert.deepEqual(result.omittedEvidence, []);
+  assert.deepEqual(result.evidenceIds, ['A1', 'P1', 'P2']);
+  assert.equal(result.stageStatus, 'OK');
+});
+
+test('요건이 열 개를 넘어도 요건별 묶음 호출을 합쳐 누락 없이 판단한다', async () => {
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: `A1.E${i + 1}`, text: `필수 요건 ${i + 1}`,
+    mandatory: true, isException: false, sourceIds: ['A1.1'] }));
+  const bodies = [];
+  globalThis.fetch = async (url, options) => {
+    if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }] }) };
+    const body = JSON.parse(options.body);
+    bodies.push(body);
+    const ids = body.format.properties.assessments.items.properties.elementId.enum;
+    return reply(JSON.stringify({ reasoning: '', narrative: '', assessments: ids.map(elementId => ({ elementId,
+      status: 'SATISFIED', proof: 'SUFFICIENT', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1'], analysis: '', openQuestion: '' })),
+    precedents: [], counter: { position: '', evidenceIds: [], response: '' } }));
+  };
+  const result = await run({ elements: many, research: { evidenceIds: ['A1.1'], adverseCandidateIds: [], documentIds: [] } });
+  assert.equal(bodies.length, 3);
+  assert.equal(result.assessments.length, 12);
+  assert.deepEqual(result.assessments.map(a => a.elementId), many.map(e => e.id));
+  assert.equal(result.stageStatus, 'OK');
+});
+
+test('하위 항이 없는 긴 근거도 원문 조각으로 나누어 포섭한다', async () => {
+  const longText = '동의를 받아야 한다. '.repeat(200);
+  const reg = buildEvidenceRegistry({ meta: { primaryLawName: law, asOfDate: '20260923' },
+    officialEvidence: { lawDetail: { ...OFFICIAL, lawName: law }, articles: [
+      { ...OFFICIAL, lawName: law, fullArticleNo: '94', title: '변경 절차', enforceDate: '20200101', content: longText, paragraphs: [] }] } });
+  const bodies = fakeOllama(() => reply(JSON.stringify({ reasoning: '', narrative: '', assessments: [
+    { elementId: 'A1.E1', status: 'SATISFIED', proof: 'SUFFICIENT', factIds: [], contraryFactIds: [],
+      evidenceIds: ['A1'], analysis: '', openQuestion: '' }], precedents: [], counter: { position: '', evidenceIds: [], response: '' } })));
+  const result = await run({ registry: reg, elements: [el('A1.E1')], facts: [],
+    research: { evidenceIds: ['A1'], adverseCandidateIds: [], documentIds: [] },
+    config: { budget: { ...budget, inputLimit: 2800 }, think: false } });
+  assert.ok(bodies.length > 1);
+  assert.deepEqual(result.omittedEvidence, []);
+  assert.equal(result.stageStatus, 'OK');
+  assert.ok(bodies.some(b => /원문 \d+-\d+/.test(b.messages[1].content)));
+});

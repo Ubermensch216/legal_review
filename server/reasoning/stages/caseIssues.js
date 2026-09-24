@@ -5,9 +5,9 @@
 //   - 사실의 인용문이 첨부문서(또는 질의)에 실제로 있는가 → 없으면 INFERRED로 강등
 //   - 근거 ID가 등록부에 있는가 → 없으면 버리고 rejectedIds에 남긴다
 //   - 쟁점 중복·상한·선결관계 순환
-import { runStage } from '../stageRunner.js';
+import { runStage, StageError } from '../stageRunner.js';
 import { caseIssuesSchema, PRIORITIES } from '../schemas.js';
-import { REASONING_SYSTEM } from '../prompts.js';
+import { buildCommonPrefix, REASONING_SYSTEM } from '../prompts.js';
 
 const TASK = ({ maxIssues }) => `[과제: 사건 사실과 법률 쟁점 정리]
 1. facts: 판단에 필요한 사실만 뽑는다. docRef에는 그 사실이 적힌 첨부문서 조항 ID(D…)를, 질의에만 있으면 "QUERY"를 쓴다.
@@ -170,11 +170,92 @@ export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5 }) {
  * @param {string} args.prefix buildCommonPrefix(...).text — 이후 단계와 공유한다
  * @param {object} args.config 게이트웨이 설정(budget, model). think는 여기서 false로 고정한다.
  */
-export async function planCaseAndIssues({ registry, query, prefix, provider, config, session, maxIssues = 5 }) {
+export async function planCaseAndIssues({ registry, query, preset, prefix, provider, config, session, maxIssues = 5, forceSplit = false }) {
   const schema = caseIssuesSchema({ maxIssues: maxIssues + 2 }); // 병합·상한 정리 여지를 조금 둔다
-  const { value, attempts } = await runStage({ stage: 's1', provider, system: REASONING_SYSTEM,
-    prefix, task: TASK({ maxIssues }), schema, config: { ...config, think: false }, session });
-  const result = normalizeCaseIssues(value, { registry, query, maxIssues });
-  result.diagnostics.attempts = attempts;
-  return result;
+  const run = (text, stage) => runStage({ stage, provider, system: REASONING_SYSTEM,
+    prefix: text, task: TASK({ maxIssues }), schema, config: { ...config, think: false }, session });
+  try {
+    if (forceSplit) throw new StageError('s1', '공통 입력에서 문서 조각이 제외되어 조각별 추출로 전환합니다.',
+      { budgetExceeded: true });
+    const { value, attempts } = await run(prefix, 's1');
+    const result = normalizeCaseIssues(value, { registry, query, maxIssues });
+    result.diagnostics.attempts = attempts;
+    return result;
+  } catch (err) {
+    if (!(err instanceof StageError) || !(err.budgetExceeded || err.cause?.truncated)) throw err;
+    // 긴 첨부문서는 원문 조각마다 쟁점을 추출하고 ID를 합친 뒤 한 번만 정규화한다.
+    // 예산이 부족한 조각은 기록한다. 일부 조각의 실패로 다른 쟁점을 버리지 않는다.
+    const documentIds = registry.ids(e => e.kind === 'DOCUMENT')
+      .flatMap(id => { const parts = registry.children(id).filter(e => e.kind === 'DOCUMENT_PART'); return parts.length ? parts.map(e => e.id) : [id]; });
+    const batches = [];
+    let current = [];
+    let chars = 0;
+    for (const id of documentIds) {
+      const length = registry.get(id)?.text.length || 0;
+      if (current.length && chars + length > 2400) { batches.push(current); current = []; chars = 0; }
+      current.push(id); chars += length;
+    }
+    if (current.length) batches.push(current);
+    const collected = { facts: [], issues: [], unknownFacts: [] };
+    const skippedDocumentIds = [];
+    const skippedQueryRanges = [];
+    let indexOmitted = 0;
+    let splitCalls = 0;
+    const firstQuery = query.slice(0, 2000);
+    const tasks = firstQuery ? [{ ids: [], queryText: firstQuery, queryRange: [0, Math.min(query.length, 2000)] }] : [];
+    tasks.push(...batches.map(ids => ({ ids, queryText: firstQuery })));
+    if (!tasks.length) throw err;
+    for (let start = 2000; start < query.length; start += 2000) {
+      tasks.push({ ids: [], queryText: query.slice(start, start + 2000),
+        queryRange: [start, Math.min(query.length, start + 2000)] });
+    }
+    let partNo = 0;
+    const processTask = async task => {
+      const compact = buildCommonPrefix({ registry, query: task.queryText, preset,
+        budgets: { document: 3000, index: 1200 }, documentIds: task.ids });
+      indexOmitted = Math.max(indexOmitted, compact.indexOmitted);
+      try {
+        if (compact.documentOmitted.length) throw new StageError('s1', '문서 조각이 입력에서 제외되었습니다.', { budgetExceeded: true });
+        const index = ++partNo;
+        const { value } = await run(compact.text, `s1:part:${index}`);
+        splitCalls++;
+        const factIds = new Map((value.facts || []).map(f => [f.id, `B${index}:${f.id}`]));
+        const issueIds = new Map((value.issues || []).map(i => [i.id, `B${index}:${i.id}`]));
+        collected.facts.push(...(value.facts || []).map(f => ({ ...f, id: factIds.get(f.id) })));
+        collected.issues.push(...(value.issues || []).map(i => ({ ...i, id: issueIds.get(i.id),
+          factIds: (i.factIds || []).map(id => factIds.get(id)).filter(Boolean),
+          dependsOn: (i.dependsOn || []).map(id => issueIds.get(id)).filter(Boolean) })));
+        collected.unknownFacts.push(...(value.unknownFacts || []));
+      } catch (partError) {
+        if (!(partError instanceof StageError)) throw partError;
+        if (partError.budgetExceeded || partError.cause?.truncated) {
+          if (task.ids.length > 1) {
+            const middle = Math.ceil(task.ids.length / 2);
+            await processTask({ ...task, ids: task.ids.slice(0, middle) });
+            await processTask({ ...task, ids: task.ids.slice(middle) });
+            return;
+          }
+          if (task.queryText.length > 500) {
+            const middle = Math.floor(task.queryText.length / 2);
+            await processTask({ ...task, queryText: task.queryText.slice(0, middle),
+              queryRange: task.queryRange && [task.queryRange[0], task.queryRange[0] + middle] });
+            await processTask({ ...task, queryText: task.queryText.slice(middle),
+              queryRange: task.queryRange && [task.queryRange[0] + middle, task.queryRange[1]] });
+            return;
+          }
+        }
+        skippedDocumentIds.push(...task.ids);
+        if (task.queryRange) skippedQueryRanges.push(task.queryRange);
+      }
+    };
+    for (const task of tasks) await processTask(task);
+    if (!collected.issues.length) throw err;
+    const result = normalizeCaseIssues(collected, { registry, query, maxIssues });
+    result.diagnostics.splitCalls = splitCalls;
+    result.diagnostics.skippedDocumentIds = [...new Set(skippedDocumentIds)];
+    result.diagnostics.skippedQueryRanges = skippedQueryRanges;
+    result.diagnostics.queryTruncated = skippedQueryRanges.length > 0;
+    result.diagnostics.indexOmitted = indexOmitted;
+    return result;
+  }
 }

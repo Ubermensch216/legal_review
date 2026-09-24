@@ -29,6 +29,13 @@ export async function initHistoryDrawer() {
     });
   }
 
+  // 드로어 바깥을 클릭하면 닫는다. 열기 버튼 자체를 누른 경우에는 즉시 닫히지 않도록 제외한다.
+  document.addEventListener('click', (event) => {
+    if (!drawer?.classList.contains('open')) return;
+    if (drawer.contains(event.target) || btnOpen?.contains(event.target)) return;
+    closeHistoryDrawer();
+  });
+
   if (btnClearAll) {
     btnClearAll.addEventListener('click', async () => {
       if (confirm('브라우저에 영구 저장된 모든 검토 이력을 완전히 삭제하시겠습니까?')) {

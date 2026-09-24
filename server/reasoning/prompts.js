@@ -1,10 +1,10 @@
 // server/reasoning/prompts.js - 단계형 파이프라인의 공통 지시문과 공통 접두부
 //
-// 모든 단계가 같은 system 문자열과 같은 공통 접두부로 시작한다. 이 둘이 바이트 단위로 같아야
-// 로컬 Ollama가 앞 단계의 KV 캐시를 재사용한다(실측: 5.2k 토큰 입력 처리 14.5초 → 0.3초).
-// 단계별 지시는 전부 접두부 뒤의 접미부에 둔다. 여기 문자열을 바꾸면 promptVersion을 올린다.
+// 모든 단계가 같은 system 문자열을 사용한다. 사건 전체 접두부는 S1에만 사용하고,
+// 이후 단계에는 해당 조문·쟁점·주장에 필요한 자료만 싣는다.
+// 여기 문자열을 바꾸면 promptVersion을 올린다.
 
-export const PROMPT_VERSION = 'r1';
+export const PROMPT_VERSION = 'r2';
 
 export const REASONING_SYSTEM = [
   '당신은 대한민국 법률 검토를 돕는 분석 도구입니다.',
@@ -37,8 +37,8 @@ const PRESET_FOCUS = {
  * @param {{ document: number, index: number }} args.budgets 섹션별 문자 예산
  * @returns {{ text: string, documentIncluded: string[], documentOmitted: string[], indexOmitted: number }}
  */
-export function buildCommonPrefix({ registry, query, preset, budgets }) {
-  const documentIds = registry.ids(e => e.kind === 'DOCUMENT');
+export function buildCommonPrefix({ registry, query, preset, budgets, documentIds = null }) {
+  documentIds ||= registry.ids(e => e.kind === 'DOCUMENT');
   const document = registry.renderFull(documentIds, { maxChars: budgets.document });
   const index = registry.renderIndex({ kinds: ['ARTICLE', 'ORDINANCE_ARTICLE', 'ADMIN_RULE', 'PRECEDENT', 'INTERPRETATION', 'KNOWLEDGE'],
     maxChars: budgets.index });

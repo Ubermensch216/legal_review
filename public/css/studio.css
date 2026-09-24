@@ -41,6 +41,36 @@
   overflow-y: auto;
 }
 
+/* 1-1. Law Tools Drawer */
+.tools-drawer {
+  position: fixed;
+  top: 0;
+  right: -900px;
+  width: min(860px, 100vw);
+  height: 100vh;
+  background: #FFFFFF;
+  border-left: 1px solid var(--border-color);
+  box-shadow: -4px 0 24px rgba(0,0,0,0.18);
+  z-index: 85;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tools-drawer.open {
+  right: 0;
+}
+
+.tools-drawer-body {
+  flex: 1;
+  min-height: 0;
+}
+
+.tools-drawer .tools-layout {
+  height: 100%;
+  min-height: 0;
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
@@ -350,7 +380,8 @@
 
 @media (max-width: 768px) {
   .studio-drawer,
-  .history-drawer {
+  .history-drawer,
+  .tools-drawer {
     width: 100%;
     right: -100%;
   }

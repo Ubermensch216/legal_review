@@ -16,6 +16,9 @@ const list = (value, label, max = 12) => {
 };
 
 const QUESTION_HEADING = '## 소형 AI가 해결하지 못한 질문';
+const MAX_CARD_KEYWORDS = 12;
+const MAX_CARD_CHECKLIST = 20;
+const MAX_CARD_CITATIONS = 20;
 
 /**
  * 질문 목록은 질의서 본문에서 파생한다. 사용자가 본문을 편집할 수 있으므로
@@ -51,7 +54,9 @@ export function parseStructuredCard(text) {
     try { parsed = JSON.parse(candidate); } catch { continue; }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
     const card = parsed.card && typeof parsed.card === 'object' ? parsed.card : parsed;
-    return { card, answeredQuestions: parsed.answeredQuestions, answers: parsed.answers };
+    // 질의서의 JSON을 그대로 붙여넣는 경우에도 질문 연결 번호를 보존한다.
+    // 일부 외부 AI는 이를 card 안에 넣으므로 두 위치를 모두 읽는다.
+    return { card, answeredQuestions: parsed.answeredQuestions ?? card.answeredQuestions, answers: parsed.answers };
   }
   throw learningError('붙여넣은 내용에서 지식 카드 JSON을 찾지 못했습니다. 질의서 마지막에 요청한 JSON 부분을 붙여넣으십시오.');
 }
@@ -110,17 +115,17 @@ export function validateKnowledgeCard(card) {
   if (!card || typeof card !== 'object' || Array.isArray(card)) throw learningError('지식 카드 형식이 올바르지 않습니다.');
   const result = { title: str(card.title, '제목', 160), issue: str(card.issue, '쟁점'),
     conditions: list(card.conditions, '적용 조건'), exceptions: list(card.exceptions, '예외'),
-    principles: list(card.principles, '검토 원리'), checklist: list(card.checklist, '점검 순서'),
-    keywords: list(card.keywords, '검색어', 10).map(x => str(x, '검색어', 60)),
+    principles: list(card.principles, '검토 원리'), checklist: list(card.checklist, '점검 순서', MAX_CARD_CHECKLIST),
+    keywords: list(card.keywords, '검색어', MAX_CARD_KEYWORDS).map(x => str(x, '검색어', 60)),
     citations: (Array.isArray(card.citations) ? card.citations : []).map(c => ({ lawName: str(c?.lawName, '법령명', 180), articleNo: str(c?.articleNo, '조항', 80) })) };
   if (!result.conditions.length || !result.principles.length || !result.checklist.length || result.keywords.length < 2
-    || result.citations.length > 15 || JSON.stringify(result).length > 14000) throw learningError('적용 조건·검토 원리·점검 순서와 검색어 2개 이상이 필요합니다. 카드 전체는 14,000자 이하여야 합니다.');
+    || result.citations.length > MAX_CARD_CITATIONS || JSON.stringify(result).length > 14000) throw learningError('적용 조건·검토 원리·점검 순서와 검색어 2개 이상이 필요합니다. 카드 전체는 14,000자 이하여야 합니다.');
   return result;
 }
 
 const CARD_SCHEMA = '{"title":"제목","issue":"쟁점","conditions":["적용 조건"],"exceptions":["예외·적용 제외"],"principles":["근거와 검토 원리"],"checklist":["확인 순서"],"keywords":["쟁점어1","쟁점어2"],"citations":[{"lawName":"법령명","articleNo":"제1조"}]}';
-// 단계형 검토의 질의서는 질문마다 답을 따로 받는다. 답이 어느 쟁점·요건의 공백을 메우는지 잇기 위해서다.
-const ANSWERS_SCHEMA = `{"answers":[{"questionNo":1,"position":"판단 요지","conditions":["적용 조건"],"exceptions":["예외"],"checklist":["확인 순서"],"citations":[{"lawName":"법령명","articleNo":"제1조 제1항"}],"cases":["2019두12345"],"confidence":"확실|견해 대립|미확인"}],"card":${CARD_SCHEMA}}`;
+const ANSWER_ITEM_SCHEMA = '{"questionNo":1,"position":"판단 요지","conditions":["적용 조건"],"exceptions":[],"checklist":["확인 순서"],"citations":[],"cases":[],"confidence":"미확인"}';
+const INQUIRY_CARD_SCHEMA = `{"answers":[${ANSWER_ITEM_SCHEMA}],"card":${CARD_SCHEMA}}`;
 const ANSWER_CONFIDENCE = ['확실', '견해 대립', '미확인'];
 
 /**
@@ -147,15 +152,40 @@ export function normalizeAnswers(value, questions) {
   return answers.sort((a, b) => a.questionNo - b.questionNo);
 }
 
+/** 구조화 JSON을 선택한 경우에는 질문마다 정확히 한 답변을 요구한다. */
+export function validateStructuredAnswers(value, questions) {
+  const expected = (questions || []).map(q => q.no).sort((a, b) => a - b);
+  if (!Array.isArray(value) || value.length !== expected.length) {
+    throw learningError(`질문별 답변 형식이 맞지 않습니다. answers에 질문 ${expected.join(', ')}번을 각각 한 번씩 포함하십시오.`);
+  }
+  const actual = value.map(a => Number(a?.questionNo)).sort((a, b) => a - b);
+  if (actual.some((no, i) => no !== expected[i]) || actual.some(no => !Number.isSafeInteger(no))) {
+    throw learningError(`질문별 답변 형식이 맞지 않습니다. answers의 questionNo는 ${expected.join(', ')}번이어야 합니다.`);
+  }
+  for (const answer of value) {
+    if (typeof answer?.position !== 'string' || !answer.position.trim()) {
+      throw learningError(`질문 ${answer?.questionNo ?? '?'}번의 position(판단 요지)을 작성하십시오.`);
+    }
+    for (const key of ['conditions', 'exceptions', 'checklist', 'citations', 'cases']) {
+      if (!Array.isArray(answer[key])) throw learningError(`질문 ${answer.questionNo}번의 ${key}는 목록이어야 합니다.`);
+    }
+    if (!ANSWER_CONFIDENCE.includes(answer.confidence)) {
+      throw learningError(`질문 ${answer.questionNo}번의 confidence는 확실·견해 대립·미확인 중 하나여야 합니다.`);
+    }
+  }
+  return normalizeAnswers(value, questions);
+}
+
 /** 질의서 본문. 기존 방식과 단계형 방식이 같은 머리말·순서를 쓴다(질문 번호 파서가 이 형식을 읽는다). */
-function inquiryText({ facts, logic, questions, missing, answerSchema }) {
+function inquiryText({ facts, logic, questions, missing }) {
   return ['# 비식별 법률 검토 질의서',
-    '아래는 가명·변수로 추상화한 사안입니다. 확인되지 않은 사실을 가정하지 말고, 적용 요건과 예외를 구분해 답변해 주세요.',
+    '아래 사실과 조건을 전제로, 번호가 붙은 질문에 필요한 법률 판단만 답하십시오. 명시되지 않은 사실이나 개인·기관의 정체를 추정하지 마십시오.',
     '## 추상 사실관계', ...facts.map(x => `- ${x}`), '## 반드시 보존할 판단 조건', ...logic.map(x => `- ${x}`),
     QUESTION_HEADING, ...questions.map((x, i) => `${i + 1}. ${x}`),
     '## 추가 확인이 필요한 사실', ...(missing.length ? missing.map(x => `- ${x}`) : ['- 명시된 사실 이외에는 추정하지 마세요.']),
-    '## 요청하는 답변', '각 질문의 적용 조건·예외·검토 순서와 근거 법령의 정확한 조·항·호, 버전·시행일을 밝혀 주세요. 근거를 확인할 수 없으면 미확인으로 표시해 주세요. 개인·기관을 추정하지 마세요.',
-    '마지막에 다음 JSON 형식으로 재사용 가능한 검토 지식을 정리해 주세요(확인되지 않은 인용은 넣지 마세요).', answerSchema].join('\n\n');
+    '## 출력 형식',
+    '아래 형식의 유효한 JSON 객체 하나만 출력하십시오. JSON 앞뒤의 설명, 인사말, 마크다운 코드 블록, 각주를 쓰지 마십시오. answers에는 위 질문 번호마다 정확히 한 항목을 넣고, position에는 해당 질문의 직접적인 판단 요지만 적으십시오. conditions·exceptions·checklist에는 판단에 필요한 사항만 간결하게 적으십시오. 확인한 법령의 정확한 조·항·호만 citations에 넣고, 확인하지 못한 법령·판례는 만들어 내지 말고 빈 배열로 두십시오. 답을 확인할 수 없으면 position에 "미확인"이라고 적고 confidence를 "미확인"으로 설정하십시오. confidence는 "확실", "견해 대립", "미확인" 중 하나만 쓰십시오. card에는 답변에서 확인된 재사용 가능 원칙만 요약하고, 확인되지 않은 인용은 넣지 마십시오. 배열에 해당 내용이 없으면 []를 쓰십시오.',
+    INQUIRY_CARD_SCHEMA].join('\n\n');
 }
 /**
  * 로컬 AI에 넘기기 전에 입력이 예산에 들어가는지 확인한다.
@@ -262,7 +292,7 @@ export function createManualLearningService({ store = getLearningStore(), histor
     const logic = list(abstraction?.preservedLogic, '핵심 조건');
     const missing = list(abstraction?.missingFacts ?? [], '누락 사실');
     if (!facts.length || !logic.length) throw learningError('질문에 필요한 사실·조건을 추상화하지 못했습니다.', 502);
-    const redacted = redactLearningText(inquiryText({ facts, logic, questions, missing, answerSchema: ANSWERS_SCHEMA }), terms);
+    const redacted = redactLearningText(inquiryText({ facts, logic, questions, missing }), terms);
     const parsed = parseInquiryQuestions(redacted.text);
     // 질문 번호 ↔ 공백. 사용자가 추가한 질문(focus)은 연결 대상이 없다.
     const anchors = gaps.map((g, i) => ({ no: i + 1, gapId: g.id, issueId: g.issueId, elementId: g.elementId, type: g.type }))
@@ -301,14 +331,14 @@ export function createManualLearningService({ store = getLearningStore(), histor
       const questions = list(analysis.questions, '미해결 질문');
       const missing = list(analysis.missingFacts, '누락 사실');
       if (!facts.length || !logic.length || !questions.length) throw learningError('판단에 필요한 사실·조건·미해결 질문이 충분하지 않습니다.', 502);
-      const text = inquiryText({ facts, logic, questions, missing, answerSchema: CARD_SCHEMA });
+      const text = inquiryText({ facts, logic, questions, missing });
       const redacted = redactLearningText(text, terms);
       // 로컬 모델이 지목한 단어는 바로 치환하지 않는다. '위탁'·'사용료 징수권'처럼 법률 판단에
       // 꼭 필요한 용어까지 가려 질의서를 못 쓰게 만드는 일이 있다. 제안으로만 남기고 사람이 고른다.
       // 제안 목록에는 식별자가 들어 있을 수 있으므로 DRAFT 동안만 보관하고 반출 확인 시 지운다.
       const proposedTerms = privateTerms(analysis.sensitiveTerms || []).filter(term => redacted.text.includes(term));
       return { needsHelp: true, item: store.create('inquiry', input.historyId, { text: redacted.text, redactions: redacted.counts,
-        questions: parseInquiryQuestions(redacted.text), proposedTerms,
+        questions: parseInquiryQuestions(redacted.text), proposedTerms, answerFormat: 'STRICT_ANSWERS',
         scope: learningScope(context), analysisSource: 'LOCAL_OLLAMA', privacyStatus: 'HUMAN_REVIEW_REQUIRED' }) };
     },
     editInquiry(id, input) {
@@ -376,6 +406,12 @@ export function createManualLearningService({ store = getLearningStore(), histor
       if (structured) {
         // 대형 AI가 질의서 요청대로 JSON으로 정리해 준 경우. 로컬 AI를 호출하지 않는다.
         const parsed = parseStructuredCard(cleaned);
+        if (item.answerFormat === 'STRICT_ANSWERS') {
+          if (parsed.answers === undefined) {
+            throw learningError('질문별 답변 형식이 필요합니다. 질의서가 요청한 answers와 card JSON을 그대로 붙여넣으십시오.');
+          }
+          validateStructuredAnswers(parsed.answers, questions);
+        }
         output = { card: parsed.card, answeredQuestions: parsed.answeredQuestions, answers: parsed.answers, sensitiveTerms: [] };
       } else if (room.overTokens <= 0) {
         output = await local(CARD_SYSTEM, prompt, { task: 'card' });

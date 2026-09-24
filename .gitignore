@@ -9,6 +9,7 @@ Thumbs.db
 
 data/cache/*.db-wal
 data/cache/*.db-shm
+data/cache/llm-calibration.json
 
 # 비밀정보. .env 본체뿐 아니라 백업·로컬 변형까지 모두 막는다.
 # (.env만 막아두면 .env.bak / .env.local 같은 사본으로 API 키가 커밋된다)

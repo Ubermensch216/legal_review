@@ -53,7 +53,7 @@ export async function getLawDetail(lawId, lawSeq = '', options = {}) {
   const enforceDate = options.enforceDate ? validDate(options.enforceDate) : '';
   if (options.enforceDate && !enforceDate) throw new Error('올바른 시행일자가 필요합니다.');
   const target = enforceDate || !lawSeq ? 'eflaw' : 'law';
-  const cacheKey = `v2:detail:${target}:${lawId || ''}:${lawSeq}:${enforceDate}`;
+  const cacheKey = `v3:detail:${target}:${lawId || ''}:${lawSeq}:${enforceDate}`;
   const cached = await getCache(cacheKey);
   if (isOfficial(cached) && cached.contentStatus === 'FULL_TEXT') return cached;
   if (!ENV.LAW_OC) return ENV.LAW_DEMO_MODE ? getMockLawDetail(lawId) : null;

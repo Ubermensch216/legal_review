@@ -1,11 +1,11 @@
 // public/js/app.js - 메인 프론트엔드 엔트리포인트 및 이벤트 바인딩
 import { state, saveSettings } from './state.js';
-import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs } from './lawWorkbench.js';
+import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs, resetWorkbench } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
-import { initDocumentStudio } from './documentStudio.js';
+import { initDocumentStudio, resetStudio } from './documentStudio.js';
 import { initHistoryDrawer, refreshHistoryList, addHistoryRecord } from './history.js';
 import { initLearningTab } from './learningTab.js';
-import { initReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, showTraceFallback } from './reviewTrace.js';
+import { initReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, showTraceFallback, resetReviewTrace } from './reviewTrace.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 모듈 초기화
@@ -17,7 +17,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   initHistoryDrawer();
   initPresetChips();
   initFileDropzone();
+  initReviewInputStepToggles();
   initReviewForm();
+  initNewReviewButton();
   initSettingsModal();
   initToolsModal();
 
@@ -83,6 +85,7 @@ function initPresetChips() {
         if (targetLawInput && (!targetLawInput.value.trim() || Object.values(PRESET_EXPERT_PROMPTS).some(p => p.targetLaw === targetLawInput.value.trim()))) {
           targetLawInput.value = template.targetLaw;
         }
+        updateQueryOptionsSummary();
       }
     });
   });
@@ -102,9 +105,135 @@ function initPresetChips() {
         targetLawInput.value = '';
       }
 
+      updateQueryOptionsSummary();
       resetWorkbenchTabs();
     });
   }
+}
+
+function updateQueryOptionsSummary() {
+  const summary = document.getElementById('query-options-summary');
+  if (!summary) return;
+
+  const targetLaw = document.getElementById('input-target-law')?.value.trim();
+  const targetDate = document.getElementById('input-target-date')?.value.trim();
+  const values = [];
+  if (targetLaw) values.push(`기준 법령: ${targetLaw}`);
+  if (targetDate) values.push(`기준 시점: ${targetDate}`);
+  summary.textContent = values.length ? values.join(' · ') : 'AI 자동 판별 · 현행 법령 기준';
+}
+
+function updateCollapsedInputSummaries() {
+  const fileSummary = document.getElementById('document-summary-text');
+  const querySummary = document.getElementById('query-summary-text');
+  const query = document.getElementById('input-query')?.value.trim() || '';
+  const targetLaw = document.getElementById('input-target-law')?.value.trim() || '';
+  const targetDate = document.getElementById('input-target-date')?.value.trim() || '';
+  const activePreset = document.querySelector('.chip.active');
+  const presetLabel = activePreset?.querySelector('span:last-child')?.textContent.trim();
+
+  if (fileSummary) {
+    fileSummary.textContent = state.selectedFile?.name || '첨부 문서 없음 · 직접 질의로 검토';
+  }
+
+  if (querySummary) {
+    const parts = [presetLabel ? `템플릿: ${presetLabel}` : '직접 작성한 질의'];
+    if (query) parts.push(`질의: ${query.slice(0, 90)}${query.length > 90 ? '…' : ''}`);
+    if (targetLaw) parts.push(`기준 법령: ${targetLaw}`);
+    if (targetDate) parts.push(`기준 시점: ${targetDate}`);
+    querySummary.textContent = parts.join(' · ');
+  }
+}
+
+function setReviewInputStepCollapsed(step, collapsed) {
+  const toggle = step?.querySelector('.step-toggle');
+  if (!toggle) return;
+
+  step.classList.toggle('is-collapsed', collapsed);
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', `${step.querySelector('.step-label')?.textContent.trim()} ${collapsed ? '펼치기' : '접기'}`);
+  toggle.querySelector('.step-toggle-label').textContent = collapsed ? '펼치기' : '접기';
+  toggle.querySelector('.material-symbols-outlined').textContent = collapsed ? 'expand_more' : 'expand_less';
+  step.querySelector('.step-collapsed-summary')?.setAttribute('aria-hidden', String(!collapsed));
+}
+
+function setReviewInputStepsCollapsed(collapsed) {
+  document.querySelectorAll('.step-document, .step-query').forEach(step => {
+    setReviewInputStepCollapsed(step, collapsed);
+  });
+}
+
+function initReviewInputStepToggles() {
+  document.querySelectorAll('.step-document, .step-query').forEach(step => {
+    step.querySelector('.step-toggle')?.addEventListener('click', () => {
+      if (!step.classList.contains('is-collapsed')) updateCollapsedInputSummaries();
+      setReviewInputStepCollapsed(step, !step.classList.contains('is-collapsed'));
+    });
+  });
+}
+
+/**
+ * 현재 화면의 입력·첨부 파일·검토 결과만 비우고 새 리뷰를 시작한다.
+ * 저장된 검토 이력은 다시 불러올 수 있어야 하므로 IndexedDB/서버 이력은 건드리지 않는다.
+ */
+function initNewReviewButton() {
+  const button = document.getElementById('btn-new-review');
+  if (!button) return;
+
+  button.addEventListener('click', () => {
+    if (state.isReviewing) {
+      alert('검토가 진행 중입니다. 현재 검토가 끝난 후 새 리뷰를 시작해주세요.');
+      return;
+    }
+
+    const trace = document.getElementById('review-trace');
+    const hasCurrentReview = Boolean(
+      state.lastReviewResult
+      || state.selectedFile
+      || document.getElementById('input-query')?.value.trim()
+      || document.getElementById('input-target-law')?.value.trim()
+      || document.getElementById('input-target-date')?.value
+      || (trace && !trace.classList.contains('hidden'))
+    );
+
+    if (hasCurrentReview && !confirm('현재 입력, 첨부 파일, 검토 결과와 진행 기록을 초기화하고 새 리뷰를 시작하시겠습니까?\n\n저장된 검토 이력은 삭제되지 않습니다.')) {
+      return;
+    }
+
+    resetCurrentReview();
+  });
+}
+
+function resetCurrentReview() {
+  const queryInput = document.getElementById('input-query');
+  const targetLawInput = document.getElementById('input-target-law');
+  const targetDateInput = document.getElementById('input-target-date');
+  const fileInput = document.getElementById('file-input');
+  const attachedInfo = document.getElementById('attached-file-info');
+  const dropzoneContent = document.getElementById('dropzone-content');
+
+  if (queryInput) queryInput.value = '';
+  if (targetLawInput) targetLawInput.value = '';
+  if (targetDateInput) targetDateInput.value = '';
+  if (fileInput) fileInput.value = '';
+  if (attachedInfo) attachedInfo.classList.add('hidden');
+  if (dropzoneContent) dropzoneContent.classList.remove('hidden');
+  setReviewInputStepsCollapsed(false);
+  document.querySelectorAll('.query-details').forEach(details => { details.open = false; });
+
+  document.querySelectorAll('.chip').forEach(chip => chip.classList.remove('active'));
+  state.currentPreset = '';
+  state.selectedFile = null;
+  state.lastReviewResult = null;
+  state.sourceHistoryId = null;
+  state.manualLearningRerun = false;
+  window.__reliability = null;
+  updateQueryOptionsSummary();
+
+  resetWorkbench();
+  resetReviewTrace();
+  resetStudio();
+  document.getElementById('input-query')?.focus();
 }
 
 /**
@@ -182,8 +311,12 @@ function initReviewForm() {
   const targetDateInput = document.getElementById('input-target-date');
   const btnRun = document.getElementById('btn-run-review');
   const spinner = document.getElementById('review-spinner');
+  const newReviewButton = document.getElementById('btn-new-review');
   const btnText = btnRun.querySelector('.btn-text');
   document.getElementById('manual-learning-mode')?.addEventListener('change', updateLlmDisplay);
+  targetLawInput?.addEventListener('input', updateQueryOptionsSummary);
+  targetDateInput?.addEventListener('input', updateQueryOptionsSummary);
+  updateQueryOptionsSummary();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -202,11 +335,19 @@ function initReviewForm() {
       return;
     }
 
+    updateCollapsedInputSummaries();
+    setReviewInputStepsCollapsed(true);
+
     // 로딩 상태 시작
     state.isReviewing = true;
+    if (newReviewButton) newReviewButton.disabled = true;
     btnRun.disabled = true;
+    btnRun.classList.add('ai-processing');
+    btnRun.setAttribute('aria-busy', 'true');
     spinner.classList.remove('hidden');
-    btnText.textContent = '법령 및 판례 수집 / AI 검토 중...';
+    btnText.textContent = manualLearning
+      ? '승인된 외부 지식 반영·최종 재검토 중...'
+      : '법령 및 판례 수집 / AI 검토 중...';
 
     const formData = new FormData();
     formData.append('query', query);
@@ -277,7 +418,10 @@ function initReviewForm() {
       state.sourceHistoryId = null;
       state.manualLearningRerun = false;
       state.isReviewing = false;
+      if (newReviewButton) newReviewButton.disabled = false;
       btnRun.disabled = false;
+      btnRun.classList.remove('ai-processing');
+      btnRun.removeAttribute('aria-busy');
       spinner.classList.add('hidden');
       btnText.textContent = '종합 법령검토 실행';
     }
@@ -324,7 +468,7 @@ async function consumeReviewStream(res) {
 }
 
 /**
- * 4. 19대 도구 모달 제어
+ * 4. 19대 도구 드로어 제어
  */
 let toolsCache = [];
 let selectedTool = null;
@@ -341,7 +485,7 @@ function initToolsModal() {
   const resultJson = document.getElementById('tool-result-json');
 
   btnOpen.addEventListener('click', async () => {
-    modal.classList.remove('hidden');
+    modal.classList.add('open');
     if (toolsCache.length === 0) {
       const res = await fetch('/api/law/tools');
       const data = await res.json();
@@ -350,7 +494,14 @@ function initToolsModal() {
     }
   });
 
-  btnClose.addEventListener('click', () => modal.classList.add('hidden'));
+  btnClose.addEventListener('click', () => modal.classList.remove('open'));
+
+  // 도구 드로어 바깥을 클릭하면 닫는다. 열기 버튼 자체는 예외로 둔다.
+  document.addEventListener('click', (event) => {
+    if (!modal?.classList.contains('open')) return;
+    if (modal.contains(event.target) || btnOpen?.contains(event.target)) return;
+    modal.classList.remove('open');
+  });
 
   function renderToolsList() {
     toolsListEl.innerHTML = '';

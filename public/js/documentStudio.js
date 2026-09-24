@@ -1,5 +1,6 @@
 // public/js/documentStudio.js - 보고서 스튜디오 (비주얼 공문서 에디터 & 마크다운 소스 모드)
 import { state } from './state.js';
+import { renderReasoningOpinion } from './reasoningView.js';
 
 const drawer = document.getElementById('studio-drawer');
 const btnOpen = document.getElementById('btn-open-studio');
@@ -13,6 +14,7 @@ const exportBtns = document.querySelectorAll('.btn-export');
 
 let currentMode = 'visual'; // 'visual' | 'source'
 let lastReviewPayload = null;
+let sourceAtModeChange = '';
 
 export function initDocumentStudio() {
   if (btnOpen) {
@@ -21,6 +23,15 @@ export function initDocumentStudio() {
   if (btnClose) {
     btnClose.addEventListener('click', () => closeStudio());
   }
+
+  // 스튜디오 바깥을 클릭하면 닫는다. 상단 열기 버튼 클릭은 예외로 둔다.
+  document.addEventListener('click', (event) => {
+    if (!drawer?.classList.contains('open')) return;
+    // 열기 버튼의 클릭도 document까지 전파된다. 이 클릭을 바깥 클릭으로 처리하면
+    // openStudio가 드로어를 연 직후 같은 이벤트에서 닫아 버린다.
+    if (drawer.contains(event.target) || event.target.closest?.('[data-studio-trigger]')) return;
+    closeStudio();
+  });
 
   // 모드 전환 버튼
   if (btnModeVisual && btnModeSource) {
@@ -55,15 +66,20 @@ export function openStudio(initialText = '', title = '', reviewData = null) {
   }
 
   const rawMd = initialText || lastReviewPayload?.review?.draftOpinion || '';
-  sourceEditor.value = rawMd;
+  const reportView = document.getElementById('draft-official-report-view');
 
-  // 비주얼 에디터 HTML 렌더링
-  if (lastReviewPayload && lastReviewPayload.review) {
+  // 의견서 탭에서 보던 전문과 동일한 문서를 편집기에 가져온다.
+  if (lastReviewPayload?.review && reportView?.innerHTML.trim()) {
+    visualEditor.innerHTML = reportView.innerHTML;
+  } else if (lastReviewPayload?.review) {
     visualEditor.innerHTML = buildVisualReportHtml(lastReviewPayload, titleInput.value);
   } else {
     visualEditor.innerHTML = convertMarkdownToVisualHtml(rawMd, titleInput.value);
   }
 
+  sourceEditor.value = visualEditor.innerText.trim() || rawMd;
+  sourceAtModeChange = sourceEditor.value;
+  currentMode = 'visual';
   switchMode('visual');
   drawer.classList.add('open');
 }
@@ -72,10 +88,28 @@ export function closeStudio() {
   if (drawer) drawer.classList.remove('open');
 }
 
+/** 새 리뷰 시작 시 이전 검토의 편집본도 화면 상태에서 제거한다. */
+export function resetStudio() {
+  lastReviewPayload = null;
+  sourceAtModeChange = '';
+  currentMode = 'visual';
+  if (titleInput) titleInput.value = '법률검토의견서';
+  if (visualEditor) visualEditor.innerHTML = '';
+  if (sourceEditor) sourceEditor.value = '';
+  if (btnModeVisual && btnModeSource) switchMode('visual');
+  closeStudio();
+}
+
 /**
  * 에디터 모드 전환 (비주얼 공문서 뷰 ↔ 마크다운 소스 뷰)
  */
 function switchMode(mode) {
+  if (mode === 'source' && currentMode === 'visual') {
+    sourceEditor.value = visualEditor.innerText.trim();
+    sourceAtModeChange = sourceEditor.value;
+  } else if (mode === 'visual' && currentMode === 'source' && sourceEditor.value !== sourceAtModeChange) {
+    visualEditor.innerHTML = convertMarkdownToVisualHtml(sourceEditor.value, titleInput.value);
+  }
   currentMode = mode;
 
   if (mode === 'visual') {
@@ -84,20 +118,12 @@ function switchMode(mode) {
     sourceEditor.classList.add('hidden');
     visualEditor.classList.remove('hidden');
 
-    // 소스 에디터에서 수정한 내용이 있으면 비주얼 뷰에 반영
-    if (sourceEditor.value.trim()) {
-      visualEditor.innerHTML = convertMarkdownToVisualHtml(sourceEditor.value, titleInput.value);
-    }
   } else {
     btnModeSource.classList.add('active');
     btnModeVisual.classList.remove('active');
     visualEditor.classList.add('hidden');
     sourceEditor.classList.remove('hidden');
 
-    // 비주얼 에디터의 텍스트를 소스 뷰로 동기화
-    if (!sourceEditor.value.trim() && visualEditor.innerText.trim()) {
-      sourceEditor.value = visualEditor.innerText;
-    }
   }
 }
 
@@ -156,9 +182,9 @@ function buildVisualReportHtml(data, reportTitle) {
         <h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-bottom: 10px;">
           2. 법률적 쟁점 및 심층 검토 의견
         </h3>
-        <div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">
-          ${escapeHtml(cleanText(review.legalOpinion || '')).replace(/\n/g, '<br>')}
-        </div>
+        ${review.reasoning?.issues?.length
+          ? renderReasoningOpinion(review.reasoning, review, { report: true })
+          : `<div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">${escapeHtml(cleanText(review.legalOpinion || '')).replace(/\n/g, '<br>')}</div>`}
       </div>
 
       <!-- 3. 리스크 평가 및 보완 조치 사항 -->
@@ -338,5 +364,6 @@ function escapeHtml(str) {
 export default {
   initDocumentStudio,
   openStudio,
-  closeStudio
+  closeStudio,
+  resetStudio
 };

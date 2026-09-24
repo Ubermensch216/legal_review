@@ -57,6 +57,26 @@ test('조사 결과 중 공식 본문 자료만 기존 자료 뒤에 덧붙여 �
   assert.equal(calls.length, 3);
 });
 
+test('쟁점 조사는 목록 후보를 모아 한 번 선별한 뒤 통과한 ID의 본문만 조회한다', async () => {
+  const fetched = [];
+  const plan = { queries: ['관리위탁', '사용허가'], byIssue: { I1: ['관리위탁', '사용허가'] } };
+  const clients = {
+    searchPrecedents: async query => query === '관리위탁'
+      ? [{ ...OFFICIAL, id: '200', contentStatus: 'LIST_ONLY', caseNo: '2021두2', caseName: '관리위탁' },
+        { ...OFFICIAL, id: '300', contentStatus: 'LIST_ONLY', caseNo: '2022두3', caseName: '임대차' }]
+      : [{ ...OFFICIAL, id: '200', contentStatus: 'LIST_ONLY', caseNo: '2021두2', caseName: '관리위탁' }],
+    searchInterpretations: async () => [],
+    getPrecedentDetail: async id => { fetched.push(id); return { ...OFFICIAL, id, contentStatus: 'FULL_TEXT',
+      caseNo: '2021두2', summary: '관리위탁 본문' }; }
+  };
+  const result = await runResearchQueries(context(), plan, { clients, issues: [issue()],
+    classify: async batch => batch.map(item => ({ id: item.id, label: item.id === '300' ? 'IRRELEVANT' : 'RELEVANT' })) });
+  assert.deepEqual(fetched, ['200']);
+  assert.deepEqual(result.hits, { 관리위탁: ['prec:200'], 사용허가: ['prec:200'] });
+  assert.equal(result.added.precedents, 1);
+  assert.equal(result.screening.find(d => d.id === '300').selected, false);
+});
+
 test('후보 근거는 특징을 따로 남기고 정렬하며, 판례는 쟁점에 가장 가까운 명제만 싣고 조문 단서를 반대 후보로 붙인다', async () => {
   const ctx = context();
   ctx.officialEvidence.precedents.push({ ...OFFICIAL, id: '200', contentStatus: 'FULL_TEXT', courtName: '서울고등법원', caseNo: '2021누2',

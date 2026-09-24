@@ -7,7 +7,8 @@
 // 반대 근거 탐색: 입장(지지/반대)은 코드가 판정할 수 없다. 대신 (1) 쟁점 조문의 단서(…x)를
 // 반대 후보로 항상 함께 싣고, (2) 쟁점 조문 번호로도 검색해 결론 방향과 무관하게 같은 조문을
 // 다룬 판례를 모은다. S4가 각 후보의 입장을 판정한다.
-import { searchInterpretations, searchPrecedents } from '../../law/decisionsApiClient.js';
+import { searchInterpretationCandidates, searchPrecedentCandidates, getPrecedentDetail, getInterpretationDetail } from '../../law/decisionsApiClient.js';
+import { screenEvidenceCandidates, hydrateSelectedCandidates } from '../../law/evidenceScreen.js';
 import { isOfficial } from '../../law/evidence.js';
 import { authorityKey, formatArticleNo } from '../evidenceRegistry.js';
 import { cosine, embedTexts } from '../embeddings.js';
@@ -16,8 +17,7 @@ export const RESEARCH_LIMITS = Object.freeze({
   termsPerIssue: 2,       // 쟁점당 검색어
   articleQueries: 1,      // 쟁점당 조문 번호 검색
   totalQueries: 10,       // 한 검토 전체 검색어 상한 (쟁점 간 중복은 한 번만 조회)
-  perQuery: 3,            // 검색어당 목록 건수 (건마다 본문 조회가 붙는다)
-  candidatesPerIssue: 4   // 쟁점별로 S4에 넘길 판례·해석례 수
+  perQuery: 3             // 검색어당 목록 건수 (건마다 본문 조회가 붙는다)
 });
 
 /** 쟁점별 검색어. 검색어가 겹치면 한 번만 조회한다. */
@@ -46,37 +46,70 @@ export function planResearchQueries(issues, registry, limits = RESEARCH_LIMITS) 
  * 검색을 실행하고 새로 찾은 공식 본문 자료를 컨텍스트에 덧붙인다.
  * 기존 자료 뒤에 붙이므로 등록부를 다시 만들어도 기존 P·Q 번호는 바뀌지 않는다.
  */
-export async function runResearchQueries(context, plan, { clients = { searchPrecedents, searchInterpretations }, limits = RESEARCH_LIMITS } = {}) {
+export async function runResearchQueries(context, plan, { clients = {}, limits = RESEARCH_LIMITS, issues = [], provider, model, apiKey,
+  session, classify = null } = {}) {
+  const api = { searchPrecedents: searchPrecedentCandidates, searchInterpretations: searchInterpretationCandidates,
+    getPrecedentDetail, getInterpretationDetail, ...clients };
   const evidence = context.officialEvidence || {};
-  const known = new Set([...(evidence.precedents || []).map(p => authorityKey('prec', p)),
-    ...(evidence.interpretations || []).map(q => authorityKey('expc', q))]);
+  const known = new Set([...(evidence.precedents || []).filter(p => isOfficial(p) && p.contentStatus === 'FULL_TEXT').map(p => authorityKey('prec', p)),
+    ...(evidence.interpretations || []).filter(q => isOfficial(q) && q.contentStatus === 'FULL_TEXT').map(q => authorityKey('expc', q))]);
   const added = { precedents: [], interpretations: [] };
   const hits = {};
   const warnings = [];
+  const screening = [];
+  const pools = { precedent: new Map(), interpretation: new Map() };
   for (const query of plan.queries) {
     hits[query] = [];
-    const results = await Promise.allSettled([clients.searchPrecedents(query, 1, limits.perQuery), clients.searchInterpretations(query, 1, limits.perQuery)]);
-    results.forEach((result, i) => {
-      const [target, bucket] = i === 0 ? ['prec', 'precedents'] : ['expc', 'interpretations'];
+    const results = await Promise.allSettled([api.searchPrecedents(query, 1, limits.perQuery), api.searchInterpretations(query, 1, limits.perQuery)]);
+    for (const [i, result] of results.entries()) {
+      const target = i === 0 ? 'prec' : 'expc';
       if (result.status === 'rejected' || !Array.isArray(result.value) || result.value.fetchStatus) {
         warnings.push(`'${query}' ${i === 0 ? '판례' : '해석례'} 조회 미완료`);
-        return;
+        continue;
       }
+      const kind = i === 0 ? 'precedent' : 'interpretation';
       for (const item of result.value) {
-        if (!isOfficial(item) || item.contentStatus !== 'FULL_TEXT') continue;
+        if (!item?.id) continue;
         const k = authorityKey(target, item);
-        hits[query].push(k);
-        if (known.has(k)) continue;
+        if (known.has(k)) { hits[query].push(k); continue; }
+        const pool = pools[kind];
+        if (!pool.has(String(item.id))) pool.set(String(item.id), { item, queries: new Set() });
+        pool.get(String(item.id)).queries.add(query);
+      }
+    }
+  }
+  for (const [kind, pool] of Object.entries(pools)) {
+    const candidates = [...pool.values()].map(v => v.item);
+    const relevantIssues = issues.filter(issue => (plan.byIssue[issue.id] || []).some(q => plan.queries.includes(q)));
+    const issueText = relevantIssues.map(issue => issue.question).join(' / ');
+    const protectedIds = candidates.filter(item => {
+      const number = kind === 'precedent' ? item.caseNo : item.itemNo;
+      return number && issueText.includes(number);
+    }).map(item => item.id);
+    const screened = await screenEvidenceCandidates({ candidates, kind, query: plan.queries.join(' / '), issue: issueText,
+      provider, model, apiKey, session, protectedIds, classify });
+    screening.push(...screened.decisions.map(d => ({ ...d, queries: [...(pool.get(d.id)?.queries || [])] })));
+    warnings.push(...screened.warnings);
+    const hydrated = await hydrateSelectedCandidates({ candidates: screened.selected, kind,
+      loadDetail: kind === 'precedent' ? api.getPrecedentDetail : api.getInterpretationDetail });
+    warnings.push(...hydrated.warnings);
+    const target = kind === 'precedent' ? 'prec' : 'expc';
+    const bucket = kind === 'precedent' ? 'precedents' : 'interpretations';
+    for (const item of hydrated.items) {
+      if (!isOfficial(item) || item.contentStatus !== 'FULL_TEXT') continue;
+      const k = authorityKey(target, item);
+      for (const query of pool.get(String(item.id))?.queries || []) hits[query].push(k);
+      if (!known.has(k)) {
         known.add(k);
         added[bucket].push(item);
       }
-    });
+    }
   }
   const augmented = { ...context, officialEvidence: { ...evidence,
     precedents: [...(evidence.precedents || []), ...added.precedents],
     interpretations: [...(evidence.interpretations || []), ...added.interpretations] } };
   return { context: augmented, hits, added: { precedents: added.precedents.length, interpretations: added.interpretations.length },
-    addedItems: added, warnings };
+    addedItems: added, screening, warnings };
 }
 
 /** 이전 실행에서 조사로 덧붙인 자료를 그대로 다시 붙인다(재검토에서 등록부 번호를 똑같이 맞추기 위해). */
@@ -131,7 +164,7 @@ export async function selectIssueEvidence({ issue, registry, facts, plan, hits, 
   }).filter(c => c.features.namedByS1 || c.features.articleMatch || c.features.retrievedForIssue || c.features.termHits > 0)
     .sort((a, b) => b.rank - a.rank);
 
-  const chosen = candidates.slice(0, limits.candidatesPerIssue);
+  const chosen = candidates;
   // 판례는 명제 전부를 싣는다. 가장 가까운 명제만 실으면 같은 판례 안의 반대 명제(예외·제한)가
   // 빠져 결론이 한쪽으로 기운다. 판결요지는 짧으므로 입력 부담이 크지 않다. focusId는 표시용이다.
   const authorityIds = chosen.map(c => c.id);

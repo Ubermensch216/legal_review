@@ -175,7 +175,8 @@ export async function callOllama(systemPrompt, userPrompt, config = {}) {
         ...(typeof config.think === 'boolean' ? { think: config.think } : {}),
         keep_alive: process.env.OLLAMA_KEEP_ALIVE || '30m', // 매 호출마다 모델을 다시 적재하지 않도록 유지
         options: {
-          temperature: typeof config.temperature === 'number' ? config.temperature : parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
+          // 법률 검토 출력은 자유로운 문장보다 재현 가능한 JSON 구조가 우선이다.
+          temperature: typeof config.temperature === 'number' ? config.temperature : parseFloat(process.env.OLLAMA_TEMPERATURE || '0.1'),
           repeat_penalty: parseFloat(process.env.OLLAMA_REPEAT_PENALTY || '1.15'),
           repeat_last_n: parseInt(process.env.OLLAMA_REPEAT_LAST_N || '64', 10),
           // num_ctx는 프롬프트와 생성 토큰이 함께 쓰는 예산이다. Ollama 기본값(4096)은

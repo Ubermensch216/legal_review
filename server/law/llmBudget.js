@@ -1,5 +1,7 @@
 // 입력 토큰 계수. 우선순위는 (1) 외부 토크나이저 플러그인, (2) 제공자 사전 계수 API,
 // (3) 관측값으로 보정한 문자군 휴리스틱이다. (1)(2)만 정확한 값이며 나머지는 추정이다.
+import fs from 'node:fs';
+import path from 'node:path';
 
 /**
  * 문자군별 토큰/문자 계수. 측정값이 아니라 예산 편성을 위한 사전값이며,
@@ -82,14 +84,41 @@ const margin = () => {
   return Number.isFinite(value) && value >= 0 ? value : 0.15;
 };
 
-// provider:model -> 관측 기반 보정 계수. 프로세스 수명 동안만 유지한다.
+// provider:model -> 관측 기반 보정 계수. 서버 재시작 뒤에도 같은 입력 축소 결정을
+// 재현할 수 있도록 민감정보가 아닌 계수만 로컬 캐시에 보존한다.
 const observations = new Map();
+let calibrationLoaded = false;
+const calibrationFile = () => process.env.LLM_CALIBRATION_FILE
+  || path.join(process.env.CACHE_DIR || path.join(process.cwd(), 'data', 'cache'), 'llm-calibration.json');
+
+function loadCalibration() {
+  if (calibrationLoaded) return;
+  calibrationLoaded = true;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(calibrationFile(), 'utf8'));
+    for (const [key, value] of Object.entries(parsed || {})) {
+      if (value && Number.isFinite(value.mean) && Number.isFinite(value.peak)
+        && Number.isSafeInteger(value.samples) && value.samples > 0) observations.set(key, value);
+    }
+  } catch { /* 최초 실행·손상된 보정 파일은 기본 휴리스틱으로 시작한다. */ }
+}
+
+function saveCalibration() {
+  try {
+    const file = calibrationFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(Object.fromEntries(observations)), 'utf8');
+    fs.renameSync(temp, file);
+  } catch { /* 보정 저장 실패가 법률 검토 자체를 막아서는 안 된다. */ }
+}
 
 /** 테스트와 운영 재설정을 위해 보정 상태를 비운다. */
-export function resetCalibration() { observations.clear(); }
+export function resetCalibration() { observations.clear(); calibrationLoaded = true; }
 
 /** 보정 계수. 표본이 적을 때 과소 추정하지 않도록 최대 관측치를 함께 고려한다. */
 export function getCalibration(provider, model) {
+  loadCalibration();
   const record = observations.get(`${provider}:${model || ''}`);
   if (!record) return { ratio: 1, samples: 0, mean: null, peak: null };
   return { ratio: Math.max(record.mean, record.peak * 0.9), samples: record.samples, mean: record.mean, peak: record.peak };
@@ -100,6 +129,7 @@ export function getCalibration(provider, model) {
  * 프롬프트와 무관해 보이는 값(0.15배 미만, 6배 초과)은 다른 요청의 사용량일 수 있어 버린다.
  */
 export function recordObservation(provider, model, rawTokens, actualTokens) {
+  loadCalibration();
   if (!Number.isFinite(rawTokens) || rawTokens <= 0 || !Number.isSafeInteger(actualTokens) || actualTokens <= 0) return null;
   const ratio = actualTokens / rawTokens;
   if (ratio < 0.15 || ratio > 6) return null;
@@ -107,6 +137,7 @@ export function recordObservation(provider, model, rawTokens, actualTokens) {
   const previous = observations.get(key);
   const mean = previous ? previous.mean * 0.6 + ratio * 0.4 : ratio;
   observations.set(key, { samples: (previous?.samples || 0) + 1, mean, peak: Math.max(previous?.peak || 0, ratio) });
+  saveCalibration();
   return ratio;
 }
 

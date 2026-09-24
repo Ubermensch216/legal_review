@@ -9,15 +9,11 @@ export function initWorkbenchTabs() {
   const tabs = document.querySelectorAll('.wb-tab');
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-
-      tab.classList.add('active');
-      const targetId = tab.getAttribute('data-tab');
-      const targetPane = document.getElementById(targetId);
-      if (targetPane) targetPane.classList.add('active');
+      selectWorkbenchTab(tab);
     });
   });
+
+  selectWorkbenchTab(document.querySelector('.wb-tab.active') || tabs[0]);
 
   // 요약 복사 버튼
   const btnCopySummary = document.getElementById('btn-copy-summary');
@@ -59,6 +55,13 @@ export function initWorkbenchTabs() {
   if (btnTabDocx) {
     btnTabDocx.addEventListener('click', () => downloadQuickReport('docx'));
   }
+}
+
+function selectWorkbenchTab(tab) {
+  const pane = tab && document.getElementById(tab.getAttribute('data-tab'));
+  if (!pane) return;
+  document.querySelectorAll('.wb-tab').forEach(item => item.classList.toggle('active', item === tab));
+  document.querySelectorAll('.tab-pane').forEach(item => item.classList.toggle('active', item === pane));
 }
 
 async function downloadQuickReport(format) {
@@ -109,8 +112,9 @@ async function downloadQuickReport(format) {
 function renderReliabilityBanner() {
   const rel = window.__reliability;
   let host = document.getElementById('reliability-banner');
+  const external = rel?.externalKnowledge?.applied;
 
-  if (!rel || !rel.isFallback) {
+  if (!rel || (!rel.isFallback && !external)) {
     if (host) host.remove();
     return;
   }
@@ -118,7 +122,8 @@ function renderReliabilityBanner() {
   if (!host) {
     host = document.createElement('div');
     host.id = 'reliability-banner';
-    const anchor = document.getElementById('draft-factuality-badge');
+    const anchor = document.getElementById('draft-factuality-badge')
+      || document.getElementById('workbench-section');
     if (anchor && anchor.parentNode) {
       anchor.parentNode.insertBefore(host, anchor);
     } else {
@@ -130,14 +135,21 @@ function renderReliabilityBanner() {
     ? '규칙 기반 점검 (LLM 법리 검토 미수행)'
     : rel.reviewEngine === 'LLM_STAGED' ? '단계형 LLM 검토 (쟁점·요건 단위)' : rel.reviewEngine;
 
-  host.className = 'reliability-banner';
+  host.className = `reliability-banner${external ? ' external' : ''}`;
+  const externalLabel = external
+    ? `외부 참고 지식 ${rel.externalKnowledge.count}건 반영 (${rel.externalKnowledge.humanExpertCount}건 전문가 · ${rel.externalKnowledge.externalAiCount}건 외부 AI)`
+    : '';
+  const headline = rel.isFallback
+    ? `${external ? '외부 지식 반영 · ' : ''}이 결과는 참고용 제한 결과입니다 — 결재 문서로 사용하지 마십시오`
+    : `외부 참고 지식 반영 재검토 — 공식 근거와 구분하여 확인하십시오`;
   host.innerHTML = `
     <div class="reliability-banner-head">
-      <span class="material-symbols-outlined">report</span>
-      <strong>이 결과는 참고용 제한 결과입니다 — 결재 문서로 사용하지 마십시오</strong>
+      <span class="material-symbols-outlined">${external ? 'merge_type' : 'report'}</span>
+      <strong>${escapeHtml(headline)}</strong>
     </div>
     <div class="reliability-banner-body">
       <div>검토 엔진: <b>${escapeHtml(engineLabel)}</b></div>
+      ${externalLabel ? `<div class="reliability-external-label">${escapeHtml(externalLabel)}</div>` : ''}
       <ul>
         ${(rel.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join('')}
       </ul>
@@ -146,52 +158,52 @@ function renderReliabilityBanner() {
 }
 
 export function renderWorkbench(data) {
+  document.getElementById('workbench-section')?.classList.remove('hidden');
+  selectWorkbenchTab(document.querySelector('.wb-tab.active') || document.querySelector('.wb-tab'));
   state.lastReviewResult = data;
   const { review, officialEvidence, impactAndRevisions, meta } = data;
 
   // 서버가 내려준 신뢰도/출처 정보를 렌더러 전반에서 참조할 수 있게 보관한다.
-  window.__reliability = data.reliability || null;
+  const learningReferences = Array.isArray(review?.learningReferences) ? review.learningReferences : [];
+  const externalKnowledge = data.reliability?.externalKnowledge || {
+    applied: learningReferences.length > 0,
+    count: learningReferences.length,
+    humanExpertCount: learningReferences.filter(item => item.source === 'USER_APPROVED_HUMAN_EXPERT').length,
+    externalAiCount: learningReferences.filter(item => item.source !== 'USER_APPROVED_HUMAN_EXPERT').length
+  };
+  window.__reliability = data.reliability
+    ? { ...data.reliability, externalKnowledge }
+    : { externalKnowledge };
 
   const isFallback = Boolean(data.reliability && data.reliability.isFallback);
-
-  // 0. 검토 초안(Tab 1) 및 공식 법률검토의견서(Tab 4) 뱃지 램프 온
-  //    폴백 결과는 '완료'로 표시하지 않는다.
-  const badgeDraftEl = document.getElementById('badge-draft-status');
-  if (badgeDraftEl) {
-    badgeDraftEl.className = isFallback ? 'tab-badge warning' : 'tab-badge active';
-    badgeDraftEl.textContent = isFallback ? '제한' : '완료';
-  }
+  const external = Boolean(externalKnowledge.applied);
+  const statusText = isFallback ? (external ? '외부·제한' : '제한') : (external ? '외부 반영' : '완료');
+  const statusClass = isFallback ? 'warning' : (external ? 'external' : 'active');
 
   const badgeReportEl = document.getElementById('badge-report-status');
   if (badgeReportEl) {
-    badgeReportEl.className = isFallback ? 'tab-badge warning' : 'tab-badge active';
-    badgeReportEl.textContent = isFallback ? '제한' : '완료';
+    badgeReportEl.className = `tab-badge ${statusClass}`;
+    badgeReportEl.textContent = statusText;
   }
 
-  // 1. Tab 1: 검토 초안 (구조화된 테이블, Redline 대비표 & IRAC 공문서 뷰)
+  // 검토 결과는 근거·영향 분석·외부 질의·법률검토의견서 탭으로 나누어 표시한다.
   renderDraftTab(review, officialEvidence, meta);
 
-  // 2. Tab 2: 공식 근거 (Re-ranking 점수 및 연쇄 3단계 법령 체계)
+  // 1. 공식 근거 (Re-ranking 점수 및 연쇄 3단계 법령 체계)
   renderEvidenceTab(officialEvidence, meta);
 
-  // 3. Tab 3: 개정 및 영향
+  // 2. 개정 및 영향
   renderRevisionsTab(impactAndRevisions, meta);
 
-  // 4. Tab 5: 외부 전문가 질의 — 서버에 저장된 이력에만 연결한다.
+  // 3. 외부 전문가 질의 — 서버에 저장된 이력에만 연결한다.
   //    질의서는 저장된 검토 자료에서 만들어지므로 이력 저장에 실패하면 사용할 수 없다.
-  setLearningHistory(data.meta?.sourceHistoryId || data.historyId);
+  setLearningHistory(data.meta?.sourceHistoryId || data.historyId, data);
 }
 
 /**
  * 워크벤치 탭 상태 및 뱃지 비활성화 초기화 (램프 오프)
  */
 export function resetWorkbenchTabs() {
-  const badgeDraftEl = document.getElementById('badge-draft-status');
-  if (badgeDraftEl) {
-    badgeDraftEl.className = 'tab-badge off';
-    badgeDraftEl.textContent = '대기';
-  }
-
   const badgeReportEl = document.getElementById('badge-report-status');
   if (badgeReportEl) {
     badgeReportEl.className = 'tab-badge off';
@@ -210,14 +222,33 @@ export function resetWorkbenchTabs() {
   resetLearningTab();
 }
 
+/** 새 리뷰 시작 시 현재 워크벤치에 남은 결과·근거·선택 탭을 모두 초기 상태로 되돌린다. */
+export function resetWorkbench() {
+  resetWorkbenchTabs();
+  document.getElementById('workbench-section')?.classList.add('hidden');
+
+  [
+    'evidence-articles', 'evidence-precedents', 'evidence-rules',
+    'impact-summary-badge', 'impact-risk-container', 'impact-items-container',
+    'impact-history-container', 'draft-official-report-view'
+  ].forEach(id => {
+    const element = document.getElementById(id);
+    if (element) element.innerHTML = '';
+  });
+
+  selectWorkbenchTab(document.querySelector('.wb-tab[data-tab="tab-evidence"]'));
+  document.getElementById('reliability-banner')?.remove();
+}
+
 /**
- * Tab 1: 구조화된 HTML 테이블, Redline 대비표 및 IRAC 컴포넌트 렌더링
+ * 법률검토의견서 및 내부 검토 데이터 렌더링
  */
 function renderDraftTab(review, officialEvidence, meta) {
   if (!review) return;
 
   const lawName = meta?.primaryLawName || '관련 법령';
   const query = meta?.query || '요청 사안에 관한 법적 검토';
+  const opinionText = cleanText(review.legalOpinion || review.draftOpinion || '');
 
   // 0. 조문 실존성 검증 뱃지 및 폴백 경고
   const badgeContainer = document.getElementById('draft-factuality-badge');
@@ -268,17 +299,25 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   // 1. 핵심 요약 하이라이트 박스
   const summaryEl = document.getElementById('draft-summary-content');
-  summaryEl.innerHTML = `
-    <div class="summary-highlight-card">
-      ${escapeHtml(cleanText(review.summary))}
-    </div>
-  `;
+  if (summaryEl) {
+    const used = review.evidenceUsed || {};
+    const usedLabels = [['articles', '법령 조문'], ['precedents', '판례'], ['interpretations', '유권해석례'],
+      ['ordinances', '자치법규 조문'], ['adminRules', '행정규칙']]
+      .filter(([key]) => Number.isInteger(used[key]) && used[key] > 0)
+      .map(([key, label]) => `${label} ${used[key]}건`);
+    summaryEl.innerHTML = `
+      <div class="summary-highlight-card">
+        ${usedLabels.length ? `<div><strong>검토에 사용한 자료:</strong> ${escapeHtml(usedLabels.join(' · '))}</div>` : ''}
+        ${escapeHtml(cleanText(review.summary))}
+      </div>
+    `;
+  }
 
   // 2. 핵심 쟁점 및 법적 리스크 분석 테이블
   const riskEl = document.getElementById('draft-risk-content');
   const risks = review.risks || [];
 
-  if (risks.length > 0) {
+  if (riskEl && risks.length > 0) {
     let riskTableHtml = `
       <div class="table-responsive">
         <table class="legal-table">
@@ -317,7 +356,7 @@ function renderDraftTab(review, officialEvidence, meta) {
       </div>
     `;
     riskEl.innerHTML = riskTableHtml;
-  } else {
+  } else if (riskEl) {
     riskEl.innerHTML = '<p class="placeholder-text">발견된 특이 리스크가 없습니다.</p>';
   }
 
@@ -325,7 +364,7 @@ function renderDraftTab(review, officialEvidence, meta) {
   const redlineEl = document.getElementById('draft-redline-content');
   const redlines = review.redlineDiffs || [];
 
-  if (redlines.length > 0) {
+  if (redlineEl && redlines.length > 0) {
     let redlineHtml = `
       <div class="table-responsive">
         <table class="legal-table redline-table">
@@ -367,25 +406,27 @@ function renderDraftTab(review, officialEvidence, meta) {
       </div>
     `;
     redlineEl.innerHTML = redlineHtml;
-  } else {
+  } else if (redlineEl) {
     redlineEl.innerHTML = '<p class="placeholder-text">수정이 요구되는 특이 독소조항이 발견되지 않았습니다.</p>';
   }
 
   // 4. 심층 법률 검토의견 본문 (IRAC 다단계 분석 렌더링)
   const opinionEl = document.getElementById('draft-opinion-content');
   // 단계형 검토는 쟁점별 요건 판단이 구조로 있으므로 표로 보여준다.
-  if (review.reasoning?.issues?.length) {
-    opinionEl.innerHTML = renderReasoningOpinion(review.reasoning);
-    opinionEl.querySelector('[data-open-learning]')?.addEventListener('click', () => document.querySelector('[data-tab="tab-learning"]')?.click());
-  } else {
-    opinionEl.innerHTML = legacyOpinionHtml(review);
+  if (opinionEl) {
+    if (review.reasoning?.issues?.length) {
+      opinionEl.innerHTML = renderReasoningOpinion(review.reasoning, review);
+      opinionEl.querySelector('[data-open-learning]')?.addEventListener('click', () => document.querySelector('[data-tab="tab-learning"]')?.click());
+    } else {
+      opinionEl.innerHTML = legacyOpinionHtml(review);
+    }
   }
 
   // 5. 보완 권고사항 및 조치 계획 체크리스트
   const recEl = document.getElementById('draft-rec-content');
   const recommendations = review.recommendations || [];
 
-  if (recommendations.length > 0) {
+  if (recEl && recommendations.length > 0) {
     let recHtml = '<div class="rec-checklist">';
     recommendations.forEach((rec, idx) => {
       recHtml += `
@@ -397,7 +438,7 @@ function renderDraftTab(review, officialEvidence, meta) {
     });
     recHtml += '</div>';
     recEl.innerHTML = recHtml;
-  } else {
+  } else if (recEl) {
     recEl.innerHTML = '<p class="placeholder-text">보완 권고사항이 없습니다.</p>';
   }
 
@@ -406,7 +447,7 @@ function renderDraftTab(review, officialEvidence, meta) {
   let basisList = (review.legalBasis || []).map(b => ({ ...b, relevance: `[${b.verificationStatus === 'VERIFIED' ? '조문 존재 확인' : '미검증'}] ${b.relevance || ''}${b.verificationNote ? ' — ' + b.verificationNote : ''}` }));
 
 
-  if (basisList.length > 0) {
+  if (basisEl && basisList.length > 0) {
     let tableHtml = `
       <div class="table-responsive">
         <table class="legal-table">
@@ -438,17 +479,29 @@ function renderDraftTab(review, officialEvidence, meta) {
       </div>
     `;
     basisEl.innerHTML = tableHtml;
-  } else {
+  } else if (basisEl) {
     basisEl.innerHTML = '<p class="placeholder-text">수집된 관련 법령 근거가 없습니다.</p>';
   }
 
   // 7. 완성형 법률검토의견서 (공문서 표준 서식 뷰)
   const reportViewEl = document.getElementById('draft-official-report-view');
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
+  const externalKnowledge = window.__reliability?.externalKnowledge;
+  const isExternalRerun = Boolean(externalKnowledge?.applied);
+  const originLabel = isExternalRerun
+    ? `외부 참고 지식 반영 재검토 · ${externalKnowledge.count}건 (전문가 ${externalKnowledge.humanExpertCount}건 / 외부 AI ${externalKnowledge.externalAiCount}건)`
+    : '초기 검토 · 외부 참고 지식 미반영';
 
   let officialDocHtml = `
     <div class="official-report-view">
       <div class="report-warning">${escapeHtml((window.__reliability?.warnings || []).join(' / '))}</div>
+      <div class="report-provenance ${isExternalRerun ? 'external' : 'initial'}">
+        <span class="material-symbols-outlined icon-sm">${isExternalRerun ? 'merge_type' : 'history'}</span>
+        <strong>${escapeHtml(originLabel)}</strong>
+        <span>${isExternalRerun
+          ? '승인된 외부 답변은 참고자료이며 공식 법령·판례를 대신하지 않습니다.'
+          : '외부 전문가 질의·승인 지식은 아직 이 의견서에 반영되지 않았습니다.'}</span>
+      </div>
       <div class="report-header-box">
         <h2 class="report-header-title">법 률 검 토 의 견 서</h2>
         <table class="report-meta-table">
@@ -465,6 +518,10 @@ function renderDraftTab(review, officialEvidence, meta) {
           <tr>
             <td class="meta-label">주요 법령</td>
             <td colspan="3"><strong>${escapeHtml(lawName)}</strong></td>
+          </tr>
+          <tr>
+            <td class="meta-label">검토 구분</td>
+            <td colspan="3">${escapeHtml(originLabel)}</td>
           </tr>
         </table>
       </div>
@@ -484,11 +541,11 @@ function renderDraftTab(review, officialEvidence, meta) {
       <div class="report-section">
         <div class="report-section-title">
           <span class="material-symbols-outlined icon-sm">gavel</span>
-          <span>2. 심층 법률 검토의견 (IRAC 다단계 분석)</span>
+          <span>${review.reasoning?.issues?.length ? '2. 쟁점별 IRAC 분석 및 전체 종합 결론' : '2. 법률 검토의견'}</span>
         </div>
-        <div class="report-body-text" style="line-height: 1.9;">
-          ${escapeHtml(opinionText)}
-        </div>
+        ${review.reasoning?.issues?.length
+          ? renderReasoningOpinion(review.reasoning, review, { report: true })
+          : `<div class="report-body-text" style="line-height: 1.9;">${escapeHtml(opinionText)}</div>`}
       </div>
 
       <!-- 3. 실무 조항 수정 권고안 (Redline Diff) -->
@@ -631,7 +688,7 @@ function renderEvidenceTab(evidence, meta) {
       artHtml += `
         <div class="art-card">
           <div class="art-card-header">
-            <div class="art-title">${lawName} 제${art.fullArticleNo || art.articleNo}조 (${escapeHtml(art.title || '')})</div>
+          <div class="art-title">${escapeHtml(art.lawName || lawName)} 제${art.fullArticleNo || art.articleNo}조 (${escapeHtml(art.title || '')})</div>
             <button class="btn btn-xs btn-outline btn-view-art" data-art="${escapeHtml(JSON.stringify(art))}">
               <span>전문 팝업</span>
               <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span>
@@ -649,7 +706,7 @@ function renderEvidenceTab(evidence, meta) {
   artContainer.querySelectorAll('.btn-view-art').forEach(btn => {
     btn.addEventListener('click', () => {
       const art = JSON.parse(btn.getAttribute('data-art'));
-      openArticleViewer(lawName, art);
+      openArticleViewer(art.lawName || lawName, art);
     });
   });
 
@@ -800,10 +857,22 @@ function renderRevisionsTab(impactData, meta) {
     }
 
     badgeContainer.innerHTML = `
-      <span class="badge" style="background:#EFF6FF; color:#1E40AF; font-weight:700;">기준: ${escapeHtml(lawName)}</span>
-      ${lawDetail?.enforceDate ? `<span class="badge" style="background:#F1F5F9; color:#475569;">시행일: ${escapeHtml(lawDetail.enforceDate)}</span>` : ''}
-      ${statusBadge}
-      <span class="badge badge-gov">조문 대조 ${totalCitations}건</span>
+      <div class="impact-summary-item">
+        <span class="impact-summary-label">검토 기준</span>
+        <strong>${escapeHtml(lawName)}</strong>
+        ${lawDetail?.enforceDate ? `<small>시행일 ${escapeHtml(lawDetail.enforceDate)}</small>` : ''}
+      </div>
+      <div class="impact-summary-item">
+        <span class="impact-summary-label">내부 위험 조항</span>
+        <strong>${riskClauses.length}건</strong>
+        <small>${riskClauses.length ? '우선 검토 필요' : '특이사항 없음'}</small>
+      </div>
+      <div class="impact-summary-item">
+        <span class="impact-summary-label">조문 대조</span>
+        <strong>${totalCitations}건</strong>
+        <small>${highRiskCount + cautionCount ? `확인 필요 ${highRiskCount + cautionCount}건` : '현행 적합'}</small>
+      </div>
+      <div class="impact-summary-status">${statusBadge}</div>
     `;
 
     const dotEl = document.getElementById('dot-impact');
@@ -825,33 +894,64 @@ function renderRevisionsTab(impactData, meta) {
   // 2. 내부 문서 쟁점 및 위험 조항 영향도 분석 (1번 섹션)
   if (riskContainer) {
     if (riskClauses.length > 0) {
-      let riskHtml = '<div class="impact-risk-grid" style="display:flex; flex-direction:column; gap:10px;">';
-      riskClauses.forEach(chunk => {
+      const orderedRiskClauses = [...riskClauses].sort((a, b) => {
+        const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 };
+        return (rank[a.riskLevel] ?? 3) - (rank[b.riskLevel] ?? 3);
+      });
+      let riskHtml = '<div class="impact-risk-grid">';
+      orderedRiskClauses.forEach((chunk, index) => {
         const tags = chunk.riskTags || [];
-        const tagsHtml = tags.map(t => `<span class="badge-risk ${t.level}">${escapeHtml(t.label)}</span>`).join(' ');
+        const level = chunk.riskLevel || (tags.some(tag => tag.level === 'HIGH') ? 'HIGH' : 'MEDIUM');
+        const isHigh = level === 'HIGH';
+        const tagsHtml = tags.map(t => `<span class="risk-topic-chip">${escapeHtml(t.label)}</span>`).join('');
+        const keywords = [...new Set(tags.flatMap(tag => tag.matchedKeywords || []))];
+        const keywordsHtml = keywords.length
+          ? keywords.map(keyword => `<span class="risk-keyword">${escapeHtml(keyword)}</span>`).join('')
+          : '<span class="risk-keyword muted">문맥 기반 탐지</span>';
+        const actionGuide = isHigh
+          ? '관련 상위 법령의 강행규정과 원문을 우선 대조하고, 적용 범위와 예외 요건을 확인한 뒤 문구 수정 여부를 결정하십시오.'
+          : '위임 근거와 적용 범위를 확인하고, 모호한 표현은 담당 부서 또는 법률 전문가의 확인을 거쳐 보완하십시오.';
         
         riskHtml += `
-          <div class="impact-item-card has-conflict" style="border-left: 4px solid #DC2626;">
-            <div class="impact-item-header">
-              <span class="badge-clause-no" style="background:#FEE2E2; color:#991B1B; border-color:#FECACA;">${escapeHtml(chunk.articleNo)} (${escapeHtml(chunk.title)})</span>
-              <div style="display:flex; gap:6px;">${tagsHtml}</div>
+          <article class="risk-analysis-card ${level.toLowerCase()}">
+            <header class="risk-card-header">
+              <div class="risk-card-heading">
+                <span class="risk-order">${index + 1}</span>
+                <div>
+                  <div class="risk-card-kicker">${escapeHtml(chunk.articleNo || '조항')} · 내부 문서</div>
+                  <h5>${escapeHtml(chunk.title || '제목 없는 조항')}</h5>
+                </div>
+              </div>
+              <span class="risk-level-badge ${level.toLowerCase()}">
+                <span class="material-symbols-outlined">${isHigh ? 'priority_high' : 'error_outline'}</span>
+                ${isHigh ? '우선 검토' : '확인 필요'}
+              </span>
+            </header>
+            <div class="risk-topic-row">${tagsHtml}</div>
+            <div class="risk-card-body">
+              <div class="risk-info-block">
+                <span class="risk-info-label"><span class="material-symbols-outlined">search</span>탐지 근거</span>
+                <div class="risk-keywords">${keywordsHtml}</div>
+              </div>
+              <div class="risk-info-block action">
+                <span class="risk-info-label"><span class="material-symbols-outlined">task_alt</span>권장 확인 절차</span>
+                <p>${escapeHtml(actionGuide)}</p>
+              </div>
             </div>
-            <div class="impact-item-snippet" style="background:#FEF2F2; color:#7F1D1D; margin: 8px 0; padding: 10px; border-radius: 6px; font-size: 13px;">
-              ${escapeHtml(chunk.content)}
-            </div>
-            <div class="impact-item-reason" style="color:#B91C1C; font-size:12.5px; font-weight:600;">
-              • 파급 영향: 상위 법령(강행규정) 위배 소지로 인한 조항 무효화 및 주무관청 행정처분(과태료/시정명령) 대상 조항임
-            </div>
-          </div>
+            <details class="risk-source-details">
+              <summary><span class="material-symbols-outlined">description</span>문서 원문 보기<span class="material-symbols-outlined chevron">expand_more</span></summary>
+              <div class="risk-source-text">${escapeHtml(chunk.content || '원문 내용이 없습니다.')}</div>
+            </details>
+          </article>
         `;
       });
       riskHtml += '</div>';
       riskContainer.innerHTML = riskHtml;
     } else {
       riskContainer.innerHTML = `
-        <div style="padding: 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; font-size: 13px; color: #475569; display: flex; align-items: center; gap: 8px;">
-          <span class="material-symbols-outlined" style="color: #16A34A; font-size: 20px;">verified</span>
-          <span>내부 문서/검토안에서 상위법령을 정면 위배하거나 즉각적인 행정제재를 초래하는 특이 독소조항이 감지되지 않았습니다.</span>
+        <div class="impact-empty-state success">
+          <span class="material-symbols-outlined">verified</span>
+          <div><strong>우선 검토할 위험 조항이 감지되지 않았습니다.</strong><span>자동 탐지 결과이며, 최종 판단은 아래 공식 조문 대조 결과와 함께 확인하십시오.</span></div>
         </div>
       `;
     }
@@ -1035,5 +1135,6 @@ function escapeHtml(unsafe) {
 export default {
   initWorkbenchTabs,
   renderWorkbench,
-  resetWorkbenchTabs
+  resetWorkbenchTabs,
+  resetWorkbench
 };

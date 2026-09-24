@@ -36,6 +36,17 @@ function getText(node) {
   return '';
 }
 
+// 공식 목록의 상세 링크에 API 계정 식별자(OC)가 포함될 수 있다. 응답·캐시에 싣기 전에 제거한다.
+export function publicDetailUrl(node) {
+  const value = getText(node);
+  if (!value) return '';
+  try {
+    const url = new URL(value, 'https://www.law.go.kr');
+    url.searchParams.delete('OC');
+    return value.startsWith('/') ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+  } catch { return ''; }
+}
+
 /**
  * 판례 검색 목록 파싱
  */
@@ -63,7 +74,7 @@ export function parsePrecedents(raw) {
     judgeType: getText(item.판결유형 || item.judgeType),
     holding: getText(item.판시사항 || item.holding),
     summary: getText(item.판결요지 || item.summary),
-    detailUrl: getText(item.판례상세링크 || item.detailUrl)
+    detailUrl: publicDetailUrl(item.판례상세링크 || item.detailUrl)
   })).filter(p => p.caseNo || p.caseName || p.id);
 }
 
@@ -94,7 +105,7 @@ export function parseInterpretations(raw) {
     question: getText(item.질의요지 || item.question),
     answer: getText(item.회답 || item.회답요지 || item.answer),
     reason: getText(item.이유 || item.reason),
-    detailUrl: getText(item.법령해석례상세링크 || item.해석례상세링크 || item.detailUrl)
+    detailUrl: publicDetailUrl(item.법령해석례상세링크 || item.해석례상세링크 || item.detailUrl)
   })).filter(e => e.title || e.itemNo || e.id);
 }
 
@@ -123,7 +134,7 @@ export function parseAdminRules(raw) {
     ministry: getText(item.소관부처명 || item.ministry),
     enforceDate: getText(item.시행일자 || item.enforceDate),
     promulDate: getText(item.발령일자 || item.promulDate),
-    detailUrl: getText(item.행정규칙상세링크 || item.detailUrl)
+    detailUrl: publicDetailUrl(item.행정규칙상세링크 || item.detailUrl)
   })).filter(r => r.name || r.id);
 }
 
@@ -154,7 +165,7 @@ export function parseOrdinances(raw) {
     ruleType: getText(item.자치법규종류 || item.ruleType),
     promulDate: getText(item.공포일자 || item.promulDate),
     enforceDate: getText(item.시행일자 || item.enforceDate),
-    detailUrl: getText(item.자치법규상세링크 || item.detailUrl)
+    detailUrl: publicDetailUrl(item.자치법규상세링크 || item.detailUrl)
   })).filter(o => o.name || o.id);
 }
 
@@ -297,7 +308,7 @@ export function parseOrdinanceDetail(raw) {
     annexes: ensureArray(service.별표?.별표단위 || service.별표?.별표 || []).map(an => ({
       no: getText(an.별표번호 || an.no),
       title: getText(an.별표제목 || an.title),
-      detailUrl: getText(an.별표상세링크 || an.detailUrl)
+      detailUrl: publicDetailUrl(an.별표상세링크 || an.detailUrl)
     }))
   };
 }

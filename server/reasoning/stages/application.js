@@ -1,10 +1,9 @@
-// server/reasoning/stages/application.js - S4 포섭 (쟁점당 LLM 1회)
+// server/reasoning/stages/application.js - S4 포섭 (쟁점의 요건·근거를 작은 묶음으로 처리)
 //
 // 쟁점마다 요건 × 사실 × 근거를 대응시킨다. 모델에게는 닫힌 질문만 묻는다:
 // "이 요건은 충족되는가, 어떤 사실과 어떤 근거 ID 때문인가". 결론은 verify/conclusion.js가 계산한다.
 //
-// 프롬프트: [공통 접두부 P0][사실·쟁점 목록 — 실행 공통][이 쟁점의 요건·근거 원문][과제]
-// 앞의 두 부분은 모든 쟁점에서 같으므로 쟁점을 연속으로 돌리면 입력 처리가 캐시에서 나온다.
+// 프롬프트: [쟁점 관련 사실][최대 4개 요건·근거 원문][과제].
 import { runStage, StageError } from '../stageRunner.js';
 import { REASONING_SYSTEM } from '../prompts.js';
 import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from '../verify/conclusion.js';
@@ -12,6 +11,10 @@ import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from 
 export const ELEMENT_STATUS = ['SATISFIED', 'NOT_SATISFIED', 'PARTIALLY_SATISFIED', 'DISPUTED', 'UNKNOWN'];
 export const PROOF = ['SUFFICIENT', 'INSUFFICIENT', 'CONFLICTING', 'NO_EVIDENCE'];
 const ISSUE_EVIDENCE_CHARS = 9000;
+const ELEMENT_BATCH = 4;
+const FRAGMENT_CHARS = 900;
+const fragmentToken = (id, start, end) => `${id}@fragment:${start}:${end}`;
+const parseFragment = value => String(value).match(/^([A-Z][A-Za-z0-9._]*)@fragment:(\d+):(\d+)$/);
 // 길이 상한은 곧 출력 토큰 상한이다. 실측(사례 01): 쟁점당 출력 958~1,835토큰, 이 단계가 전체 모델 시간의 약 60%.
 
 const FACT_LABEL = { CONFIRMED: '확인', ALLEGED: '주장', DISPUTED: '다툼', UNKNOWN: '자료 없음', INFERRED: '추론(원문 미확인)' };
@@ -85,6 +88,37 @@ export function cleanNarrative(narrative, allowed) {
   return { text, removed };
 }
 
+/** S4는 S1/S5의 사건 전체 접두부 대신 쟁점에 연결된 사실만 받는다. */
+export function buildIssuePrefix(registry, issue, facts) {
+  const relevant = facts.filter(f => issue.factIds.includes(f.id));
+  return `[검토 기준일] ${registry.asOf}\n\n[이 쟁점의 사실 — 원문 미확인 사실은 입증 근거로 쓰지 않는다]\n`
+    + (relevant.map(f => `[${f.id}] (${FACT_LABEL[f.status] || f.status}${f.docRef ? `, ${f.docRef}` : ''}) ${f.text}`).join('\n') || '(없음)');
+}
+
+/** 여러 근거 묶음의 판단이 충돌하면 확정하지 않고 DISPUTED로 합친다. */
+function mergeApplications(values, elements) {
+  if (values.length === 1) return values[0];
+  const unique = items => [...new Set(items)];
+  const assessments = elements.map(element => {
+    const rows = values.flatMap(v => v.assessments || []).filter(a => a.elementId === element.id);
+    const material = rows.filter(a => a.status !== 'UNKNOWN');
+    const statuses = unique(material.map(a => a.status));
+    const first = material[0] || rows[0];
+    if (!first) return null;
+    return { ...first, status: statuses.length > 1 ? 'DISPUTED' : statuses[0] || 'UNKNOWN',
+      proof: statuses.length > 1 ? 'CONFLICTING' : material.some(a => a.proof === 'CONFLICTING') ? 'CONFLICTING' : first.proof,
+      factIds: unique(rows.flatMap(a => a.factIds || [])), contraryFactIds: unique(rows.flatMap(a => a.contraryFactIds || [])),
+      evidenceIds: unique(rows.flatMap(a => a.evidenceIds || [])),
+      analysis: statuses.length > 1 ? '근거 묶음 사이 판단 불일치' : first.analysis,
+      openQuestion: statuses.length > 1 ? '상충하는 근거의 적용 관계 확인 필요' : first.openQuestion };
+  }).filter(Boolean);
+  const precedents = [...new Map(values.flatMap(v => v.precedents || []).map(p => [p.id, p])).values()];
+  return { assessments, precedents, counter: values.map(v => v.counter).find(c => c?.position && c?.response)
+    || values.map(v => v.counter).find(Boolean) || null,
+  narrative: values.map(v => v.narrative || '').filter(Boolean).join('\n'),
+  reasoning: values.map(v => v.reasoning || '').filter(Boolean).join('\n') };
+}
+
 /**
  * 한 쟁점의 포섭을 실행한다. 실패해도 예외를 올리지 않고 쟁점을 FAILED로 표시해 돌려준다.
  * 한 쟁점의 실패가 다른 쟁점 결과를 버리게 하지 않기 위함이다.
@@ -92,37 +126,101 @@ export function cleanNarrative(narrative, allowed) {
 export async function applyIssue({ issue, elements, research, registry, facts, runPrefix, predecessors = [], provider, config, session }) {
   const factsById = new Map(facts.map(f => [f.id, f]));
   const evidenceIds = [...new Set([...research.evidenceIds, ...research.adverseCandidateIds])];
-  const rendered = registry.renderFull([...evidenceIds, ...research.documentIds], { maxChars: ISSUE_EVIDENCE_CHARS });
-  const allowedEvidence = [...new Set(rendered.included.flatMap(id => [id, ...registry.children(id).map(c => c.id)])
-    .filter(id => !registry.get(id).kind.startsWith('DOCUMENT')))];
-  const authorityIds = [...new Set(allowedEvidence.map(id => registry.get(id)).filter(e => /^(PRECEDENT|INTERPRETATION)/.test(e.kind))
-    .map(e => e.parentId || e.id))];
   const withReasoning = config.think !== true;
-  const schema = applicationSchema({ elementIds: elements.map(e => e.id), evidenceIds: allowedEvidence,
-    factIds: facts.map(f => f.id), authorityIds, withReasoning });
-
-  const base = { issueId: issue.id, elements, evidenceIds: rendered.included, omittedEvidence: rendered.omitted, documentIds: research.documentIds };
+  const base = { issueId: issue.id, elements, evidenceIds: [], omittedEvidence: [], documentIds: research.documentIds };
   if (!elements.length) {
     return { ...base, stageStatus: 'SKIPPED', assessments: [], precedents: [], counter: null, narrative: '', openQuestions: [],
       conclusion: computeIssueConclusion([], [], predecessors), warnings: ['판단할 요건이 없어 포섭을 생략했습니다(쟁점에 연결된 조문 없음).'] };
   }
 
-  let value;
-  let attempts;
-  try {
-    ({ value, attempts } = await runStage({ stage: `s4:${issue.id}`, provider, system: REASONING_SYSTEM,
-      prefix: `${runPrefix}\n\n${issueBlock({ issue, elements, evidenceText: rendered.text, omittedEvidence: rendered.omitted,
-        adverseIds: research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId)), predecessors })}`,
-      task: TASK(withReasoning), schema, config, session }));
-  } catch (err) {
-    if (!(err instanceof StageError)) throw err;
+  const values = [];
+  const included = [];
+  const allowedEvidence = new Set();
+  const warnings = [];
+  const failedIds = [];
+  let attempts = 0;
+  let lastError = null;
+  const elementGroups = [];
+  for (let i = 0; i < elements.length; i += ELEMENT_BATCH) elementGroups.push(elements.slice(i, i + ELEMENT_BATCH));
+  for (const [groupIndex, groupElements] of elementGroups.entries()) {
+  let pending = [...evidenceIds, ...research.documentIds];
+  let maxChars = ISSUE_EVIDENCE_CHARS;
+  for (let batch = 0; pending.length || batch === 0; batch++) {
+    const fragment = pending.length ? parseFragment(pending[0]) : null;
+    const rendered = fragment ? (() => {
+      const [, id, rawStart, rawEnd] = fragment;
+      const entry = registry.get(id);
+      const start = Number(rawStart); const end = Number(rawEnd);
+      return { text: `[${id}] ${entry.label} (원문 ${start}-${end})\n${entry.text.slice(start, end)}`,
+        included: [id], omitted: pending.slice(1) };
+    })() : registry.renderFull(pending, { maxChars });
+    if (pending.length && !rendered.included.length) {
+      const first = pending[0];
+      const kind = registry.get(first)?.kind;
+      const allChildren = registry.children(first).filter(e => e.text);
+      const canSplit = ['DOCUMENT', 'PRECEDENT', 'INTERPRETATION', 'ADMIN_RULE'].includes(kind)
+        || (['ARTICLE', 'ORDINANCE_ARTICLE'].includes(kind) && allChildren.some(e => e.kind === 'ARTICLE_UNIT'));
+      const children = canSplit ? allChildren : [];
+      if (children.length && maxChars <= 2500) { pending = [...children.map(e => e.id), ...pending.slice(1)]; maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue; }
+      if (maxChars > 1200) { maxChars = Math.floor(maxChars / 2); batch--; continue; }
+      const entry = registry.get(first);
+      if (entry?.text.length > 180 && !children.length) {
+        const tokens = [];
+        const step = entry.text.length > FRAGMENT_CHARS ? FRAGMENT_CHARS : Math.ceil(entry.text.length / 2);
+        for (let start = 0; start < entry.text.length; start += step)
+          tokens.push(fragmentToken(first, start, Math.min(entry.text.length, start + step)));
+        pending = [...tokens, ...pending.slice(1)]; maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue;
+      }
+      warnings.push(`근거 ${first}는 한 호출의 입력 예산을 초과해 제외했습니다.`);
+      failedIds.push(first);
+      pending = pending.slice(1);
+      continue;
+    }
+    const batchEvidence = [...new Set(rendered.included.flatMap(id => [id, ...registry.children(id).map(c => c.id)])
+      .filter(id => !registry.get(id).kind.startsWith('DOCUMENT')))];
+    const authorityIds = [...new Set(batchEvidence.map(id => registry.get(id)).filter(e => /^(PRECEDENT|INTERPRETATION)/.test(e.kind))
+      .map(e => e.parentId || e.id))];
+    const schema = applicationSchema({ elementIds: groupElements.map(e => e.id), evidenceIds: batchEvidence,
+      factIds: facts.map(f => f.id), authorityIds, withReasoning });
+    try {
+      const result = await runStage({ stage: groupIndex || batch ? `s4:${issue.id}:part:${groupIndex + 1}:${batch + 1}` : `s4:${issue.id}`,
+        provider, system: REASONING_SYSTEM,
+        prefix: `${runPrefix}\n\n${issueBlock({ issue, elements: groupElements, evidenceText: rendered.text, omittedEvidence: rendered.omitted,
+          adverseIds: research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId)), predecessors })}`,
+        task: TASK(withReasoning), schema, config, session });
+      values.push(result.value); attempts += result.attempts;
+      included.push(...rendered.included);
+      batchEvidence.forEach(id => allowedEvidence.add(id));
+      pending = rendered.omitted;
+      maxChars = ISSUE_EVIDENCE_CHARS;
+    } catch (err) {
+      if (!(err instanceof StageError)) throw err;
+      lastError = err;
+      if ((err.budgetExceeded || err.cause?.truncated) && fragment && Number(fragment[3]) - Number(fragment[2]) > 180) {
+        const [, id, rawStart, rawEnd] = fragment;
+        const start = Number(rawStart); const end = Number(rawEnd); const middle = Math.floor((start + end) / 2);
+        pending = [fragmentToken(id, start, middle), fragmentToken(id, middle, end), ...rendered.omitted];
+        maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue;
+      }
+      if ((err.budgetExceeded || err.cause?.truncated) && maxChars > 1200) {
+        maxChars = Math.floor(maxChars / 2); batch--; continue;
+      }
+      warnings.push(`근거 묶음 ${rendered.included.join(', ')} 판단 실패: ${err.message}`);
+      failedIds.push(...rendered.included);
+      pending = rendered.omitted;
+    }
+  }
+  base.omittedEvidence.push(...pending);
+  }
+  base.evidenceIds = [...new Set(included)];
+  base.omittedEvidence = [...new Set([...base.omittedEvidence, ...failedIds])];
+  if (!values.length) {
     const assessments = elements.map(e => ({ elementId: e.id, status: 'UNKNOWN', proof: 'NO_EVIDENCE', factIds: [], contraryFactIds: [],
       evidenceIds: [], analysis: '모델 판단 실패', openQuestion: '' }));
-    return { ...base, stageStatus: 'FAILED', error: err.message, assessments, precedents: [], counter: null, narrative: '',
-      openQuestions: [], conclusion: { ...computeIssueConclusion(elements, assessments, predecessors), reasons: ['포섭 단계 실패'] }, warnings: [] };
+    return { ...base, stageStatus: 'FAILED', error: lastError?.message || '근거 묶음 처리 실패', assessments, precedents: [], counter: null, narrative: '',
+      openQuestions: [], conclusion: { ...computeIssueConclusion(elements, assessments, predecessors), reasons: ['포섭 단계 실패'] }, warnings };
   }
-
-  const warnings = [];
+  const value = mergeApplications(values, elements);
   // 요건별 판단: 빠진 요건은 UNKNOWN, 원문 미확인 사실만으로는 입증 충분으로 보지 않는다.
   const given = new Map(value.assessments.map(a => [a.elementId, a]));
   const assessments = elements.map(e => {
@@ -133,7 +231,10 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
     return { ...adjusted, knowledgeOnly: adjusted.evidenceIds.length > 0 && !official };
   });
 
-  const conclusion = computeIssueConclusion(elements, assessments, predecessors);
+  let conclusion = computeIssueConclusion(elements, assessments, predecessors);
+  if (base.omittedEvidence.length || warnings.some(w => w.includes('판단 실패')) || elements.some(e => e.fallback)) {
+    conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
+  }
   const allowed = new Set([...allowedEvidence, ...facts.map(f => f.id), ...elements.map(e => e.id), ...research.documentIds]);
   const narrative = cleanNarrative(value.narrative, allowed);
   if (narrative.removed.length) warnings.push(`서술에서 이 쟁점의 근거가 아닌 표기 제거: ${narrative.removed.join(', ')}`);
@@ -143,11 +244,15 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   // 게이트 사유: 사람이 반드시 봐야 하는 경우.
   const decidingAssessments = assessments.filter(a => conclusion.decidingElementIds.includes(a.elementId));
   const gateReasons = [];
+  if (warnings.some(w => w.includes('판단 실패'))) gateReasons.push('일부 근거 묶음 판단 실패');
+  if (base.omittedEvidence.length) gateReasons.push(`포섭에서 처리하지 못한 근거: ${base.omittedEvidence.join(', ')}`);
+  if (elements.some(e => e.fallback)) gateReasons.push('골격으로 대체한 미검증 요건이 포함됨');
   if (!assessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official))) gateReasons.push('공식 근거에 기댄 요건 판단이 없음');
   if (decidingAssessments.some(a => a.knowledgeOnly)) gateReasons.push('결론을 좌우한 요건이 외부 참고 지식에만 기댐');
   if (value.counter?.position && !value.counter.response) gateReasons.push('가장 강한 반대 논리에 대한 응답 없음');
 
-  return { ...base, stageStatus: 'OK', attempts, reasoning: value.reasoning || null, assessments,
+  return { ...base, stageStatus: warnings.some(w => w.includes('판단 실패')) || base.omittedEvidence.length || elements.some(e => e.fallback) ? 'PARTIAL' : 'OK',
+    attempts, reasoning: value.reasoning || null, assessments,
     precedents: value.precedents, counter: value.counter, narrative: narrative.text,
     openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),
     conclusion, gateReasons, warnings };

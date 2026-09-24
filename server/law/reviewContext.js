@@ -2,8 +2,7 @@ import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { articleText, isOfficial, today, sameLaw, normalizedLawName, inForceAt, historicalReviewNotice } from './evidence.js';
 
 // 섹션별 입력 예산(문자 수). 토큰 예산(num_ctx)과는 별개로, 어떤 근거를 몇 자까지
-// 프롬프트에 실을지 정한다. 여기서 넘친 항목이 omittedEvidence로 집계되고
-// 검토 상태를 PARTIAL로 만든다.
+// 프롬프트에 실을지 정한다. 여기서 넘친 항목은 수집 진단에만 집계한다.
 // 판례·해석례는 한 건이 3,000자 안팎이라 기본값으로는 상위 1~2건만 실린다.
 const DEFAULT_SECTION_BUDGETS = Object.freeze({
   document: 4500, articles: 9000, precedents: 5000, interpretations: 4000,
@@ -151,7 +150,7 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
       body += (body ? '\n' : '') + part;
     }
     const annexList = (d.annexes || []).map(x => `  - [별표 ${String(x.no).replace(/^0+/, '')}] ${x.title}${x.fileUrl ? ` (첨부: ${x.fileUrl})` : ''}`).join('\n');
-    const note = dropped ? `\n(이 고시의 조문 ${dropped}개는 분량 제한으로 제외했습니다. 제외분에 관한 판단은 보류하십시오.)` : '';
+    const note = dropped ? `\n(이 고시의 조문 ${dropped}개는 분량 제한으로 입력에 포함되지 않았습니다.)` : '';
     return `[행정규칙 ${d.name} · ${d.ruleType || ''} · ${d.ministry || ''}]\n${body}${note}${annexList ? `\n[별표 목록 — 본문은 첨부파일로만 제공됨]\n${annexList}` : ''}`;
   }, budgets.adminRules ?? limits.adminRules);
 
@@ -198,8 +197,15 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   // 여기까지는 수집·학습·시점에 관한 제한이다. 아래 두 문장은 이 단일 호출 프롬프트의 예산에만 해당하므로
   // 단계형 검토(자체 예산으로 근거를 싣는다)는 contextWarnings만 쓴다.
   const contextWarnings = [...warnings];
-  if (omittedEvidence) warnings.push(`입력 예산 때문에 근거 ${omittedEvidence}건을 제외했습니다. 제외한 자료에 관한 판단은 보류하십시오.`);
+  // 분석은 실제 입력에 실린 근거만을 대상으로 한다. 제외 건수는 분석 상태를 낮추지 않는다.
   if (document.omittedCount || document.truncatedCount) warnings.push('첨부문서는 부분 발췌입니다. 문서 전체를 검토했다고 표현하지 마십시오.');
   return { document, articlesText, precedentsText, interpretationsText, ordinanceArticlesText, adminRuleText, keyProvisionsText,
-    learningKnowledgeText, learningReferences, learningExcluded, warnings, contextWarnings, omittedEvidence };
+    learningKnowledgeText, learningReferences, learningExcluded, warnings, contextWarnings, omittedEvidence,
+    evidenceUsed: {
+      articles: (articlesText.match(/^\[[^\]\n]+ \d+(?:의\d+)? \(/gm) || []).length,
+      precedents: (precedentsText.match(/^\[판례 관련도:/gm) || []).length,
+      interpretations: (interpretationsText.match(/^\[유권해석 /gm) || []).length,
+      ordinances: (ordinanceArticlesText.match(/^\[[^\]\n]+ 제\d+(?:의\d+)?조 /gm) || []).length,
+      adminRules: (adminRuleText.match(/^\[행정규칙 /gm) || []).length
+    } };
 }

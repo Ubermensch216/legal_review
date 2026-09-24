@@ -106,6 +106,10 @@ test('T1 질의서는 사람이 확인하기 전에는 반출되지 않고, 확�
   assert.equal(ready.state, 'READY');
   assert.equal(ready.privacyStatus, 'USER_CONFIRMED');
   assert.match(s.exportInquiry(item.id), /비식별 법률 검토 질의서/);
+  assert.match(s.exportInquiry(item.id), /answers/);
+  assert.match(item.text, /유효한 JSON 객체 하나만 출력하십시오/);
+  assert.match(item.text, /JSON 앞뒤의 설명, 인사말, 마크다운 코드 블록, 각주를 쓰지 마십시오/);
+  assert.doesNotMatch(item.text, /답변을 JSON으로 작성하는 경우/);
 
   // 저장된 내용을 신뢰하지 않는다. 반출 직전 재검사가 마지막 방어선이다.
   store.update(ready.id, ready.revision, 'READY', { ...ready, text: `${ready.text}\n연락처 010-1234-5678` });
@@ -288,7 +292,10 @@ test('T10 사용자가 고른 경우에만 구조화 JSON을 그대로 받아들
   const { item } = await readyInquiry();
   const log = [];
   const s = service(async (...args) => { log.push(args); return { card: card(), sensitiveTerms: [] }; });
-  const pasted = `검토 결과는 아래와 같습니다.\n\n\`\`\`json\n${JSON.stringify({ card: card(), answeredQuestions: [1] })}\n\`\`\`\n감사합니다.`;
+  const pasted = `검토 결과는 아래와 같습니다.\n\n\`\`\`json\n${JSON.stringify({
+    answers: [{ questionNo: 1, position: '검토 요지', conditions: [], exceptions: [], checklist: [], citations: [], cases: [], confidence: '미확인' }],
+    card: card()
+  })}\n\`\`\`\n감사합니다.`;
 
   const saved = await s.importAnswer(item.id, { answer: pasted, mode: 'structured' });
   assert.equal(log.length, 0, '구조화 반입은 로컬 AI를 호출하지 않는다');
@@ -304,6 +311,20 @@ test('T10 사용자가 고른 경우에만 구조화 JSON을 그대로 받아들
   // JSON이 없으면 조용히 다른 경로로 새지 않고 거절한다.
   await statusAsync(() => s.importAnswer(item.id, { answer: 'JSON 없는 산문 답변입니다.', mode: 'structured' }),
     400, /지식 카드 JSON을 찾지 못했습니다/);
+});
+
+test('T10 구조화 답변은 질문 번호마다 정확히 한 항목을 요구한다', async () => {
+  const { item } = await readyInquiry();
+  const s = service(async () => { throw new Error('구조화 반입은 로컬 AI를 호출하면 안 된다'); });
+  const answer = { answers: [{ questionNo: 1, position: '적용 요건을 확인해야 합니다.', conditions: ['질문 사실관계가 충족되어야 합니다.'],
+    exceptions: [], checklist: ['계약서와 근거 법령을 대조합니다.'], citations: [], cases: [], confidence: '미확인' }], card: card() };
+  const saved = await s.importAnswer(item.id, { answer: JSON.stringify(answer), mode: 'structured' });
+  assert.deepEqual(saved.answersByQuestion.map(a => a.questionNo), [1]);
+  assert.deepEqual(saved.answeredQuestions, [1]);
+
+  const missing = { ...answer, answers: [] };
+  await statusAsync(() => s.importAnswer(item.id, { answer: JSON.stringify(missing), mode: 'structured' }),
+    400, /answers에 질문 1번/);
 });
 
 test('T10 예산을 넘는 답변은 조각으로 나눠 읽고 한 장의 카드로 합친다', async () => {
@@ -787,10 +808,19 @@ test('T5 형식이 깨진 로컬 AI 출력은 지식으로 저장되지 않는�
   // 쟁점어 개수·형식이 맞지 않으면 나중에 검색할 수 없으므로 저장하지 않는다.
   const thin = service(async () => ({ card: { ...card(), keywords: ['관리위탁'] }, sensitiveTerms: [] }));
   await statusAsync(() => thin.importAnswer(item.id, { answer: '답변3' }), 502, /검색어 2개 이상/);
-  const many = service(async () => ({ card: { ...card(), keywords: Array(11).fill('쟁점어') }, sensitiveTerms: [] }));
-  await statusAsync(() => many.importAnswer(item.id, { answer: '답변4' }), 502, /검색어: 목록 형식과 항목 수/);
+  const eleven = service(async () => ({ card: { ...card(), keywords: Array(11).fill('쟁점어') }, sensitiveTerms: [] }));
+  const accepted = await eleven.importAnswer(item.id, { answer: '답변4-허용' });
+  assert.equal(accepted.card.keywords.length, 11);
+  const broad = service(async () => ({ card: { ...card(),
+    checklist: Array.from({ length: 14 }, (_, i) => `점검 ${i + 1}`),
+    citations: Array.from({ length: 18 }, () => ({ lawName: law.lawName, articleNo: '제20조' })) }, sensitiveTerms: [] }));
+  const broadCard = await broad.importAnswer(item.id, { answer: '답변4-확장' });
+  assert.equal(broadCard.card.checklist.length, 14);
+  assert.equal(broadCard.card.citations.length, 18);
+  const many = service(async () => ({ card: { ...card(), keywords: Array(13).fill('쟁점어') }, sensitiveTerms: [] }));
+  await statusAsync(() => many.importAnswer(item.id, { answer: '답변5' }), 502, /검색어: 목록 형식과 항목 수/);
 
-  assert.equal(partial.list().knowledge.length, 0);
+  assert.equal(partial.list().knowledge.length, 2, '허용된 확장 카드만 저장되어야 한다');
 
   // 사용자가 직접 카드를 고칠 때는 종전대로 입력 오류(400)로 알린다.
   const ok = service(async () => ({ card: card(), sensitiveTerms: [] }));
@@ -884,6 +914,7 @@ test('T13 단계형 검토의 법리 공백만 질문으로 옮기고, 로컬 AI
   assert.deepEqual(item.anchors.map(a => [a.no, a.gapId, a.type]), [[1, 'G1', 'LEGAL_INTERPRETATION'], [2, 'G3', 'AUTHORITY_CONFLICT']]);
   assert.equal(item.questionSource, 'REASONING_GAPS');
   assert.match(item.text, /"answers":\[\{"questionNo":1/);
+  assert.match(item.text, /유효한 JSON 객체 하나만 출력하십시오/);
 
   // 질문 문구를 고쳐도 번호가 남아 있으면 연결을 유지하고, 질문이 사라지면 연결도 뺀다.
   const edited = s.editInquiry(item.id, { revision: item.revision, text: item.text.replace(/\n2\. 상반된[^\n]*\n/, '\n') });

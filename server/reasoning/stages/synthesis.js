@@ -58,11 +58,13 @@ function citableFrom(results, registry) {
 }
 
 /** S5 호출. 실패하면 결론 표만으로 기본 요약을 만든다(결론은 이미 계산되어 있다). */
-export async function synthesize({ issues, issueResults, registry, preset, runPrefix, provider, config, session }) {
+export async function synthesize({ issues, issueResults, registry, preset, provider, config, session }) {
   const preConsulting = preset === 'pre_consulting_audit';
   const table = conclusionTable(issues, issueResults);
+  const positions = preConsulting ? issues.flatMap(i => (i.positions || []).map(p => `[${i.id}] ${p.label}: ${p.claim}`)).join('\n') : '';
+  const compactPrefix = `[검토 기준일] ${registry.asOf}${positions ? `\n\n[대립 견해]\n${positions}` : ''}`;
   try {
-    const { value } = await runStage({ stage: 's5', provider, system: REASONING_SYSTEM, prefix: runPrefix, task: TASK({ table, preConsulting }),
+    const { value } = await runStage({ stage: 's5', provider, system: REASONING_SYSTEM, prefix: compactPrefix, task: TASK({ table, preConsulting }),
       schema: schema({ issueIds: issues.map(i => i.id), preConsulting, citableIds: citableFrom(issueResults, registry) }), config: { ...config, think: false }, session });
     return { ...value, table, source: 'LLM' };
   } catch (err) {
@@ -71,7 +73,6 @@ export async function synthesize({ issues, issueResults, registry, preset, runPr
   }
 }
 
-const MAX_REDLINES = 5;
 const redlineSchema = citableIds => ({ type: 'object', additionalProperties: false, required: ['revisedText', 'reason', 'evidenceIds'],
   properties: { revisedText: { type: 'string', maxLength: 600 }, reason: { type: 'string', maxLength: 200 },
     evidenceIds: { type: 'array', maxItems: 4, items: citableIds.length ? { type: 'string', enum: citableIds } : { type: 'string' } } } });
@@ -87,10 +88,10 @@ ${issueLines}
 출력은 JSON만.`;
 
 /**
- * 위험이 있다고 정리된 쟁점에 연결된 첨부문서 조항만 수정 문구를 만든다(조항당 1회, 최대 5개).
+ * 위험이 있다고 정리된 쟁점에 연결된 첨부문서 조항마다 수정 문구를 만든다.
  * 원문(originalText)은 모델이 쓰지 않고 첨부문서 조항에서 그대로 가져온다.
  */
-export async function draftRedlines({ issues, issueResults, synthesis, registry, runPrefix, provider, config, session }) {
+export async function draftRedlines({ issues, issueResults, synthesis, registry, provider, config, session }) {
   const risky = new Map((synthesis.risks || []).filter(r => r.level !== 'LOW').map(r => [r.issueId, r.level]));
   const clauses = new Map();
   for (const issue of issues.filter(i => risky.has(i.id))) {
@@ -103,7 +104,7 @@ export async function draftRedlines({ issues, issueResults, synthesis, registry,
       if (risky.get(issue.id) === 'HIGH') clauses.get(id).level = 'HIGH';
     }
   }
-  const ordered = [...clauses.values()].sort((a, b) => (b.level === 'HIGH') - (a.level === 'HIGH')).slice(0, MAX_REDLINES);
+  const ordered = [...clauses.values()].sort((a, b) => (b.level === 'HIGH') - (a.level === 'HIGH'));
   const redlines = [];
   const warnings = [];
   for (const { entry, issues: linked, level } of ordered) {
@@ -111,7 +112,8 @@ export async function draftRedlines({ issues, issueResults, synthesis, registry,
     const issueLines = linked.map(({ issue, result }) => `- [${issue.id}] ${issue.question} → ${LEGAL_LABEL[result.conclusion?.legal] || '판단 유보'}`
       + `${result.evidenceIds?.length ? ` (근거 ${result.evidenceIds.slice(0, 6).join(', ')})` : ''}`).join('\n');
     try {
-      const { value } = await runStage({ stage: `s5r:${entry.id}`, provider, system: REASONING_SYSTEM, prefix: runPrefix,
+      const { value } = await runStage({ stage: `s5r:${entry.id}`, provider, system: REASONING_SYSTEM,
+        prefix: `[검토 기준일] ${registry.asOf}`,
         task: REDLINE_TASK({ clause: entry, issueLines }), schema: redlineSchema(citable), config: { ...config, think: false }, session });
       redlines.push({ clauseNo: entry.label.replace(/^첨부문서\s*/, ''), originalText: entry.text, revisedText: value.revisedText,
         reason: expandMarkers(value.reason, registry), riskLevel: level, evidenceIds: value.evidenceIds,
@@ -120,7 +122,6 @@ export async function draftRedlines({ issues, issueResults, synthesis, registry,
       warnings.push(`${entry.label} 수정 문구 생성 실패: ${err.message}`);
     }
   }
-  if (clauses.size > MAX_REDLINES) warnings.push(`수정 대상 조항 ${clauses.size}개 중 ${MAX_REDLINES}개만 수정 문구를 만들었습니다.`);
   return { redlines, warnings };
 }
 
@@ -169,15 +170,29 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
   const issueSections = issues.map(issue => {
     const r = byIssue(issue.id);
     const c = r?.conclusion || {};
+    const issueFacts = (issue.factIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);
+    const rules = (r?.elements || []).map(e => {
+      const assessment = (r.assessments || []).find(a => a.elementId === e.id);
+      const authorities = [...new Set([...(e.sourceIds || []), ...(assessment?.evidenceIds || [])])]
+        .map(id => registry.get(id)).filter(Boolean);
+      const official = authorities.filter(x => x.official && x.inForce);
+      return `- ${e.isException ? '(예외) ' : ''}${e.text} — ${official.length ? official.map(x => x.label).join(', ') : '공식 근거 확인 필요'}`;
+    });
     const rows = (r?.assessments || []).map(a => {
       const element = r.elements.find(e => e.id === a.elementId);
-      return `- ${element?.isException ? '(예외) ' : ''}${element?.text || a.elementId}: ${STATUS_LABEL[a.status] || a.status} · ${PROOF_LABEL[a.proof] || a.proof}`
-        + `${a.analysis ? ` — ${expandMarkers(a.analysis, registry)}` : ''}`;
+      const appliedFacts = (a.factIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);
+      const contraryFacts = (a.contraryFactIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);
+      return `- ${element?.text || a.elementId}: ${STATUS_LABEL[a.status] || a.status} · ${PROOF_LABEL[a.proof] || a.proof}`
+        + ` | 적용 사실: ${appliedFacts.join(' / ') || '연결된 사실 없음'}`
+        + `${contraryFacts.length ? ` | 반대 사실: ${contraryFacts.join(' / ')}` : ''}`
+        + ` | 포섭: ${a.analysis ? expandMarkers(a.analysis, registry) : '판단 내용 없음'}`;
     });
     return [`[쟁점 ${issue.id.slice(1)}] ${issue.question}`,
-      `결론: ${LEGAL_LABEL[c.legal] || '판단 유보'} (${PROOF_LABEL[c.proof] || '입증 미평가'})${c.reasons?.length ? ` — ${c.reasons.join('; ')}` : ''}`,
-      rows.length ? `요건 판단:\n${rows.join('\n')}` : '',
-      r?.narrative ? expandMarkers(r.narrative, registry) : '',
+      `I · 쟁점: ${issue.question}\n관련 사실: ${issueFacts.join(' / ') || '연결된 사실 없음'}`,
+      `R · 적용 규범:\n${rules.join('\n') || '- 확정된 적용 요건 없음 · 공식 법령 근거 확인 필요'}`,
+      `A · 사실에 적용:\n${rows.join('\n') || '- 요건별 적용 판단 없음'}${r?.narrative ? `\n판단 보충: ${expandMarkers(r.narrative, registry)}` : ''}`,
+      `C · 쟁점별 결론:\n결론: ${LEGAL_LABEL[c.legal] || '판단 유보'} (${PROOF_LABEL[c.proof] || '입증 미평가'})${c.reasons?.length ? ` — ${c.reasons.join('; ')}` : ''}`,
+      c.ifResolved ? `선결 쟁점 해결 시: ${LEGAL_LABEL[c.ifResolved] || '판단 유보'}` : '',
       r?.counter?.position ? `반대 논리: ${expandMarkers(r.counter.position, registry)}${r.counter.response ? `\n응답: ${expandMarkers(r.counter.response, registry)}` : '\n응답: (반박하지 못함 — 검토 필요)'}` : '',
       r?.stageStatus === 'FAILED' ? '이 쟁점은 모델 판단에 실패해 결론을 내지 못했습니다.' : ''
     ].filter(Boolean).join('\n');
@@ -200,7 +215,7 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
   const draftOpinion = ['# 법률 검토의견서', '## 1. 검토 요지', synthesis.summary,
     '## 2. 사실관계', facts.map(f => `- ${f.text}${f.status === 'INFERRED' ? ' (원문 미확인)' : ''}`).join('\n') || '- (정리된 사실 없음)',
     '## 3. 쟁점별 검토', legalOpinion,
-    '## 4. 결론 표', synthesis.table,
+    '## 4. 결론 표 및 전체 쟁점 종합 분석', synthesis.table, `종합 판단: ${synthesis.summary}`,
     ...(auditConclusion ? ['## 5. 처리 의견', `${auditConclusion.result} — ${auditConclusion.reason}\n후속 조치: ${auditConclusion.guidance}`] : []),
     `## ${auditConclusion ? 6 : 5}. 추가 확인 사항`, furtherChecks.map(x => `- ${x}`).join('\n') || '- 없음',
     '---', DISCLAIMER].join('\n\n');

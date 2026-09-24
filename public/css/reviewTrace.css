@@ -58,6 +58,107 @@
 .review-trace[data-state="warn"] .trace-state-icon { color: var(--risk-med-text); }
 .review-trace[data-state="error"] .trace-state-icon { color: var(--risk-high-text); }
 
+/* The active chapter has a small raised surface. Motion changes with the work type. */
+.trace-overall {
+  padding: 9px 14px 12px;
+  background: var(--bg-sub);
+  border-top: 1px solid var(--border-color);
+}
+
+.trace-overall-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.trace-overall-label,
+.trace-phase-caption {
+  color: var(--brand-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+
+.trace-overall-label { display: inline-flex; align-items: center; gap: 5px; }
+.trace-overall-label .material-symbols-outlined { font-size: 16px; }
+.trace-overall-label small,
+.trace-phase-caption small { color: var(--text-muted); font-size: 10.5px; font-weight: 500; }
+
+.trace-overall-value {
+  flex: 0 0 auto;
+  color: var(--brand-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-phase-track {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+  padding: 9px 14px 10px;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border-color);
+}
+
+.trace-phase-caption {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.review-trace:not([data-state="running"]) .trace-phase-track { display: none; }
+.review-trace[data-source="fallback"] .trace-phase-track { display: none; }
+.review-trace.collapsed .trace-phase-track { display: none; }
+
+.trace-phase {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 240ms ease, background 240ms ease, border-color 240ms ease, box-shadow 240ms ease, transform 240ms ease;
+}
+
+.trace-phase .material-symbols-outlined { font-size: 17px; }
+.trace-phase.is-past { color: var(--brand-primary); background: var(--bg-sub); }
+.trace-phase.is-active {
+  color: var(--brand-primary);
+  background: var(--brand-accent-light);
+  border-color: var(--border-focus);
+  box-shadow: 0 5px 11px rgba(30, 58, 138, 0.14);
+  transform: translateY(-2px);
+  animation: trace-phase-arrive 360ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.trace-phase.is-active .material-symbols-outlined { color: var(--brand-accent); }
+.trace-phase[data-phase="prepare"].is-active .material-symbols-outlined { animation: trace-tune 2.3s ease-in-out infinite; }
+.trace-phase[data-phase="collect"].is-active .material-symbols-outlined { animation: trace-search 1.8s ease-in-out infinite; }
+.trace-phase[data-phase="analyze"].is-active .material-symbols-outlined { animation: trace-think 2.4s ease-in-out infinite; }
+.trace-phase[data-phase="write"].is-active .material-symbols-outlined { animation: trace-write 1.6s ease-in-out infinite; }
+.trace-phase[data-phase="verify"].is-active .material-symbols-outlined { animation: trace-verify 2s ease-in-out infinite; }
+
+@keyframes trace-phase-arrive {
+  from { opacity: .58; transform: translateY(3px) scale(.95); box-shadow: 0 0 0 rgba(30, 58, 138, 0); }
+  to { opacity: 1; transform: translateY(-2px) scale(1); box-shadow: 0 5px 11px rgba(30, 58, 138, .14); }
+}
+@keyframes trace-tune { 50% { transform: rotate(17deg); } }
+@keyframes trace-search { 50% { transform: translate(2px, -2px) rotate(-8deg); } }
+@keyframes trace-think { 50% { transform: scale(1.17); opacity: .7; } }
+@keyframes trace-write { 50% { transform: translate(3px, -2px) rotate(-9deg); } }
+@keyframes trace-verify { 45% { transform: scale(1.16); } 60% { transform: scale(1); } }
+
 .trace-headline {
   flex: 1 1 auto;
   min-width: 0;
@@ -100,16 +201,26 @@
 
 /* ── 진행 바 ──────────────────────────────────────────────── */
 .trace-progressbar {
-  height: 2px;
-  background: var(--border-color);
+  height: 6px;
+  background: var(--bg-hover);
+  border-radius: 999px;
+  overflow: hidden;
 }
 
 .trace-progressbar-fill {
   height: 100%;
   width: 0;
   background: linear-gradient(90deg, var(--brand-primary), var(--brand-accent));
-  transition: width 0.4s ease;
+  border-radius: inherit;
+  transition: width 0.5s ease;
 }
+
+.review-trace[data-state="running"] .trace-progressbar-fill {
+  background-size: 180% 100%;
+  animation: trace-progress-flow 2.8s ease-in-out infinite;
+}
+
+@keyframes trace-progress-flow { 50% { background-position: 100% 0; } }
 
 .review-trace[data-state="done"] .trace-progressbar-fill { background: var(--risk-low-text); }
 .review-trace[data-state="error"] .trace-progressbar-fill { background: var(--risk-high-text); }
@@ -136,6 +247,41 @@
   padding: 7px 0 7px 26px;
   border-left: 1px solid var(--border-color);
   margin-left: 6px;
+}
+
+.review-trace[data-state="running"]:not([data-source="history"]) .trace-step {
+  animation: trace-step-enter 340ms ease-out both;
+}
+
+@keyframes trace-step-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.trace-step[data-state="RUNNING"] {
+  z-index: 1;
+  margin-right: -4px;
+  padding-right: 8px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--brand-accent-light);
+  box-shadow: 2px 4px 11px rgba(30, 58, 138, .09);
+}
+
+.trace-step[data-state="RUNNING"]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,.55) 50%, transparent 65%);
+  background-size: 220% 100%;
+  background-position: 200% 0;
+  animation: trace-step-scan 3.4s ease-in-out infinite;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+@keyframes trace-step-scan {
+  0%, 26% { background-position: 200% 0; }
+  64%, 100% { background-position: -200% 0; }
 }
 
 .trace-step:last-child { border-left-color: transparent; }
@@ -246,7 +392,28 @@
 /* 이력에서 불러온 과거 검토의 추론 과정 */
 .review-trace[data-source="history"] .trace-header { background: var(--brand-accent-light); }
 
+@media (prefers-reduced-motion: reduce) {
+  .review-trace .trace-pulse,
+  .review-trace .trace-phase,
+  .review-trace .trace-phase .material-symbols-outlined,
+  .review-trace .trace-progressbar-fill,
+  .review-trace .trace-step,
+  .review-trace .trace-step::before,
+  .review-trace .trace-step::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 @media (max-width: 720px) {
   .trace-elapsed { display: none; }
   .trace-body { max-height: 260px; }
+}
+
+@media (max-width: 520px) {
+  .trace-overall-label small,
+  .trace-phase-caption small { display: none; }
+  .trace-phase-track { gap: 3px; padding-inline: 8px; }
+  .trace-phase { flex-direction: column; gap: 2px; padding: 5px 2px; font-size: 10px; }
+  .trace-phase .material-symbols-outlined { font-size: 16px; }
 }

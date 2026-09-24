@@ -3,8 +3,7 @@
 //   S0 근거 등록부 → S1 사건·쟁점 → S2 쟁점별 조사 → S3 요건 분해 → S4 요건별 포섭(쟁점마다)
 //   → S6 근거 검증 → S7 공백 산출 → S5 종합·조립
 //
-// 호출 순서는 로컬 모델의 KV 캐시에 맞춘다. S1·S3은 공통 접두부 P0로, S4·S5·S6은 P0 뒤에 사실·쟁점
-// 목록을 붙인 실행 접두부로 시작한다. 쟁점은 직렬로 돌린다(병렬로 보내면 캐시가 흩어진다).
+// S1은 사건 입력을 보고, 이후 단계는 조문·쟁점·주장 단위의 작은 입력을 본다.
 // num_ctx는 실행 내내 같은 값을 쓴다(바꾸면 모델이 다시 적재된다).
 //
 // 재검토(외부 전문가 답변 반영): 이전 검토와 공식 근거가 같으면 S1·S2를 재사용하고,
@@ -16,7 +15,7 @@ import { buildCommonPrefix, PROMPT_VERSION, REASONING_SYSTEM } from './prompts.j
 import { planCaseAndIssues } from './stages/caseIssues.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
-import { applyIssue, buildRunPrefix } from './stages/application.js';
+import { applyIssue, buildIssuePrefix } from './stages/application.js';
 import { verifyWarrants } from './verify/warrant.js';
 import { deriveGaps } from './stages/gaps.js';
 import { draftRedlines, renderReview, synthesize } from './stages/synthesis.js';
@@ -27,8 +26,8 @@ export class PipelineError extends Error {
 
 /** 단계별 출력 예약. num_predict만 바뀌고 num_ctx는 같으므로 모델 재적재가 없다. */
 const OUTPUT_TOKENS = { s1: 3072, s3: 2048, s4: 3072, s4Think: 8192, s5: 1536, s6: 1024 };
-// S4 입력의 최대 추가분(쟁점 근거 원문 9,000자 + 사실·쟁점 목록·요건·과제). P0 예산을 이만큼 비워 둔다.
-const RESERVED_SUFFIX_CHARS = 14000;
+// S1 지시문·형식·재시도 피드백을 위한 공간. 이후 단계는 이 접두부를 재사용하지 않는다.
+const S1_TASK_RESERVE_CHARS = 2500;
 
 export const pipelineEnabled = (llmConfig = {}) =>
   (llmConfig.pipeline || process.env.REVIEW_PIPELINE || 'monolithic') === 'staged';
@@ -98,14 +97,13 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   // ── S0 근거 등록부와 공통 접두부 ──
   progress.start('s0', '근거 등록부 구성', '조문·판례·해석례·첨부문서에 ID 부여', '분석');
   const registry0 = buildEvidenceRegistry(workbenchContext, { documentText });
-  const s4Limit = budgetFor(thinkStages().has('s4') ? OUTPUT_TOKENS.s4Think : OUTPUT_TOKENS.s4).inputLimit;
+  const s1Limit = budgetFor(OUTPUT_TOKENS.s1).inputLimit;
   let budgets = { document: 14000, index: 6000 };
   let common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
-  for (let i = 0; i < 12 && counter.estimate(REASONING_SYSTEM, common.text + 'x'.repeat(RESERVED_SUFFIX_CHARS)).tokens > s4Limit; i++) {
+  for (let i = 0; i < 12 && counter.estimate(REASONING_SYSTEM, common.text + 'x'.repeat(S1_TASK_RESERVE_CHARS)).tokens > s1Limit; i++) {
     budgets = { document: Math.floor(budgets.document * 0.75), index: Math.floor(budgets.index * 0.75) };
     common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
   }
-  if (common.documentOmitted.length) warnings.push(`입력 한도 때문에 첨부문서 조항 ${common.documentOmitted.length}개(${common.documentOmitted.join(', ')})를 쟁점 추출에서 제외했습니다.`);
   progress.done('s0', `근거 ${countLabel(registry0.size, '개')} 등록 · 문서 조항 ${countLabel(common.documentIncluded.length, '개')}`);
 
   // ── 재검토: 이전 검토와 공식 근거가 같은지 ──
@@ -140,7 +138,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     // ── S1 사건·쟁점 ──
     progress.start('s1', '사건 사실·쟁점 정리', '쟁점을 먼저 확정하고 근거 후보를 ID로 지정', '분석');
     try {
-      caseIssues = await planCaseAndIssues({ registry: registry0, query, prefix: common.text, provider, config: configFor('s1'), session, maxIssues: maxIssues() });
+      caseIssues = await planCaseAndIssues({ registry: registry0, query, preset, prefix: common.text, provider,
+        config: configFor('s1'), session, maxIssues: maxIssues(), forceSplit: common.documentOmitted.length > 0 });
     } catch (err) {
       progress.fail('s1', `쟁점 정리 실패: ${err.message}`);
       throw new PipelineError(`쟁점 정리(S1) 실패: ${err.message}`, err);
@@ -150,13 +149,17 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       throw new PipelineError('쟁점을 세우지 못했습니다.');
     }
     const d1 = caseIssues.diagnostics;
+    if (d1.skippedDocumentIds?.length) warnings.push(`쟁점 추출에서 문서 조각 ${d1.skippedDocumentIds.join(', ')}를 처리하지 못했습니다.`);
+    if (d1.queryTruncated) warnings.push(`쟁점 추출에서 질의 구간 ${(d1.skippedQueryRanges || []).map(([start, end]) => `${start}-${end}`).join(', ')}을 처리하지 못했습니다.`);
     progress.done('s1', `쟁점 ${countLabel(caseIssues.issues.length, '개')} · 사실 ${countLabel(caseIssues.facts.length, '개')}`
       + `${d1.downgradedFacts.length ? ` · 원문 미확인 사실 ${d1.downgradedFacts.length}` : ''}${d1.rejectedIds.length ? ` · 없는 근거 ID 제거 ${d1.rejectedIds.length}` : ''}`);
 
     // ── S2 쟁점별 조사 ──
     progress.start('s2', '쟁점별 판례·해석례 조사', '', '수집');
     plan = planResearchQueries(caseIssues.issues, registry0);
-    research = await runResearchQueries(workbenchContext, plan, clients ? { clients } : {});
+    if (plan.skipped.length) warnings.push(`검색어 상한으로 추가 조사를 수행하지 못한 검색어 ${plan.skipped.length}개가 있습니다.`);
+    research = await runResearchQueries(workbenchContext, plan, { ...(clients ? { clients } : {}), issues: caseIssues.issues,
+      provider, model, apiKey, session });
     warnings.push(...research.warnings);
     registry = buildEvidenceRegistry(research.context, { documentText });
     for (const issue of caseIssues.issues) {
@@ -181,14 +184,14 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   progress.start('s3', '조문 요건 분해', '같은 조문은 저장된 결과를 재사용', '분석');
   const articleIds = [...new Set(caseIssues.issues.filter(i => rerun.has(i.id)).flatMap(i => perIssue.get(i.id).evidenceIds)
     .map(id => registry.get(id)).filter(Boolean).map(e => e.parentId || e.id).filter(id => /^[AO]\d+$/.test(id)))];
-  const decomposed = await decomposeArticles({ articleIds, registry, prefix: common.text, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}) });
+  const decomposed = await decomposeArticles({ articleIds, registry, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}) });
   warnings.push(...decomposed.warnings);
+  for (const warning of decomposed.warnings) progress.warn('s3', warning);
   const sources = [...decomposed.byArticle.values()].map(v => v.source);
   progress.done('s3', `조문 ${countLabel(articleIds.length, '개')} · 재사용 ${sources.filter(s => s === 'CACHE').length} · 새로 분해 ${sources.filter(s => s === 'LLM').length}`
-    + `${sources.includes('SKELETON') ? ` · 골격 대체 ${sources.filter(s => s === 'SKELETON').length}` : ''}`);
+    + `${sources.some(s => s === 'SKELETON' || s === 'PARTIAL') ? ` · 미검증 요건 ${sources.filter(s => s === 'SKELETON' || s === 'PARTIAL').length}` : ''}`);
 
   // ── S4 요건별 포섭 ──
-  const runPrefix = buildRunPrefix(common.text, caseIssues);
   const think = thinkStages().has('s4');
   const issueResults = [];
   for (const issue of orderByDependency(caseIssues.issues)) {
@@ -205,7 +208,9 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     const elements = selectIssueElements({ evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
     const predecessors = issue.dependsOn.map(id => issueResults.find(r => r.issueId === id))
       .filter(Boolean).map(r => ({ issueId: r.issueId, legal: r.conclusion.legal, stageStatus: r.stageStatus }));
-    const result = await applyIssue({ issue, elements, research, registry, facts: caseIssues.facts, runPrefix, predecessors,
+    const issueFacts = caseIssues.facts.filter(f => issue.factIds.includes(f.id));
+    const result = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
+      runPrefix: buildIssuePrefix(registry, issue, issueFacts), predecessors,
       provider, config: configFor('s4', think), session });
     issueResults.push(result);
     if (result.stageStatus === 'FAILED') progress.fail(key, `판단 실패 — 판단 유보로 처리 (${result.error})`);
@@ -217,13 +222,22 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   issueResults.sort((a, b) => a.issueId.localeCompare(b.issueId, 'en', { numeric: true }));
 
   // ── S6 근거 검증 (다시 판단한 쟁점만; 나머지는 이전 원장을 쓴다) ──
-  progress.start('s6', '근거-주장 대응 검증', '존재·공식성·시점 → 의미 정렬 → 필요한 쌍만 함의 확인', '검증');
-  const fresh = await verifyWarrants({ issueResults: issueResults.filter(r => !r.reused), registry, prefix: runPrefix, provider,
+  progress.start('s6', '근거-주장 대응 검증', '존재·공식성·시점 확인 후 모든 주장·근거 쌍의 함의 확인', '검증');
+  const fresh = await verifyWarrants({ issueResults: issueResults.filter(r => !r.reused), registry, provider,
     config: configFor('s6'), session, ...embedOption, entailment: process.env.REVIEW_ENTAILMENT !== 'off' });
   warnings.push(...fresh.warnings);
+  for (const warning of fresh.warnings) progress.warn('s6', warning);
   const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !rerun.has(w.issueId)), ...fresh.ledger];
+  for (const result of issueResults) {
+    const unresolved = ledger.filter(w => w.issueId === result.issueId && w.overall !== 'SUPPORTED');
+    if (!unresolved.length) continue;
+    result.stageStatus = result.stageStatus === 'FAILED' ? 'FAILED' : 'PARTIAL';
+    result.gateReasons = [...(result.gateReasons || []), `근거-주장 검증 미완료 ${unresolved.length}건`];
+    if (result.conclusion.legal !== 'CONDITIONAL') result.conclusion = { ...result.conclusion, legal: 'CONDITIONAL',
+      reasons: [...(result.conclusion.reasons || []), '인용 근거가 주장을 충분히 뒷받침하는지 확인되지 않음'] };
+  }
   const tally = status => ledger.filter(w => w.overall === status).length;
-  progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 불일치 ${tally('NOT_SUPPORTED')}`);
+  progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 공식 근거 없음 ${tally('NO_OFFICIAL_SUPPORT')} · 불일치 ${tally('NOT_SUPPORTED')}`);
 
   // ── S7 공백 ──
   const gaps = deriveGaps({ issues: caseIssues.issues, issueResults, warrants: ledger, unknownFacts: caseIssues.unknownFacts,
@@ -246,21 +260,33 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
 
   // ── S5 종합·조립 ──
   progress.start('s5', '종합 요약·검토의견서 조립', '', '작성');
-  const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, runPrefix, provider, config: configFor('s5'), session });
+  const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider, config: configFor('s5'), session });
   if (synthesis.warning) warnings.push(synthesis.warning);
   // 수정 조문은 첨부문서가 있고, 견해 비교가 산출물인 사전 컨설팅감사가 아닐 때만 만든다.
   const redline = documentText && preset !== 'pre_consulting_audit'
-    ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, runPrefix, provider, config: configFor('s5'), session })
+    ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, provider, config: configFor('s5'), session })
     : { redlines: [], warnings: [] };
   warnings.push(...redline.warnings);
   const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines });
   progress.done('s5', synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
 
   const gateReasons = [...new Set(issueResults.flatMap(r => (r.gateReasons || []).map(g => `${r.issueId}: ${g}`)))];
+  if (synthesis.source !== 'LLM') gateReasons.push('종합 요약 호출 실패 — 결론 표로 대체됨');
+  if (redline.warnings.length) gateReasons.push(`수정 조문 생성 미완료: ${redline.warnings.join(' / ')}`);
+  const incompleteArticles = [...decomposed.byArticle].filter(([, v]) => v.source === 'SKELETON' || v.source === 'PARTIAL').map(([id]) => id);
+  if (incompleteArticles.length) gateReasons.push(`요건 분해 미검증 조문: ${incompleteArticles.join(', ')}`);
+  if (fresh.unreviewedPairs.length) gateReasons.push(`함의 확인 미완료 쌍: ${fresh.unreviewedPairs.map(p => `${p.claimId}/${p.evidenceId}`).join(', ')}`);
+  if (caseIssues.diagnostics?.skippedDocumentIds?.length) gateReasons.push('첨부문서 일부를 토큰 한도로 분석하지 못함');
+  if (caseIssues.diagnostics?.queryTruncated) gateReasons.push('긴 질의 일부를 분할 쟁점 추출에 포함하지 못함');
+  if (common.indexOmitted || caseIssues.diagnostics?.indexOmitted) gateReasons.push('쟁점 추출에서 공식 근거 색인 일부를 보지 못함');
+  if (plan.skipped.length) gateReasons.push(`추가 조사에서 처리하지 못한 검색어 ${plan.skipped.length}개`);
+  if (caseIssues.diagnostics?.droppedIssues?.length) gateReasons.push(`쟁점 상한으로 제외된 쟁점 ${caseIssues.diagnostics.droppedIssues.length}개`);
   for (const result of issueResults.filter(r => r.stageStatus === 'SKIPPED')) {
     gateReasons.push(`${result.issueId}: 적용할 공식 근거 또는 판단 요건이 없어 쟁점을 검토하지 못함`);
   }
   if (tally('NOT_SUPPORTED')) gateReasons.push(`근거가 뒷받침하지 않는 주장 ${tally('NOT_SUPPORTED')}개`);
+  if (tally('UNCONFIRMED')) gateReasons.push(`근거와 주장의 관계가 미확인된 주장 ${tally('UNCONFIRMED')}개`);
+  if (tally('NO_OFFICIAL_SUPPORT')) gateReasons.push(`공식 근거가 없는 주장 ${tally('NO_OFFICIAL_SUPPORT')}개`);
   const complete = issueResults.every(r => r.stageStatus === 'OK') && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';
   review.reasoning = {
@@ -280,8 +306,11 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       gapTransitions: transitions } : null,
     diagnostics: { s1: caseIssues.diagnostics,
       // 조사로 덧붙인 자료 원문을 남겨 둔다. 재검토에서 등록부를 똑같이 다시 만들려면 필요하다.
-      research: { queries: plan.queries, skippedQueries: plan.skipped, added: research.added, addedItems: research.addedItems || {} },
-      elements: Object.fromEntries([...decomposed.byArticle].map(([id, v]) => [id, v.source])), prefixBudgets: budgets },
+      research: { queries: plan.queries, skippedQueries: plan.skipped, added: research.added,
+        screening: research.screening || [], addedItems: research.addedItems || {} },
+      elements: Object.fromEntries([...decomposed.byArticle].map(([id, v]) => [id, v.source])),
+      warrantVerification: { entailmentCalls: fresh.entailmentCalls, unreviewedPairs: fresh.unreviewedPairs },
+      prefixBudgets: budgets },
     evidence: registry.toJSON()
   };
   review.warnings = warnings;

@@ -279,7 +279,68 @@ test('워크벤치 확보 통계는 재정렬 전 전체 후보와 실패 경고
   assert.equal(result.meta.retrievalAvailability.precedents.listCount, 4);
   assert.equal(result.meta.retrievalAvailability.precedents.fullTextCount, 1);
   assert.equal(result.meta.retrievalAvailability.precedents.failures.UNEXPECTED_BODY_ROOT, 3);
-  assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes('본문 1건 확보, 3건 미확보')));
+  assert.ok(result.meta.dataIntegrity.collectionDiagnostics.some(w => w.includes('본문 1건 확보, 3건 미확보')));
+  assert.equal(result.meta.dataIntegrity.isFallback, false, '본문을 확보한 판례가 있으면 다른 조회 실패만으로 제한 결과가 되지 않는다');
+});
+
+test('공식 XML의 장 제목을 같은 번호의 실제 조문으로 오인하지 않는다', () => {
+  const detail = parseLawDetail(`<법령><기본정보><법령ID>667</법령ID><법령명_한글>약관의 규제에 관한 법률</법령명_한글></기본정보><조문>
+    <조문단위><조문번호>6</조문번호><조문여부>전문</조문여부><조문내용>제2장 불공정약관조항</조문내용></조문단위>
+    <조문단위><조문번호>6</조문번호><조문여부>조문</조문여부><조문제목>일반원칙</조문제목><조문내용>제6조(일반원칙)</조문내용></조문단위>
+    </조문></법령>`);
+  assert.equal(detail.articles.length, 1);
+  assert.equal(detail.articles[0].title, '일반원칙');
+});
+
+test('쉼표로 지정한 복수 기준 법령을 각각 조회하고 공식 조문을 수집한다', async () => {
+  const civil = { ...law, lawId: '1706', lawName: '민법' };
+  const terms = { ...law, lawId: '667', lawName: '약관의 규제에 관한 법률' };
+  const calls = [];
+  const deps = services({
+    searchLaw: async name => { calls.push(name); return [civil, terms].filter(item => item.lawName === name); },
+    getLawDetail: async id => ({ ...[civil, terms].find(item => item.lawId === id),
+      articles: id === civil.lawId
+        ? [{ ...article, articleNo: '390', fullArticleNo: '390' }]
+        : [{ ...article, articleNo: '6', fullArticleNo: '6' }] })
+  });
+  const result = await buildWorkbenchContext({
+    targetLaw: '민법, 약관의 규제에 관한 법률', query: '계약서의 독소조항과 손해배상 위험 검토'
+  }, deps);
+  assert.ok(calls.includes('민법'));
+  assert.ok(calls.includes('약관의 규제에 관한 법률'));
+  assert.ok(!calls.includes('민법, 약관의 규제에 관한 법률'));
+  assert.deepEqual(result.officialEvidence.articles.map(a => `${a.lawName} 제${a.fullArticleNo}조`),
+    ['민법 제390조', '약관의 규제에 관한 법률 제6조']);
+  assert.equal(result.meta.dataIntegrity.hasOfficialArticles, true);
+});
+
+test('인용 원문 대조 실패는 인용별로 표시하고 완료된 분석 상태를 바꾸지 않는다', async () => {
+  const { verifiedReview } = await verify({
+    review: { ...review(), reviewStatus: 'COMPLETE', legalBasis: [{ lawName: law.lawName, articleNo: '제999조' }] },
+    workbenchContext: context(), lookupArticle: async () => null
+  });
+  assert.equal(verifiedReview.reviewStatus, 'COMPLETE');
+  assert.equal(verifiedReview.legalBasis[0].verificationStatus, 'UNVERIFIED');
+  const output = reportText({ review: verifiedReview }, '분석 본문');
+  assert.ok(output.indexOf('분석 본문') < output.indexOf('[인용 확인 사항]'));
+});
+
+test('확보한 판례로 검토하면 조문 조회 실패와 미확보 목록이 전체 결과를 낮추지 않는다', async () => {
+  const precedents = [
+    { id: '1', source: 'OFFICIAL_API', contentStatus: 'FULL_TEXT', caseNo: '2020다1', summary: '계약 책임 관련 판시' },
+    { id: '2', source: 'OFFICIAL_API', contentStatus: 'LIST_ONLY', caseNo: '2020다2' }
+  ];
+  const ctx = await buildWorkbenchContext({ targetLaw: law.lawName, query: '계약 책임' },
+    services({ searchPrecedents: async () => precedents }));
+  assert.equal(ctx.meta.dataIntegrity.hasOfficialArticles, false);
+  assert.equal(ctx.meta.dataIntegrity.isFallback, false);
+  assert.equal(buildReviewInput(ctx, '', '계약 책임').evidenceUsed.precedents, 1);
+  llmStub(review());
+  const result = await generate(ctx);
+  assert.equal(result.reviewStatus, 'COMPLETE');
+  assert.equal(result.evidenceUsed.precedents, 1);
+  assert.ok(reportText({ meta: ctx.meta, review: result }, '본문').includes('판례 1건'));
+  assert.ok(!reportText({ meta: ctx.meta, review: result }, '본문').includes('본문 수집 실패'));
 });
 
 test('기준 시점을 지정하면 그 시점 버전의 조문을 쓰고 현행 본문으로 대체하지 않는다', async () => {

@@ -1,6 +1,7 @@
 // server/reasoning/stageRunner.js - 단계 호출 공통: 호출 → JSON 해석 → 스키마 검증 → 1회 교정 재시도
 import { complete } from './llmGateway.js';
 import { parseModelJson, validateSchema } from './schemas.js';
+import { createTokenCounter } from '../law/llmBudget.js';
 
 export class StageError extends Error {
   constructor(stage, message, details = {}) {
@@ -31,8 +32,14 @@ export class StageError extends Error {
  */
 export async function runStage({ stage, provider, system, prefix, task, schema, config, session }) {
   let feedback = '';
+  const counter = createTokenCounter(provider, { model: config.model, apiKey: config.apiKey });
   for (let attempt = 1; attempt <= 2; attempt++) {
     const user = `${prefix}\n\n${task}${feedback}`;
+    const counted = await counter.measure(system, user);
+    if (counted.tokens > config.budget.inputLimit) {
+      throw new StageError(stage, `입력 예산 초과: ${counted.tokens} 토큰 / 한도 ${config.budget.inputLimit} 토큰.`,
+        { code: 'INPUT_BUDGET_EXCEEDED', budgetExceeded: true, counted, attempts: attempt });
+    }
     let content;
     try {
       ({ content } = await complete({ stage: attempt === 1 ? stage : `${stage}:retry`, provider, system, user,

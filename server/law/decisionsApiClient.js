@@ -1,6 +1,7 @@
 import { ENV } from '../env.js';
 import { LAW_CONFIG } from './lawConfig.js';
-import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parseOrdinanceDetail, parseAdminRuleDetail, parsePrecedentDetail, parseInterpretationDetail } from './decisionsApiParser.js';
+import { parsePrecedents, parseInterpretations, parseAdminRules, parseOrdinances, parseOrdinanceDetail, parseAdminRuleDetail,
+  parsePrecedentDetail, parseInterpretationDetail, publicDetailUrl } from './decisionsApiParser.js';
 import { getCache, setCache } from './lawCache.js';
 import { isOfficial, unavailableList, normalizedLawName } from './evidence.js';
 import { DecisionDataError } from './decisionDiagnostics.js';
@@ -51,6 +52,8 @@ async function search(target, query, page, display, parse, mock, loadDetail, ext
       if (items.length) await setCache(key, items, LAW_CONFIG.CACHE_TTL.LAW_SEARCH, target);
     } catch (err) { return unavailableList('ERROR', err.message); }
   }
+  // 이전 버전 캐시에 API 계정 식별자가 들어간 링크가 남아 있어도 클라이언트로 보내지 않는다.
+  items = items.map(item => item.detailUrl ? { ...item, detailUrl: publicDetailUrl(item.detailUrl) } : item);
   if (!loadDetail) return items;
   const enriched = [];
   for (let i = 0; i < items.length; i += 3) {
@@ -80,6 +83,14 @@ export async function searchPrecedents(q, p = 1, d = 10) {
   return Array.isArray(byFullText) && byFullText.length > 0 ? byFullText : byCaseName;
 }
 export const searchInterpretations = (q, p = 1, d = 10) => search('expc', q, p, d, parseInterpretations, getMockInterpretations, getInterpretationDetail);
+/** 본문 조회 전 적합성 선별에 사용하는 공식 목록. 기존 본문 포함 검색 API와 분리한다. */
+export async function searchPrecedentCandidates(q, p = 1, d = 10) {
+  const byCaseName = await search('prec', q, p, d, parsePrecedents, getMockPrecedents, null);
+  if (Array.isArray(byCaseName) && byCaseName.length > 0) return byCaseName;
+  const byFullText = await search('prec', q, p, d, parsePrecedents, getMockPrecedents, null, { search: 2 });
+  return Array.isArray(byFullText) && byFullText.length > 0 ? byFullText : byCaseName;
+}
+export const searchInterpretationCandidates = (q, p = 1, d = 10) => search('expc', q, p, d, parseInterpretations, getMockInterpretations, null);
 export const searchAdminRules = (q, p = 1, d = 10) => search('admrul', q, p, d, parseAdminRules, getMockAdminRules);
 export const searchOrdinances = (q, p = 1, d = 10) => search('ordin', q, p, d, parseOrdinances, getMockOrdinances);
 
@@ -213,4 +224,5 @@ function getMockOrdinances(query) {
 }
 
 
-export default { searchPrecedents, searchInterpretations, searchAdminRules, searchOrdinances, getOrdinanceDetail, getAdminRuleDetail, getPrecedentDetail, getInterpretationDetail };
+export default { searchPrecedents, searchInterpretations, searchPrecedentCandidates, searchInterpretationCandidates,
+  searchAdminRules, searchOrdinances, getOrdinanceDetail, getAdminRuleDetail, getPrecedentDetail, getInterpretationDetail };

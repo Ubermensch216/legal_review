@@ -65,8 +65,8 @@ export async function verifyAndCorrectReviewCitations({ review, workbenchContext
     isMeasurable, unmeasurableReason: isMeasurable ? undefined : '공식 대조 자료 또는 검증 대상 인용이 없습니다.',
     details, correctionsApplied: [], unverifiedCitations: details.filter(d => d.status !== 'VERIFIED')
   };
-  const verifiedReview = { ...review, legalBasis, factualityVerification: report,
-    ...(review.reviewStatus === 'COMPLETE' && (!totalChecked || report.unverifiedCount > 0) ? { reviewStatus: 'PARTIAL' } : {}) };
+  // 인용의 원문 확인 여부는 항목별 속성이다. 조회 불가가 분석 전체의 미완료를 뜻하지 않는다.
+  const verifiedReview = { ...review, legalBasis, factualityVerification: report };
   return { verifiedReview, verificationReport: report };
 }
 export default { verifyAndCorrectReviewCitations };

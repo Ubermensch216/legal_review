@@ -119,7 +119,10 @@ export function parseLawDetail(rawResponse) {
 
   // 2. 조문 목록 파싱
   const articleRoot = lawRoot.조문 || lawRoot.articles || lawRoot;
-  const rawArticles = ensureArray(articleRoot.조문단위 || articleRoot.article || []);
+  // The API also emits chapter/section headings as 조문단위 with the same
+  // 조문번호 as the following article. Only 조문여부=조문 is an article.
+  const rawArticles = ensureArray(articleRoot.조문단위 || articleRoot.article || [])
+    .filter(art => !art.조문여부 || getText(art.조문여부) === '조문');
 
   parsed.articles = rawArticles.map(art => {
     const artNo = getText(art.조문번호 || art.articleNo);
