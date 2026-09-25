@@ -17,7 +17,8 @@ const view = {
   error: '',
   busy: '',          // 진행 중인 동작 이름. 버튼 중복 클릭을 막는다.
   drafts: {},        // 실패·진행 표시 때문에 다시 그려도 사용자가 붙여넣은 답변을 잃지 않는다.
-  folds: {}          // 완료된 단계의 접힘 상태. 사용자가 펼친 섹션은 다시 그리지 않는다.
+  folds: {},         // 사용자가 직접 바꾼 접힘 상태
+  finalized: false   // 이 질의에 승인 지식을 반영한 최종 검토가 끝났는지
 };
 
 const draftKey = node => node.id || (node.name ? `${node.name}:${node.value}` : '');
@@ -92,11 +93,19 @@ async function run(name, fn) {
   if (view.busy) return;
   captureDrafts();
   captureFolds();
+  const previousFolds = defaultFolds();
   view.busy = name; view.error = ''; view.notice = '';
   render();
   try {
     await fn();
     await refresh();
+    if (['import', 'switchSource', 'maskCard', 'editCard', 'approve', 'revoke', 'discard'].includes(name)) {
+      view.finalized = false;
+    }
+    const nextFolds = defaultFolds();
+    for (const id of Object.keys(nextFolds)) {
+      if (previousFolds[id] !== nextFolds[id]) delete view.folds[id];
+    }
   } catch (err) {
     view.error = err.message;
   } finally {
@@ -129,6 +138,7 @@ export function setLearningHistory(historyId, reviewData = {}) {
   view.reviewIssues = view.historyId ? collectLearningIssues(reviewData) : [];
   view.error = ''; view.notice = '';
   view.exportText = ''; view.drafts = {}; view.folds = {};
+  view.finalized = Boolean(view.historyId && reviewData.meta?.sourceHistoryId === view.historyId);
   if (!view.historyId) return render();
   refresh().catch(err => { view.error = err.message; }).finally(render);
 }
@@ -211,21 +221,10 @@ const actions = {
       const data = await call(`/inquiries/${id}/answers`, { method: 'POST', body: JSON.stringify({ answer, providerLabel, mode, sourceType }) });
       forgetDrafts('learning-answer', 'learning-source-');
       view.notice = !data.item?.answeredQuestions?.length
-        ? '답변 카드는 생성되었습니다. 아래 카드에서 답변한 질문을 체크하고 “질문 연결 저장”을 누른 뒤 승인하십시오.'
+        ? '답변 카드는 생성되었습니다. 아래 카드에서 답변한 질문을 확인한 뒤 승인하십시오.'
         : mode
         ? '붙여넣은 구조화 카드를 그대로 받았습니다. 내용과 인용을 확인한 뒤 승인하십시오.'
         : '답변을 지식 카드로 정리했습니다. 내용과 인용을 확인한 뒤 승인하십시오.';
-    });
-  },
-
-  link: id => {
-    const item = view.knowledge.find(k => k.id === id);
-    const body = JSON.stringify({ revision: item.revision, card: item.card,
-      answeredQuestions: checkedValues(`learning-q-${id}`).map(Number) });
-    return run('link', async () => {
-      await call(`/knowledge/${id}`, { method: 'PATCH', body });
-      forgetDrafts(`learning-q-${id}`, `learning-ok-know-${id}`, `learning-ok-priv-${id}`);
-      view.notice = '답변이 다룬 질문을 수정했습니다.';
     });
   },
 
@@ -268,14 +267,18 @@ const actions = {
     const textarea = el(`learning-card-${id}`);
     const selected = checkedValues(`learning-q-${id}`).map(Number);
     if ((textarea && textarea.value !== JSON.stringify(item.card, null, 2))
-      || JSON.stringify(selected) !== JSON.stringify(item.answeredQuestions || [])
       || checkedValues(`learning-cardterm-${id}`).length) {
-      captureDrafts(); view.error = '카드 내용·질문 연결·비식별 변경을 먼저 저장한 뒤 승인하십시오.'; render(); return;
+      captureDrafts(); view.error = '카드 내용·비식별 변경을 먼저 저장한 뒤 승인하십시오.'; render(); return;
+    }
+    if ((view.coverage?.questions || []).length && !selected.length) {
+      captureDrafts(); view.error = '이 답변이 다룬 질문을 하나 이상 선택하십시오.'; render(); return;
     }
     const body = JSON.stringify({ revision: item.revision,
-      knowledgeConfirmed: el(`learning-ok-know-${id}`).checked, privacyConfirmed: el(`learning-ok-priv-${id}`).checked });
+      answeredQuestions: selected, knowledgeConfirmed: el(`learning-ok-know-${id}`).checked,
+      privacyConfirmed: el(`learning-ok-priv-${id}`).checked });
     return run('approve', async () => {
       await call(`/knowledge/${id}/approve`, { method: 'POST', body });
+      forgetDrafts(`learning-q-${id}`, `learning-ok-know-${id}`, `learning-ok-priv-${id}`);
       view.notice = '지식을 승인했습니다. 이후 같은 근거 범위의 검토에서 참고 자료로 쓰입니다.';
     });
   },
@@ -379,6 +382,20 @@ const anchorLabel = a => a.scope === 'ALL_ISSUES'
   ? `전체 쟁점 · ${a.group || GAP_LABEL[a.type] || a.type}`
   : `쟁점 ${a.issueId || '-'}${a.elementId ? ` · 요건 ${a.elementId}` : ''} · ${GAP_LABEL[a.type] || a.type}`;
 const foldOpen = (id, defaultOpen) => (Object.hasOwn(view.folds, id) ? view.folds[id] : defaultOpen) ? ' open' : '';
+function defaultFolds() {
+  const inquiry = view.inquiry;
+  const coverage = view.coverage || { total: 0, answered: 0, approved: 0 };
+  const hasAnswers = coverage.total > 0 && coverage.answered >= coverage.total;
+  const allApproved = coverage.total > 0 && coverage.approved >= coverage.total
+    && !view.knowledge.some(item => item.state === 'DRAFT');
+  return {
+    step1: !inquiry,
+    step2: inquiry?.state === 'DRAFT',
+    step3: inquiry?.state === 'READY' && !hasAnswers,
+    step4: view.knowledge.length > 0 && !allApproved,
+    step5: allApproved && !view.finalized
+  };
+}
 const foldSummary = (icon, title, status) => `<summary class="learning-fold-summary">
   <span class="material-symbols-outlined icon-sm">${icon}</span><span class="learning-fold-title">${title}</span>
   ${status ? `<span class="learning-fold-status">${status}</span>` : ''}
@@ -524,8 +541,9 @@ function renderStep3(open = true) {
 
 function renderCard(item) {
   const questions = view.coverage?.questions || [];
-  const answered = item.answeredQuestions || [];
   const editable = item.state === 'DRAFT';
+  const answered = item.answeredQuestions?.length ? item.answeredQuestions
+    : editable && questions.length === 1 ? [questions[0].no] : [];
   const checks = item.citationChecks || [];
   const verified = checks.filter(c => c.status === 'VERIFIED_EXISTENCE').length;
   const incomplete = item.chunkCoverage && item.chunkCoverage.processed < item.chunkCoverage.total;
@@ -566,13 +584,11 @@ function renderCard(item) {
         </li>`).join('')}</ul></div>` : ''}
 
       ${questions.length ? `<div class="learning-field"><span>이 답변이 다룬 질문</span>
-        ${editable && !answered.length ? `<p class="learning-desc learning-warn">아직 질문과 연결되지 않았습니다. 답변한 질문을 체크한 뒤 ‘질문 연결 저장’을 누르십시오.</p>` : ''}
+        ${editable && !answered.length ? `<p class="learning-desc learning-warn">답변한 질문을 선택하십시오. 승인할 때 함께 연결됩니다.</p>` : ''}
         <div class="learning-links">${questions.map(q => `<label class="learning-term">
           <input type="checkbox" name="learning-q-${item.id}" value="${q.no}"
             ${answered.includes(q.no) ? 'checked' : ''} ${editable ? '' : 'disabled'}>
           <span>${q.no}. ${esc(q.text.slice(0, 40))}${q.text.length > 40 ? '…' : ''}</span></label>`).join('')}</div>
-        ${editable ? `<button class="btn btn-sm btn-secondary" data-learning-action="link" data-id="${item.id}">
-          질문 연결 저장</button>` : ''}
         </div>` : ''}
 
       ${editable && (item.proposedTerms || []).length ? `
@@ -709,11 +725,11 @@ function render() {
     일반 검토 모델 설정은 <strong>${esc(state.settings.provider)}</strong>입니다. 이 탭의 질의서 작성·답변 정리·최종 재검토는
     로컬 Ollama로 수행합니다. 외부 AI에는 사용자가 직접 전달합니다.</div>` : '';
 
-  const coverage = view.coverage || { total: 0, approved: 0 };
+  const folds = defaultFolds();
   const body = !view.inquiry
     ? renderStep1()
     : `${renderStep1()}${renderStep2()}${view.inquiry.state === 'DRAFT' ? ''
-      : `${renderStep3(!view.knowledge.length)}${renderStep4(Boolean(view.knowledge.length && coverage.approved < coverage.total))}${renderStep5(Boolean(coverage.total && coverage.approved >= coverage.total))}`}`;
+      : `${renderStep3(folds.step3)}${renderStep4(folds.step4)}${renderStep5(folds.step5)}`}`;
 
   root.innerHTML = `${providerNote}${messages}${renderReviewIssues()}${body}`;
   for (const node of root.querySelectorAll('input, textarea')) {

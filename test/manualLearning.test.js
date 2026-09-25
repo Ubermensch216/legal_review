@@ -523,6 +523,22 @@ test('T7 같은 답변의 중복 반입을 막고, 연결을 놓친 카드는 �
   assert.deepEqual([coverage.answered, coverage.unassigned.length], [1, 0]);
 });
 
+test('T7 카드 승인과 질문 연결을 한 번에 저장한다', async () => {
+  const { item } = await readyInquiry();
+  const s = service(async () => ({ card: card(), answeredQuestions: [], sensitiveTerms: [] }));
+  const knowledge = await s.importAnswer(item.id, { answer: '수탁자는 조례 근거가 있어야 징수할 수 있습니다.' });
+
+  const approved = s.approveKnowledge(knowledge.id, {
+    revision: knowledge.revision, answeredQuestions: [1, 42],
+    knowledgeConfirmed: true, privacyConfirmed: true
+  });
+
+  assert.deepEqual(approved.answeredQuestions, [1]);
+  assert.equal(approved.state, 'APPROVED');
+  assert.deepEqual(s.list().inquiries[0].coverage.questions.map(q => q.state), ['APPROVED']);
+  assert.deepEqual(s.list().inquiries[0].coverage.unassigned, []);
+});
+
 // ─────────────────────────────────────────────────────────────
 // T4. 스코프 게이트 — 외부 → 내부 경계
 // ─────────────────────────────────────────────────────────────

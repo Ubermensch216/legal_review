@@ -574,9 +574,12 @@ export function createManualLearningService({ store = getLearningStore(), histor
       const reviewContext = source(item.historyId);
       const checks = checkLearningCitations(item.card, reviewContext);
       const caseChecks = checkLearningCases(item.card, reviewContext);
+      // 카드 검토 화면에서 고른 질문은 승인과 함께 저장한다. 별도 연결 저장 단계가 필요 없다.
+      const answeredQuestions = input.answeredQuestions === undefined
+        ? (item.answeredQuestions || []) : answeredNumbers(input.answeredQuestions, parent.questions || []);
       // 제안 목록에는 원문에서 뽑은 식별자가 남을 수 있다. 승인 뒤에는 보관하지 않는다.
       return store.update(id, item.revision, 'APPROVED', { ...item, proposedTerms: [],
-        citationChecks: checks, caseChecks, approvedAt: new Date().toISOString() });
+        answeredQuestions, citationChecks: checks, caseChecks, approvedAt: new Date().toISOString() });
     },
     revokeKnowledge(id, input) {
       const item = required(id, 'knowledge'); revision(item, input);
