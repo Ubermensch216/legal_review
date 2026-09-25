@@ -4,6 +4,7 @@ import { openArticleViewer, openPrecedentViewer } from './documentViewer.js';
 import { openStudio } from './documentStudio.js';
 import { setLearningHistory, resetLearningTab } from './learningTab.js';
 import { renderReasoningOpinion } from './reasoningView.js';
+import { parseReportBlocks, renderReportBlocksHtml, stripReportMarkup } from './reportFormat.js';
 import { expandReferences, explainDiagnostic } from './learningIssues.js';
 
 export function initWorkbenchTabs() {
@@ -549,7 +550,7 @@ function renderDraftTab(review, officialEvidence, meta) {
         </div>
         ${review.reasoning?.issues?.length
           ? renderReasoningOpinion(review.reasoning, review, { report: true })
-          : `<div class="report-body-text" style="line-height: 1.9;">${escapeHtml(opinionText)}</div>`}
+          : `<div class="report-rich-body">${renderReportBlocksHtml(parseReportBlocks(opinionText))}</div>`}
       </div>
 
       <!-- 3. 실무 조항 수정 권고안 (Redline Diff) -->
@@ -640,7 +641,7 @@ function renderDraftTab(review, officialEvidence, meta) {
  */
 /** 단일 호출 검토의 의견 본문을 문단 카드로 보여준다. */
 function legacyOpinionHtml(review) {
-  const opinionText = cleanText(expandReferences(review.legalOpinion || '', { review }));
+  const opinionText = expandReferences(review.legalOpinion || '', { review });
   const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
 
   let opinionCardsHtml = '<div class="opinion-section-block">';
