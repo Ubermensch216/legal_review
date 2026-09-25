@@ -24,6 +24,7 @@ import { attachVerifiedRules, exactAuthorityMatch } from './verifiedRules.js';
 import { deriveGaps } from './stages/gaps.js';
 import { draftRedlines, renderReview, synthesize } from './stages/synthesis.js';
 import { attachContractInventory, buildContractInventory, contractAssessments, scoreContractRisk } from './contractReview.js';
+import { assessPrivacyRowCoverage } from './privacyCoverage.js';
 
 export class PipelineError extends Error {
   constructor(message, cause) { super(message); this.name = 'PipelineError'; this.cause = cause; }
@@ -39,6 +40,7 @@ export const pipelineEnabled = (llmConfig = {}) =>
 
 const thinkStages = () => new Set(String(process.env.REVIEW_THINK_STAGES || '').split(',').map(s => s.trim()).filter(Boolean));
 const maxIssues = preset => preset === 'contract_risk' ? Math.min(30, Math.max(15, parseInt(process.env.REVIEW_MAX_ISSUES || '15', 10) || 15))
+  : preset === 'privacy_security' ? Math.min(20, Math.max(16, parseInt(process.env.REVIEW_MAX_ISSUES || '16', 10) || 16))
   : Math.min(8, Math.max(1, parseInt(process.env.REVIEW_MAX_ISSUES || '5', 10) || 5));
 
 /** 선결 쟁점이 먼저 오도록 정렬한다. 순환은 S1에서 이미 끊었다. */
@@ -134,8 +136,10 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   session, progress = NOOP_PROGRESS, previous = null, clients, embed, cache }) {
   const base = resolveBudget(provider, { model });
   const budgetFor = outputTokens => resolveBudget(provider, { model, contextTokens: base.contextTokens, outputTokens: Math.min(outputTokens, base.outputTokens) });
+  const stageTokens = stage => preset === 'privacy_security' && stage === 's1' ? 4096
+    : preset === 'privacy_security' && stage === 's5' ? 3072 : OUTPUT_TOKENS[stage];
   const configFor = (stage, think = false) => ({ model, apiKey, think,
-    budget: budgetFor(stage === 's4' && think ? OUTPUT_TOKENS.s4Think : OUTPUT_TOKENS[stage]) });
+    budget: budgetFor(stage === 's4' && think ? OUTPUT_TOKENS.s4Think : stageTokens(stage)) });
   const counter = createTokenCounter(provider, { model });
   const warnings = [];
   const embedOption = embed ? { embed } : {};
@@ -144,7 +148,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   progress.start('s0', '근거 등록부 구성', '조문·판례·해석례·첨부문서에 ID 부여', '분석');
   const registry0 = buildEvidenceRegistry(workbenchContext, { documentText });
   const contractInventory = preset === 'contract_risk' && documentText ? buildContractInventory(registry0, query) : null;
-  const s1Limit = budgetFor(OUTPUT_TOKENS.s1).inputLimit;
+  const s1Limit = budgetFor(stageTokens('s1')).inputLimit;
   let budgets = { document: 14000, index: 6000 };
   let common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
   for (let i = 0; i < 12 && counter.estimate(REASONING_SYSTEM, common.text + 'x'.repeat(S1_TASK_RESERVE_CHARS)).tokens > s1Limit; i++) {
@@ -370,6 +374,9 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     finding.riskAxes = scoreContractRisk(finding,
       { institutionType: contractInventory?.regime?.publicProcurement?.institutionType });
   }
+  // S6 검증에서 OK가 PARTIAL로 낮아질 수 있으므로 최종 상태로 행별 범위를 산출한다.
+  const privacyRowCoverage = preset === 'privacy_security'
+    ? assessPrivacyRowCoverage(registry, caseIssues.issues, issueResults) : [];
   const tally = status => ledger.filter(w => w.overall === status).length;
   progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 공식 근거 없음 ${tally('NO_OFFICIAL_SUPPORT')} · 불일치 ${tally('NOT_SUPPORTED')}`);
 
@@ -431,6 +438,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (plan.skipped.length) gateReasons.push(`추가 조사에서 처리하지 못한 검색어 ${plan.skipped.length}개`);
   if (caseIssues.diagnostics?.droppedIssues?.length) gateReasons.push(`쟁점 상한으로 제외된 쟁점 ${caseIssues.diagnostics.droppedIssues.length}개`);
   if (caseIssues.unreviewedCandidates?.length) gateReasons.push(`계약 조항과 연결되지 않은 쟁점 후보 ${caseIssues.unreviewedCandidates.length}개`);
+  const privacyRowsUnreviewed = privacyRowCoverage.filter(row => row.status !== 'REVIEWED');
+  if (privacyRowsUnreviewed.length) gateReasons.push(`개인정보 처리표 행별 검토 미완료 ${privacyRowsUnreviewed.length}/${privacyRowCoverage.length}건: ${privacyRowsUnreviewed.map(row => row.documentId).join(', ')}`);
   for (const result of issueResults.filter(r => r.stageStatus === 'SKIPPED')) {
     gateReasons.push(`${result.issueId}: 적용할 공식 근거 또는 판단 요건이 없어 쟁점을 검토하지 못함`);
   }
@@ -441,9 +450,17 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const complete = issueResults.every(r => ['OK', 'OK_WITH_WARNINGS'].includes(r.stageStatus))
     && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';
+  if (privacyRowCoverage.length) {
+    review.privacyRowCoverage = privacyRowCoverage;
+    review.furtherChecks = [...new Set([...(review.furtherChecks || []),
+      ...privacyRowCoverage.filter(row => row.status !== 'REVIEWED').map(row => `${row.label}: 행별 법률 검토를 완료하지 못했습니다. 적용 근거와 사실을 확인해 주십시오.`)])];
+    review.draftOpinion += '\n\n## 개인정보 처리표 행별 검토 범위\n'
+      + privacyRowCoverage.map(row => `- ${row.label}: ${row.status === 'REVIEWED' ? `쟁점 ${row.issueIds.join(', ')}에서 검토` : row.status === 'INCOMPLETE' ? `쟁점 ${row.issueIds.join(', ')}의 판단 미완료` : '검토 쟁점에 연결되지 않음'}`).join('\n');
+  }
   review.reasoning = {
     version: 2, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf,
     contractRegime: contractInventory?.regime || null, contractFindings: findings,
+    privacyRowCoverage,
     missingClauseAudit: contractInventory?.missingClauseAudit || [],
     facts: caseIssues.facts, unknownFacts: caseIssues.unknownFacts,
     unreviewedCandidates: caseIssues.unreviewedCandidates || [],

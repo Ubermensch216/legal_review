@@ -180,6 +180,12 @@ export function extractArticleReferences(text, defaultLawName = '') {
     // 다만 대용 표현("없으면 같은 법")은 앞 어절까지 있어야 대용인지 알 수 있으므로 원형을 유지한다.
     const isSelfLawName = !bracketLawName && SELF_LAW_REGEX.test(rawPlainName);
     const trimmedPlainName = ANAPHORIC_LAW_REGEX.test(rawPlainName) ? rawPlainName : trimLawNamePrefix(rawPlainName);
+    // "같은 법 시행규칙"에서 정규식은 "법 시행규칙"만 잡을 수 있다.
+    // 이를 독립 법령명으로 조회하면 존재하지 않는 "법 시행규칙"이 된다.
+    const derivedPlain = rawPlainName.replace(/^(?:와|과|및|또는)\s+/, '');
+    const derivedMatch = derivedPlain.match(/^((?:같은|그|이)\s*)?(동법|본법|법)\s*(시행령|시행규칙)$/);
+    const hasAnaphoricLead = /(?:같은|그|이)\s*$/.test(text.slice(Math.max(0, match.index - 12), match.index));
+    const derivedSuffix = derivedMatch && (derivedMatch[1] || derivedMatch[2] !== '법' || hasAnaphoricLead) ? derivedMatch[3] : '';
     // 법형식 일반명사만 남았으면 제명을 특정하지 못한 것이므로 맨 조문번호와 동일하게 문맥으로 판정한다.
     const plainLawName = (isSelfLawName || GENERIC_LAW_FORM_TOKENS.has(trimmedPlainName)) ? '' : trimmedPlainName;
     // 「」로 묶인 표기는 법령명 경계가 확정적이므로 가공하지 않고 그대로 사용한다.
@@ -187,7 +193,12 @@ export function extractArticleReferences(text, defaultLawName = '') {
 
     let scope;
     let lawName = rawLawName;
-    if (lawName && !ANAPHORIC_LAW_REGEX.test(lawName)) {
+    if (derivedSuffix) {
+      scope = REFERENCE_SCOPE.ANAPHORIC;
+      const baseLaw = (lastResolvedLawName || defaultLawName).replace(/\s*(?:시행령|시행규칙)$/, '');
+      lawName = baseLaw ? `${baseLaw} ${derivedSuffix}` : '';
+      if (lawName) lastResolvedLawName = lawName;
+    } else if (lawName && !ANAPHORIC_LAW_REGEX.test(lawName)) {
       scope = REFERENCE_SCOPE.EXPLICIT;
       lastResolvedLawName = lawName;
     } else if (lawName) {

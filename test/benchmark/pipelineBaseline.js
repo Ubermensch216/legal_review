@@ -26,15 +26,15 @@ const samples = path.join(root, 'test/docs/review-samples');
 const CASES = [
   { id: '01', files: ['01_취업규칙_전부개정안.hwpx'], preset: 'labor_hr', targetLaw: '근로기준법',
     query: '취업규칙 전부개정안의 근로기준법 위반 여부와 불이익 변경 절차를 검토해 주십시오.',
-    expected: ['제20조', '제23조', '제27조', '제50조', '제53조', '제56조', '제94조'] },
+    expected: ['제20조', '제23조', '제27조', '제50조', '제53조', '제54조', '제56조', '제60조', '제94조'] },
   { id: '02', files: ['02_정보시스템_구축_용역계약서.docx'], preset: 'contract_risk', targetLaw: '',
     query: '용역계약서의 갑 우위 독소조항과 위장도급 위험을 검토해 주십시오.', expected: [] },
   { id: '03', files: ['03_영업정지_사전통지_의견제출서.pdf'], preset: 'admin_dispute', targetLaw: '식품위생법', targetDate: '20231115',
     query: '영업정지 사전통지의 절차적 적법성과 과징금 전환 가능성을 검토해 주십시오.',
-    expected: ['제75조', '제81조', '제82조'] },
+    expected: ['제37조', '제75조', '제81조', '제82조'] },
   { id: '04', files: ['04_개인정보_처리현황표.xlsx', '04_개인정보_수탁사목록.csv'], preset: 'privacy_security', targetLaw: '개인정보 보호법',
     query: '개인정보 처리현황과 수탁사 관리의 개인정보 보호법 위반 여부를 검토해 주십시오.',
-    expected: ['제15조', '제17조', '제22조', '제23조', '제24조의2', '제25조', '제26조', '제28조의2'] },
+    expected: ['제15조', '제17조', '제22조', '제23조', '제24조의2', '제25조', '제26조', '제28조의2', '제28조의8'] },
   { id: '05', files: ['05_사전컨설팅감사_신청서.txt'], preset: 'pre_consulting_audit', targetLaw: '', targetDate: '20210302',
     query: '사전 컨설팅감사 신청서의 갑설·을설 중 타당한 견해와 처리 의견(수용/반려)을 검토해 주십시오.', expected: [] }
 ];
@@ -86,6 +86,10 @@ async function runCase(item, run) {
     omittedEvidence: review.inputCoverage?.omittedEvidence ?? null,
     reasoning: review.reasoning ? { issues: review.reasoning.issues.map(i => ({ id: i.id, question: i.question, conclusion: i.conclusion?.legal, stageStatus: i.stageStatus })),
       gaps: review.reasoning.gaps.map(g => ({ type: g.type, route: g.route })), gate: review.reasoning.gate,
+      reviewedIssues: review.reasoning.issues.filter(i => ['OK', 'OK_WITH_WARNINGS'].includes(i.stageStatus)).length,
+      skippedIssues: review.reasoning.issues.filter(i => i.stageStatus === 'SKIPPED').length,
+      privacyRows: review.reasoning.privacyRowCoverage?.length ?? null,
+      privacyRowsReviewed: review.reasoning.privacyRowCoverage?.filter(r => r.status === 'REVIEWED').length ?? null,
       rejectedIds: review.reasoning.diagnostics?.s1?.rejectedIds?.length ?? 0,
       warrants: review.reasoning.warrants.map(w => w.overall) } : null,
     ledger: review.llmLedger || null };

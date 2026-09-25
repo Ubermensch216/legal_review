@@ -69,6 +69,72 @@ const ITEM_REGEX = /^(?:\d+)\.\s*/;
  */
 const SUB_ITEM_REGEX = /^[가-힣]\.\s*/;
 
+// 스프레드시트는 조문 구분자가 없어도 각 데이터 행이 독립된 검토 대상이다.
+// CSV 인용부호 안의 쉼표·개행을 보존하여 행의 원문 위치를 추적할 수 있게 한다.
+function csvRecords(text) {
+  const records = [];
+  let start = 0;
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"') {
+      if (quoted && text[i + 1] === '"') { i++; continue; }
+      quoted = !quoted;
+    } else if (text[i] === '\n' && !quoted) {
+      records.push(text.slice(start, i).replace(/\r$/, ''));
+      start = i + 1;
+    }
+  }
+  if (start < text.length) records.push(text.slice(start).replace(/\r$/, ''));
+  return records;
+}
+
+function csvCells(record) {
+  const cells = [];
+  let value = '';
+  let quoted = false;
+  for (let i = 0; i < record.length; i++) {
+    if (record[i] === '"') {
+      if (quoted && record[i + 1] === '"') { value += '"'; i++; }
+      else quoted = !quoted;
+    } else if (record[i] === ',' && !quoted) { cells.push(value); value = ''; }
+    else value += record[i];
+  }
+  cells.push(value);
+  return cells.map(cell => cell.trim());
+}
+
+function spreadsheetChunks(text) {
+  const records = csvRecords(text).filter(record => record.trim());
+  const source = records[0]?.match(/^\[첨부문서:\s*([^\]]+)\]/)?.[1] || '';
+  const first = records.findIndex(record => !/^\[(?:첨부문서|시트):/.test(record.trim()));
+  if (first < 0) return [createPreambleChunk(text)];
+  const header = csvCells(records[first].replace(/^\uFEFF/, ''));
+  if (header.length < 3) return [createPreambleChunk(text)];
+  const chunks = [createPreambleChunk(records.slice(0, first + 1).join('\n'))];
+  let rowNo = 0;
+  for (const record of records.slice(first + 1)) {
+    const cells = csvCells(record);
+    if (!cells.some(Boolean)) continue;
+    const label = cells[0] === '[검토 요청]' ? '검토 요청' : `행 ${++rowNo}`;
+    const title = cells[0] === '[검토 요청]' ? '검토 요청'
+      : [source, /^\d+$/.test(cells[0]) ? '' : cells[0], cells[1]].filter(Boolean).join(' · ') || label;
+    const chunk = { articleNo: label, title, fullHeader: `${label} (${title})`, content: record,
+      paragraphs: [], items: [], rawLines: [record], isRiskClause: false, riskTags: [], riskLevel: 'LOW',
+      columnNames: header };
+    finalizeArticleChunk(chunk);
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+function isSpreadsheetText(text) {
+  const records = csvRecords(text.replace(/^\uFEFF/, '')).filter(record => record.trim()
+    && !/^\[(?:첨부문서|시트):/.test(record.trim()));
+  if (records.length < 2) return false;
+  const columns = csvCells(records[0]).length;
+  return columns >= 4 && csvCells(records[1]).length === columns;
+}
+
 /**
  * 텍스트 문서를 조항 단위 구조체 배열로 계층적 분할
  * @param {string} text - 원문 텍스트
@@ -76,6 +142,19 @@ const SUB_ITEM_REGEX = /^[가-힣]\.\s*/;
  */
 export function chunkLegalDocument(text) {
   if (!text || typeof text !== 'string') return [];
+
+  // 여러 첨부를 한 문자열로 묶는 API 경로에서도 파일별 행 경계를 유지한다.
+  const fileMarkers = [...text.matchAll(/^\[첨부문서:\s*([^\]\r\n]+)\]\s*$/gm)];
+  if (fileMarkers.length && fileMarkers.some(match => /\.(?:csv|xlsx|xls)$/i.test(match[1]))) {
+    const chunks = [];
+    if (fileMarkers[0].index > 0) chunks.push(...chunkLegalDocument(text.slice(0, fileMarkers[0].index)));
+    fileMarkers.forEach((match, index) => {
+      const block = text.slice(match.index, fileMarkers[index + 1]?.index ?? text.length).trim();
+      chunks.push(...(/\.(?:csv|xlsx|xls)$/i.test(match[1]) ? spreadsheetChunks(block) : chunkLegalDocument(block.replace(/^\[첨부문서:[^\n]*\]\s*\n/, ''))));
+    });
+    return chunks;
+  }
+  if (isSpreadsheetText(text)) return spreadsheetChunks(text);
 
   const lines = text.split(/\r?\n/);
   const chunks = [];

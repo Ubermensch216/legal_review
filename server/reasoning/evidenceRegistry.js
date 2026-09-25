@@ -108,7 +108,19 @@ export function buildEvidenceRegistry(context = {}, { documentText = '' } = {}) 
     };
     for (const paragraph of article.paragraphs || []) {
       const p = unitNumber(paragraph.paragraphNo);
-      if (!p) continue;
+      if (!p) {
+        // 항 번호 없이 바로 호가 시작되는 조문(예: "다음 각 호")도 원문 단위로 보존한다.
+        // .0은 번호 없는 본문, .0.N은 본문에 직접 속한 제N호다.
+        if ((paragraph.items || []).length) {
+          const lead = [article.content, paragraph.content].filter(Boolean).join('\n');
+          if (lead) addUnit(`${id}.0`, `${label} 본문`, lead);
+          for (const item of paragraph.items) {
+            const i = unitNumber(item.itemNo);
+            if (i && item.content) addUnit(`${id}.0.${i}`, `${label} 제${i}호`, item.content);
+          }
+        }
+        continue;
+      }
       if (paragraph.content) addUnit(`${id}.${p}`, `${label} 제${p}항`, paragraph.content);
       for (const item of paragraph.items || []) {
         const i = unitNumber(item.itemNo);

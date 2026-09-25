@@ -1,6 +1,6 @@
 import { matchesLaw, sameLaw, isOfficial, today, articleText, validDate, inForceAt } from './evidence.js';
 // server/law/lawWorkbench.js - 종합 법령 워크벤치 오케스트레이터 (Re-ranking & Cascading 통합)
-import { expandQueryKeywords } from './lawTermKb.js';
+import { expandQueryKeywords, kbArticlesAt } from './lawTermKb.js';
 import { extractArticleReferences, extractOrdinanceNames, normalizeArticleNo, isCitationReference } from './lawArticleRef.js';
 import { searchLaw, getLawDetail, getLawArticle, getLawVersions } from './lawApiClient.js';
 import { getLawDetailAt } from './lawVersionAt.js';
@@ -10,6 +10,7 @@ import { screenEvidenceCandidates, hydrateSelectedCandidates } from './evidenceS
 import { reRankPrecedents, reRankInterpretations } from './reRanker.js';
 import { retrieveCascadingHierarchy } from './cascadingRetriever.js';
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
+import { generatedReportShellWarning } from '../parsers/sourceQuality.js';
 import { runTool } from './tools/toolRunner.js';
 import { summarizeAvailability } from './decisionDiagnostics.js';
 import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
@@ -56,6 +57,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   if (dependencies.searchPrecedents && !dependencies.searchPrecedentCandidates) clients.searchPrecedentCandidates = dependencies.searchPrecedents;
   if (dependencies.searchInterpretations && !dependencies.searchInterpretationCandidates) clients.searchInterpretationCandidates = dependencies.searchInterpretations;
   const collectionWarnings = [];
+  const reportShellWarning = generatedReportShellWarning(documentText);
+  if (reportShellWarning) collectionWarnings.push(reportShellWarning);
   const startTime = Date.now();
   const fullContextText = `${query}\n${documentText}`.trim();
 
@@ -211,7 +214,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   if (kbResult.suggestedLaws.length > 0) {
     const matched = kbResult.suggestedLaws.find(l => sameLaw(l.name, primaryLawName));
     if (matched) {
-      matched.mainArticles.forEach(a => {
+      kbArticlesAt(matched, isHistorical ? asOfDate : '').forEach(a => {
         const no = normalizeArticleNo(a);
         if (!targetArticleNos.has(no)) kbSeededArticleNos.add(no);
         targetArticleNos.add(no);
@@ -225,7 +228,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   const parentActName = String(primaryLawName || '').replace(/\s*(시행령|시행규칙)$/, '').trim();
   const kbActArticleNos = sameLaw(parentActName, primaryLawName)
     ? []
-    : (kbResult.suggestedLaws.find(l => sameLaw(l.name, parentActName))?.mainArticles || []).map(normalizeArticleNo);
+    : kbArticlesAt(kbResult.suggestedLaws.find(l => sameLaw(l.name, parentActName)), isHistorical ? asOfDate : '').map(normalizeArticleNo);
 
   const collectedArticles = [];
   if (mainLawDetail && mainLawDetail.articles) {
@@ -290,7 +293,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       const numbers = new Set(explicitRefs.filter(r => isCitationReference(r) && sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
       // A named secondary law is an explicit review target even without an article citation.
       if (requestedLawNames.some(n => sameLaw(n, name)) || contractSeeds.some(seed => sameLaw(seed.name, name))) {
-        for (const article of kbResult.suggestedLaws.find(l => sameLaw(l.name, name))?.mainArticles || []) {
+        for (const article of kbArticlesAt(kbResult.suggestedLaws.find(l => sameLaw(l.name, name)), isHistorical ? asOfDate : '')) {
           numbers.add(normalizeArticleNo(article));
         }
       }
@@ -625,7 +628,7 @@ function buildDataIntegrityReport({
 
   // 조회 실패는 수집 진단에 남기되, 확보한 자료로 작성한 검토의 품질 판정과 분리한다.
   const warnings = [];
-  warnings.push(...collectionWarnings.filter(w => /검토 기준일|기준일\(|시점|시행되지 않은/.test(w)));
+  warnings.push(...collectionWarnings.filter(w => /검토 기준일|기준일\(|시점|시행되지 않은|기존 AI 검토보고서/.test(w)));
   if (Object.values(sources).includes('UNKNOWN')) warnings.push('출처를 확인하지 못한 자료가 포함되어 있습니다.');
   if (sources.law === 'MOCK' || sources.articles === 'MOCK') {
     warnings.push('법령 조문이 공식 API가 아닌 샘플 목업 데이터입니다. 인용하지 마십시오.');

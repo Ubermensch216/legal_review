@@ -29,19 +29,19 @@ export const elementsSchema = {
           logicGroup: { type: 'string', maxLength: 24 },
           operator: { type: 'string', enum: ['ALL_OF', 'ANY_OF', 'EXCEPTION', 'ALTERNATIVE'] },
           relevance: { type: 'string', enum: ['DECISIVE', 'SUPPORTING', 'BACKGROUND', 'UNASSESSED'] },
-          sourceIds: { type: 'array', maxItems: 4, items: { type: 'string', maxLength: 16 } } } } } } } } }
+          sourceIds: { type: 'array', minItems: 1, maxItems: 4, items: { type: 'string', maxLength: 16 } } } } } } } } }
 };
 
-const TASK = articlesText => `[과제: 조문 요건 분해]
+const TASK = (articlesText, articleId, sourceIds) => `[과제: 조문 요건 분해]
 아래 조문 각각을, 그 조문이 적용되기 위한 요건과 예외로 나눈다. 이 사건의 사실에 맞추지 말고 조문 문언 자체의 요건만 쓴다.
 - text: 요건 한 가지를 한 문장으로(160자 이내). 여러 요건을 한 문장에 묶지 않는다.
 - mandatory: 모두 충족해야 하는 요건이면 true, 여러 경우 중 하나(열거된 호 등)면 false.
 - logicGroup/operator: A AND B AND (C OR D)라면 A·B는 ALL_OF, C·D는 같은 logicGroup의 ANY_OF로 나타낸다.
 - isException: "다만" 단서나 적용 제외 사유이면 true.
-- sourceIds: 그 요건이 나온 하위 ID(예: A1.2, A1.2x). 조문 밖의 ID는 쓰지 않는다.
+- sourceIds: 반드시 이 호출에 제공된 원문 ID 중에서만 고른다: ${sourceIds.join(', ')}. 하위 단위가 없는 조문은 조문 ID 자체를 쓴다. 모든 요건에 출처 ID를 하나 이상 넣는다.
 - burden: 누가 무엇을 입증·소명해야 하는지 조문에서 읽히면 쓰고, 없으면 빈 문자열.
 ${articlesText}
-출력 JSON 형식: {"articles":[{"articleId":"A1","elements":[{"text":"","mandatory":true,"isException":false,"sourceIds":["A1.1"]}],"burden":""}]}`;
+출력 JSON 형식: {"articles":[{"articleId":"${articleId}","elements":[{"text":"","mandatory":true,"isException":false,"sourceIds":["${sourceIds[0]}"]}],"burden":""}]}`;
 
 /** 조문의 하위 단위를 그대로 요건 골격으로 쓴다. LLM이 실패했을 때의 대체이자 비교 기준이다. */
 export function skeletonElements(registry, articleId) {
@@ -53,8 +53,8 @@ export function skeletonElements(registry, articleId) {
 }
 
 const articleHash = (registry, id) => [registry.get(id).textHash, ...registry.children(id).map(c => c.textHash)].join(':');
-const FORMAT_VERSION = 'unit-batches-v1';
-export const ELEMENT_SCHEMA_VERSION = 'v3-rule-proposition';
+const FORMAT_VERSION = 'unit-batches-v2';
+export const ELEMENT_SCHEMA_VERSION = 'v4-source-ids';
 
 const splitText = text => {
   const middle = Math.floor(text.length / 2);
@@ -83,20 +83,29 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
     return { elements: [], burden: '', partial: true };
   }
   const own = new Set(fragments.map(f => f.id));
+  const sourceIds = [...own];
   const header = registry.get(id);
   const articlesText = `[${id}] ${header.label}${header.title ? `(${header.title})` : ''}\n`
     + fragments.map(f => `  [${f.id}] ${f.isException ? '(단서) ' : ''}${f.text}`).join('\n');
   try {
-    const { value } = await runStage({ stage: 's3', provider, system: REASONING_SYSTEM,
-      prefix: `[검토 기준일] ${registry.asOf}`, task: TASK(articlesText), schema: elementsSchema,
-      config: { ...config, think: false }, session });
-    const answer = value.articles.find(a => String(a.articleId).match(/[AO]\d+/)?.[0] === id);
-    if (!answer?.elements?.length) throw new StageError('s3', `${id} 응답에 요건이 없습니다.`);
-    const elements = answer.elements.map(e => ({ text: String(e.text).trim(), mandatory: e.mandatory,
-      logicGroup: e.logicGroup || '', operator: e.operator || (e.isException ? 'EXCEPTION' : e.mandatory ? 'ALL_OF' : 'ANY_OF'),
-      relevance: 'UNASSESSED',
-      isException: e.isException, sourceIds: e.sourceIds.filter(s => own.has(s)) }))
-      .filter(e => e.text && e.sourceIds.length && !provenanceOnly(e.text));
+    const args = { stage: 's3', provider, system: REASONING_SYSTEM,
+      prefix: `[검토 기준일] ${registry.asOf}`, task: TASK(articlesText, id, sourceIds), schema: elementsSchema,
+      config: { ...config, think: false }, session };
+    const extract = value => {
+      const answer = value.articles.find(a => String(a.articleId).match(/[AO]\d+/)?.[0] === id);
+      if (!answer?.elements?.length) throw new StageError('s3', `${id} 응답에 요건이 없습니다.`);
+      const elements = answer.elements.map(e => ({ text: String(e.text).trim(), mandatory: e.mandatory,
+        logicGroup: e.logicGroup || '', operator: e.operator || (e.isException ? 'EXCEPTION' : e.mandatory ? 'ALL_OF' : 'ANY_OF'),
+        relevance: 'UNASSESSED',
+        isException: e.isException, sourceIds: e.sourceIds.filter(s => own.has(s)) }))
+        .filter(e => e.text && e.sourceIds.length && !provenanceOnly(e.text));
+      return { answer, elements };
+    };
+    let { answer, elements } = extract((await runStage(args)).value);
+    if (!elements.length) {
+      const retryTask = `${args.task}\n\n[직전 응답의 출처 ID 오류]\n유효한 출처 ID가 없었습니다. sourceIds에는 ${sourceIds.join(', ')} 중 실제 원문에 대응하는 ID를 넣어 다시 출력하십시오.`;
+      ({ answer, elements } = extract((await runStage({ ...args, task: retryTask })).value));
+    }
     if (!elements.length) throw new StageError('s3', `${id} 응답에 유효한 출처 ID가 없습니다.`);
     const covered = new Set(elements.flatMap(e => e.sourceIds));
     const missing = fragments.filter(f => f.text.trim() && !covered.has(f.id));

@@ -59,6 +59,20 @@ test('기준일에 효력이 없는 조문은 등록하되 인용 가능 목록�
   assert.match(r.renderIndex().text, /\[A3\].*기준일 효력 없음/);
 });
 
+test('항 번호 없이 바로 시작하는 호와 본문을 각각 출처 단위로 등록한다', () => {
+  const article = { ...OFFICIAL, lawName: '약관의 규제에 관한 법률', fullArticleNo: '7', title: '면책조항의 금지',
+    content: '다음 각 호의 어느 하나에 해당하는 조항은 무효로 한다.',
+    paragraphs: [{ paragraphNo: '', content: '', items: [
+      { itemNo: '1.', content: '사업자의 책임을 배제하는 조항' },
+      { itemNo: '2.', content: '사업자의 책임을 제한하는 조항' }
+    ] }] };
+  const r = buildEvidenceRegistry({ meta: { asOfDate: '20260923' }, officialEvidence: {
+    lawDetail: { ...OFFICIAL, lawName: article.lawName }, articles: [article] } });
+  assert.deepEqual(r.children('A1').map(e => e.id), ['A1.0', 'A1.0.1', 'A1.0.2']);
+  assert.equal(r.get('A1.0.1').text, '사업자의 책임을 배제하는 조항');
+  assert.match(r.renderFull(['A1']).text, /\[A1\.0\.2\] 사업자의 책임을 제한하는 조항/);
+});
+
 test('판례는 본문을 확보한 공식 자료만, 판시사항·판결요지를 번호 단위 명제로 나누고 참조조문을 잇는다', () => {
   const r = buildEvidenceRegistry(context());
   assert.deepEqual(r.ids(e => e.kind === 'PRECEDENT'), ['P1'], '목록만 있는 판례와 목업 판례는 제외');

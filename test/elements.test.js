@@ -69,7 +69,7 @@ test('캐시에 없는 조문만 한 번에 묻고, 결과를 조문 원문 해�
   const a2 = first.byArticle.get('A2');
   assert.equal(a2.source, 'LLM');
   assert.deepEqual(a2.elements.map(e => [e.id, e.isException, e.sourceIds]), [['A2.E1', false, ['A2.1']], ['A2.E2', true, ['A2.1x']]],
-    '조문 밖의 ID(A9.9)는 버린다');
+    '유효한 출처가 함께 있으면 조문 밖의 ID만 버린다');
 
   const second = await decomposeArticles({ articleIds: ['A2'], registry: buildEvidenceRegistry(context()), prefix: 'P0', provider: 'ollama', config, session: createLlmSession(), cache });
   assert.equal(bodies.length, 1, '같은 원문이면 LLM을 부르지 않는다');
@@ -125,6 +125,27 @@ test('모델이 조문 ID를 꾸며 써도 ID를 뽑아 맞추고, 끝내 빠진
   assert.equal(result.byArticle.get('A2').source, 'PARTIAL', '원칙 단위가 빠졌으므로 요건 분해 완료로 보지 않는다');
   assert.equal(result.byArticle.get('A1').source, 'SKELETON');
   assert.ok(result.warnings.some(w => /A1.*응답에 요건이 없습니다/.test(w)));
+});
+
+test('하위 단위가 없는 조문은 조문 ID를 허용하고 잘못된 출처 ID를 교정 재시도한다', async () => {
+  const article = { ...OFFICIAL, lawName: '민법', fullArticleNo: '673', title: '완성전의 도급인의 해제권',
+    content: '수급인이 일을 완성하기 전에는 도급인은 손해를 배상하고 계약을 해제할 수 있다.', paragraphs: [] };
+  const registry = buildEvidenceRegistry({ meta: { asOfDate: '20260923' }, officialEvidence: {
+    lawDetail: { ...OFFICIAL, lawName: '민법' }, articles: [article] } });
+  const answer = sourceIds => JSON.stringify({ articles: [{ articleId: 'A1', burden: '', elements: [
+    { text: '수급인이 일을 완성하기 전일 것', mandatory: true, isException: false, sourceIds }
+  ] }] });
+  const bodies = fakeOllama(call => reply(answer(call === 1 ? ['A1.1'] : ['A1'])));
+  const cache = freshCache('elements-root-source');
+  const result = await decomposeArticles({ articleIds: ['A1'], registry, provider: 'ollama', config,
+    session: createLlmSession(), cache });
+  assert.equal(bodies[0].format.properties.articles.items.properties.elements.items.properties.sourceIds.minItems, 1);
+  assert.match(bodies[0].messages[1].content, /하위 단위가 없는 조문은 조문 ID 자체를 쓴다/);
+  assert.match(bodies[1].messages[1].content, /유효한 출처 ID가 없었습니다.*sourceIds에는 A1/);
+  assert.equal(result.byArticle.get('A1').source, 'LLM');
+  assert.deepEqual(result.byArticle.get('A1').elements[0].sourceIds, ['A1']);
+  assert.deepEqual(result.warnings, []);
+  cache.close();
 });
 
 test('S3 조문 한 단위가 예산을 넘으면 원문을 재분할해 모든 부분을 처리한다', async () => {

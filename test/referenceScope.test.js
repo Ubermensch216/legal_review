@@ -5,7 +5,9 @@ import './setup.js';
 // 공식 근거로 실린다. (test/docs/test_mobility_ordinance.pdf 사안에서 12건 중 7건 오귀속)
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { extractArticleReferences, isCitationReference, REFERENCE_SCOPE } from '../server/law/lawArticleRef.js';
+import { parseDocument } from '../server/parsers/index.js';
 
 const scopeOf = (text, index = 0) => extractArticleReferences(text)[index];
 
@@ -68,4 +70,22 @@ test('기존의 대용 표현과 명시 인용 처리는 그대로 유지된다'
   assert.equal(refs[1].scope, REFERENCE_SCOPE.ANAPHORIC);
   assert.equal(refs[1].lawName, '부동산 가격공시에 관한 법률');
   for (const r of refs) assert.equal(isCitationReference(r), true);
+});
+
+test('같은 법 시행규칙·동법 시행령은 직전 모법의 하위 법령으로 귀속한다', () => {
+  const refs = extractArticleReferences('식품위생법 제75조 및 같은 법 시행규칙 제89조. 개인정보 보호법 제15조와 동법 시행령 제14조');
+  assert.equal(refs[1].lawName, '식품위생법 시행규칙');
+  assert.equal(refs[1].scope, REFERENCE_SCOPE.ANAPHORIC);
+  assert.equal(refs[3].lawName, '개인정보 보호법 시행령');
+  assert.equal(refs[3].scope, REFERENCE_SCOPE.ANAPHORIC);
+  assert.ok(refs.every(isCitationReference));
+});
+
+test('행정처분 PDF의 시행규칙 제89조를 식품위생법 제89조로 오인하지 않는다', async () => {
+  const buffer = await readFile(new URL('./docs/review-samples/03_영업정지_사전통지_의견제출서.pdf', import.meta.url));
+  const parsed = await parseDocument(buffer, '03_영업정지_사전통지_의견제출서.pdf');
+  const refs = extractArticleReferences(parsed.text, '식품위생법').filter(ref => ref.fullArticleNo === '89');
+  assert.ok(refs.some(ref => ref.lawName === '식품위생법 시행규칙' && ref.scope === REFERENCE_SCOPE.ANAPHORIC));
+  assert.ok(refs.some(ref => ref.scope === REFERENCE_SCOPE.SELF));
+  assert.ok(!refs.some(ref => ref.lawName === '법 시행규칙' || ref.lawName === '식품위생법'));
 });
