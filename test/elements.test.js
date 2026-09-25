@@ -9,6 +9,15 @@ import { buildEvidenceRegistry } from '../server/reasoning/evidenceRegistry.js';
 import { createStageCache } from '../server/reasoning/stageCache.js';
 import { decomposeArticles, selectIssueElements, skeletonElements } from '../server/reasoning/stages/elements.js';
 
+test('출처 확인 메타데이터를 법적 요건으로 선택하지 않는다', () => {
+  const registry = { get: id => id === 'A1' ? { id, kind: 'ARTICLE' } : null };
+  const decomposed = new Map([['A1', { elements: [
+    { id: 'A1.E1', text: '출처를 확인하지 못한 자료 · 출처 확인 필요', sourceIds: ['A1'] },
+    { id: 'A1.E2', text: '손해를 배상할 것', sourceIds: ['A1'] }
+  ] }]]);
+  assert.deepEqual(selectIssueElements({ evidenceIds: ['A1'] }, decomposed, registry).map(e => e.id), ['A1.E2']);
+});
+
 const noNetwork = globalThis.fetch;
 afterEach(() => { globalThis.fetch = noNetwork; });
 

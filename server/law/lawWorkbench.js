@@ -13,6 +13,7 @@ import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
 import { runTool } from './tools/toolRunner.js';
 import { summarizeAvailability } from './decisionDiagnostics.js';
 import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
+import { detectContractLawSeeds } from '../reasoning/contractReview.js';
 
 // 준용·위임 추적 깊이와 조문 수집 상한.
 // 법령 조문은 서로를 광범위하게 인용하므로, 제한 없이 따라가면 법령 전체를 끌어오게 된다.
@@ -101,6 +102,14 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   // 2. 키워드 및 도메인 지식베이스 다중 확장
   progress.start('keywords', '쟁점어 확장 및 인용 조문 추출', '', '준비');
   const kbResult = expandQueryKeywords(fullContextText);
+  const contractSeeds = preset === 'contract_risk' ? detectContractLawSeeds(documentText) : [];
+  for (const seed of contractSeeds) {
+    const index = kbResult.suggestedLaws.findIndex(l => sameLaw(l.name, seed.name));
+    const existing = kbResult.suggestedLaws[index];
+    if (existing) kbResult.suggestedLaws[index] = { ...existing,
+      mainArticles: [...new Set([...(existing.mainArticles || []), ...seed.articles.map(a => `제${a}조`)])] };
+    else kbResult.suggestedLaws.push({ name: seed.name, mainArticles: seed.articles.map(a => `제${a}조`) });
+  }
   // The preset field may contain several statute names. It is not a single citation default.
   const requestedLawNames = [...new Set(String(targetLaw || '').split(/[,;、，\n]+/).map(name => name.trim()).filter(Boolean))];
   const explicitRefs = extractArticleReferences(fullContextText, requestedLawNames.length === 1 ? requestedLawNames[0] : '');
@@ -269,7 +278,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     source: detail.source || (detail.isMockData ? 'MOCK' : 'UNKNOWN'), isMockData: Boolean(detail.isMockData), enforceDate: article.enforceDate || detail.enforceDate });
   collectedArticles.splice(0, collectedArticles.length, ...collectedArticles.map(a => tagArticle(a, mainLawDetail)));
   // 자치법규는 법령 API 대상이 아니므로 여기서 제외한다. (아래 자치법규 채널에서 조회)
-  const otherNames = [...new Set([...requestedLawNames.filter(n => !isOrdinanceName(n)), ...citedStatuteNames])]
+  const otherNames = [...new Set([...contractSeeds.map(seed => seed.name),
+    ...requestedLawNames.filter(n => !isOrdinanceName(n)), ...citedStatuteNames])]
     .filter(n => !sameLaw(n, primaryLawName));
   if (otherNames.length > 5) collectionWarnings.push('추가 인용 법령이 조회 예산을 초과하여 일부만 수집했습니다.');
   for (const name of otherNames.slice(0, 5)) {
@@ -279,14 +289,14 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       if (!detail || !sameLaw(detail.lawName, match.lawName)) { collectionWarnings.push(`${name} 본문 수집 실패`); continue; }
       const numbers = new Set(explicitRefs.filter(r => isCitationReference(r) && sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
       // A named secondary law is an explicit review target even without an article citation.
-      if (requestedLawNames.some(n => sameLaw(n, name))) {
+      if (requestedLawNames.some(n => sameLaw(n, name)) || contractSeeds.some(seed => sameLaw(seed.name, name))) {
         for (const article of kbResult.suggestedLaws.find(l => sameLaw(l.name, name))?.mainArticles || []) {
           numbers.add(normalizeArticleNo(article));
         }
       }
       const live = detail.articles.filter(a => inForceAt(a, asOfDate));
       const picked = live.filter(a => numbers.has(a.fullArticleNo || String(a.articleNo)));
-      if (!picked.length && requestedLawNames.some(n => sameLaw(n, name)) && !numbers.size) picked.push(...live.slice(0, 5));
+      if (!picked.length && (requestedLawNames.some(n => sameLaw(n, name)) || contractSeeds.some(seed => sameLaw(seed.name, name))) && !numbers.size) picked.push(...live.slice(0, 5));
       collectedArticles.push(...picked.map(a => tagArticle(a, detail)));
     } catch { collectionWarnings.push(`${name} 본문 수집 실패`); }
   }
@@ -533,6 +543,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
       query,
       preset,
       primaryLawName,
+      ...(preset === 'contract_risk' ? { governingLaws: [...new Set(contractSeeds.map(seed => seed.name))] } : {}),
       // targetDate는 '과거/미래 시점 검토로 요청됨'을 뜻한다. 검증기와 보고서가 이 표식을 본다.
       // asOfDate는 실제로 적용한 기준일이며, 지정이 없으면 오늘이다.
       targetDate: isHistorical ? asOfDate : '',

@@ -95,7 +95,8 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
     }
     return text;
   };
-  const articles = (evidence.articles || []).filter(a => inForceAt(a, asOf) && (isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData)));
+  const articles = [...(evidence.articles || []), ...(evidence.supplementalArticles || [])]
+    .filter(a => inForceAt(a, asOf) && (isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData)));
   // 모법(act)이 빠져 있었다. 시행령을 기준으로 검토할 때 위임의 출발점인 법률 조문이
   // LLM 입력에 들어가지 않아, 법 → 영 → 조례로 이어지는 체계를 설명할 수 없었다.
   const cascading = ['act', 'decree', 'rule'].flatMap(kind => {

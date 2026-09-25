@@ -1,6 +1,7 @@
 // public/js/documentStudio.js - 보고서 스튜디오 (비주얼 공문서 에디터 & 마크다운 소스 모드)
 import { state } from './state.js';
 import { renderReasoningOpinion } from './reasoningView.js';
+import { expandReferences, explainDiagnostic } from './learningIssues.js';
 
 const drawer = document.getElementById('studio-drawer');
 const btnOpen = document.getElementById('btn-open-studio');
@@ -61,11 +62,12 @@ export function openStudio(initialText = '', title = '', reviewData = null) {
 
   if (title) {
     titleInput.value = title;
-  } else if (!titleInput.value) {
-    titleInput.value = '법률검토의견서';
+  } else if (!titleInput.value || lastReviewPayload?.meta?.preset === 'contract_risk') {
+    titleInput.value = lastReviewPayload?.meta?.preset === 'contract_risk'
+      ? '계약서 법률검토의견서' : '법률검토의견서';
   }
 
-  const rawMd = initialText || lastReviewPayload?.review?.draftOpinion || '';
+  const rawMd = expandReferences(initialText || lastReviewPayload?.review?.draftOpinion || '', lastReviewPayload || {});
   const reportView = document.getElementById('draft-official-report-view');
 
   // 의견서 탭에서 보던 전문과 동일한 문서를 편집기에 가져온다.
@@ -142,7 +144,7 @@ function buildVisualReportHtml(data, reportTitle) {
 
   return `
     <div class="visual-report-container" style="line-height: 1.8;">
-      <div role="note">${escapeHtml((data.reliability?.warnings || []).join(' / '))}</div>
+      <div role="note">${escapeHtml((data.reliability?.warnings || []).map(w => explainDiagnostic(w, data)).join(' / '))}</div>
       <!-- 헤더 -->
       <div style="text-align: center; border-bottom: 2px solid #1E3A8A; padding-bottom: 16px; margin-bottom: 22px;">
         <h2 style="font-size: 21px; font-weight: 800; color: #1E3A8A; letter-spacing: 2px; margin-bottom: 12px;">${escapeHtml(reportTitle || '법 률 검 토 의 견 서')}</h2>
@@ -184,7 +186,7 @@ function buildVisualReportHtml(data, reportTitle) {
         </h3>
         ${review.reasoning?.issues?.length
           ? renderReasoningOpinion(review.reasoning, review, { report: true })
-          : `<div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">${escapeHtml(cleanText(review.legalOpinion || '')).replace(/\n/g, '<br>')}</div>`}
+          : `<div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">${escapeHtml(cleanText(expandReferences(review.legalOpinion || '', data))).replace(/\n/g, '<br>')}</div>`}
       </div>
 
       <!-- 3. 리스크 평가 및 보완 조치 사항 -->

@@ -8,13 +8,14 @@ export const ALIGNMENT_THRESHOLD = 0.55;
 const EVIDENCE_CHARS = 900;
 const MIN_FRAGMENT_CHARS = 180;
 
-export function collectClaims(issueResults) {
+export function collectClaims(issueResults, { contractMode = false } = {}) {
   const claims = [];
   for (const result of issueResults) {
     for (const a of result.assessments || []) {
       const element = result.elements.find(e => e.id === a.elementId);
       claims.push({ claimId: `${result.issueId}:${a.elementId}`, issueId: result.issueId, elementId: a.elementId,
-        text: [element?.text, a.analysis].filter(Boolean).join(' — '), evidenceIds: a.evidenceIds || [], status: a.status });
+        text: contractMode ? String(element?.text || a.analysis || '') : [element?.text, a.analysis].filter(Boolean).join(' — '),
+        evidenceIds: a.authorityEvidenceIds || a.evidenceIds || [], status: a.status });
     }
   }
   return claims;
@@ -77,8 +78,9 @@ function combineLabels(segments) {
 }
 
 /** 모든 공식·현행 근거 쌍을 검증한다. 토큰 초과는 근거 조각을 더 나눈다. */
-export async function verifyWarrants({ issueResults, registry, embed = embedTexts, entailment = true, prefix, provider, config, session }) {
-  const claims = collectClaims(issueResults);
+export async function verifyWarrants({ issueResults, registry, embed = embedTexts, entailment = true, prefix, provider, config, session,
+  contractMode = false }) {
+  const claims = collectClaims(issueResults, { contractMode });
   const pairs = claims.flatMap(claim => claim.evidenceIds.map(evidenceId => ({ claim, evidenceId, entry: registry.get(evidenceId) })));
   const warnings = [];
   const calls = { count: 0 };
@@ -123,4 +125,17 @@ export async function verifyWarrants({ issueResults, registry, embed = embedText
   return { ledger, warnings, entailmentCalls: calls.count,
     unreviewedPairs: checks.filter(c => c.existence === 'PASS' && c.official === 'PASS' && c.temporal === 'PASS' && !c.entailment)
       .map(c => ({ claimId: c.claimId, evidenceId: c.evidenceId })) };
+}
+
+/** 원문 자체에서 생성한 계약 finding이 정확히 그 D 조항과 이어지는지 확인한다. */
+export function verifyDocumentFindings(findings, registry) {
+  return findings.map(finding => {
+    const checks = (finding.documentSupportIds || []).map(id => {
+      const entry = registry.get(id);
+      return { documentId: id, result: entry?.kind?.startsWith('DOCUMENT') && entry.text === finding.documentFinding
+        ? 'SUPPORTED' : 'NOT_SUPPORTED' };
+    });
+    return { issueId: finding.issueId, kind: finding.kind, checks,
+      overall: checks.length && checks.every(c => c.result === 'SUPPORTED') ? 'SUPPORTED' : 'NOT_SUPPORTED' };
+  });
 }

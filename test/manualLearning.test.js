@@ -9,7 +9,7 @@ import { ENV } from '../server/env.js';
 import { createManualLearningService } from '../server/law/manualLearning.js';
 import { createLearningStore, getLearningStore } from '../server/law/manualLearningStore.js';
 import { generateLegalReview } from '../server/law/lawWorkbenchReview.js';
-import { checkLearningCases, checkLearningCitations, digest, findLearningKnowledge } from '../server/law/manualLearningMemory.js';
+import { checkLearningCases, checkLearningCitations, digest, excludedQuestionsCovered, findLearningKnowledge, learningScope, resolveLearningCitations } from '../server/law/manualLearningMemory.js';
 import { callLearningLocal, learningBudget, localLearningEndpoint } from '../server/law/manualLearningLocal.js';
 import { resolveBudget } from '../server/law/llmBudget.js';
 import { ollamaStream } from './llmStreamStub.js';
@@ -569,6 +569,7 @@ test('T4 만료·미검증 인용·질의서 변경은 지식을 제외하고 �
   // 공식 조문에서 확인되지 않는 인용이 하나라도 있으면 지식 전체를 쓰지 않는다.
   await approvedKnowledge({ card: { ...card(), citations: [{ lawName: law.lawName, articleNo: '제999조' }] } });
   assert.deepEqual(reasons(find()), ['CITATION_UNVERIFIED']);
+  assert.match(find().excluded[0].message, /제999조/, '제외 사유에 확인되지 않은 조문을 표시한다');
 
   store.clear();
   const { inquiry } = await approvedKnowledge();
@@ -636,6 +637,32 @@ test('T4 상한을 넘은 지식은 버려지지 않고 예산 사유로 보고�
   const sameCase = find(context(), QUERY, { historyId: knowledge.historyId, onlyInCase: true, limit: 2 });
   assert.deepEqual(sameCase.used.map(item => item.id), [knowledge.id]);
   assert.deepEqual(sameCase.excluded, [], '재검토에는 다른 사건 카드의 제외 사유도 싣지 않는다');
+});
+
+test('원 검토에 빠진 승인 답변의 조문은 공식 본문으로 보충하되 원본 스코프와 근거 번호를 유지한다', async () => {
+  const ctx = context();
+  const originalHash = learningScope(ctx).evidenceHash;
+  const originalRegistry = buildEvidenceRegistry(ctx);
+  const cited = [{ lawName: law.lawName, articleNo: '제20조' },
+    { lawName: '약관의 규제에 관한 법률', articleNo: '제11조' },
+    { lawName: '약관의 규제에 관한 법률', articleNo: '제999조' }];
+  const calls = [];
+  const fetched = await resolveLearningCitations(ctx, [{ card: { citations: cited } }], async (name, no) => {
+    calls.push(`${name} ${no}`);
+    return no === '제11조' ? { lawName: name, source: 'OFFICIAL_API', enforceDate: '20200101',
+      article: { articleNo: '11', fullArticleNo: '11', content: '고객의 권익 보호' } } : null;
+  });
+  assert.deepEqual(calls, ['약관의 규제에 관한 법률 제11조', '약관의 규제에 관한 법률 제999조']);
+  assert.equal(fetched.length, 1);
+  ctx.officialEvidence.supplementalArticles = fetched;
+  assert.equal(learningScope(ctx).evidenceHash, originalHash);
+  assert.deepEqual(checkLearningCitations({ citations: cited }, ctx).map(x => x.status),
+    ['VERIFIED_EXISTENCE', 'VERIFIED_EXISTENCE', 'UNVERIFIED']);
+  const augmented = buildEvidenceRegistry(ctx);
+  assert.equal(augmented.get('A1')?.label, originalRegistry.get('A1')?.label);
+  assert.ok(augmented.toJSON().some(entry => entry.label === '약관의 규제에 관한 법률 제11조'));
+  assert.deepEqual(await resolveLearningCitations({ ...ctx, meta: { ...ctx.meta, targetDate: '20200101' } },
+    [{ card: { citations: cited } }], () => { throw new Error('과거 시점에 현행 본문 사용 금지'); }), []);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -939,6 +966,19 @@ test('T13 외부로 물을 법리 공백이 없으면 로컬 AI를 부르지 않
   assert.equal(result.needsHelp, false);
   assert.match(result.message, /외부 전문가에게 보낼 확인 사항이 없습니다/);
   assert.equal(called, false);
+});
+
+test('제외된 승인 카드의 모든 질문을 다른 카드가 다룰 때만 부분 재검토할 수 있다', () => {
+  const records = new Map([
+    ['usable', { parentId: 'inquiry-1', answeredQuestions: [1, 2, 3] }],
+    ['unverified', { parentId: 'inquiry-1', answeredQuestions: [1, 2, 3] }],
+    ['unique', { parentId: 'inquiry-1', answeredQuestions: [4] }],
+    ['other-inquiry', { parentId: 'inquiry-2', answeredQuestions: [1] }]
+  ]);
+  const store = { get: id => records.get(id) };
+  assert.equal(excludedQuestionsCovered([{ id: 'usable' }], [{ id: 'unverified' }], store), true);
+  assert.equal(excludedQuestionsCovered([{ id: 'usable' }], [{ id: 'unique' }], store), false);
+  assert.equal(excludedQuestionsCovered([{ id: 'usable' }], [{ id: 'other-inquiry' }], store), false);
 });
 
 test('T9 최초 검토에서는 미검증 인용 카드도 경고에 나타나지 않는다', async () => {

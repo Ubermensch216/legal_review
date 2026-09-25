@@ -1,4 +1,4 @@
-import { reportText } from './reportSafety.js';
+import { reportText, sanitizeExportText } from './reportSafety.js';
 // server/export/exportFiles.js - HWPX, DOCX, PDF, Markdown 정형화 공문서 보고서 생성 엔진
 import JSZip from 'jszip';
 import PDFDocument from 'pdfkit';
@@ -20,12 +20,12 @@ function resolveBasisList(reviewData, contentMarkdown, defaultLawName) {
  */
 export async function generateHwpx({ title = '법률검토의견서', contentMarkdown = '', reviewData = {} }) {
   const zip = new JSZip();
-  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
+  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + reportTitle(title, reviewData));
   const review = reviewData?.review || {};
   const meta = reviewData?.meta || {};
 
-  const query = meta.query || review.facts || docTitle;
-  const lawName = meta.primaryLawName || '관련 법령';
+  const query = cleanText(meta.query || review.facts || docTitle);
+  const lawName = cleanText(reportLawName(meta, review));
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
   const docNo = `LR-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -127,9 +127,10 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   `);
 
   // 1. 검토 배경 및 질의 요지
+  if (meta.preset !== 'contract_risk') {
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="2" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="2"><hp:t>1. 검토 배경 및 질의 요지</hp:t></hp:run></hp:p>
-  <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>  • ${escapeXml(cleanText(review.facts || query))}</hp:t></hp:run></hp:p>
+  <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>  • ${escapeXml(cleanText(meta.preset === 'contract_risk' ? query : review.facts || query))}</hp:t></hp:run></hp:p>
   <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t></hp:t></hp:run></hp:p>
   `);
 
@@ -137,6 +138,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="2" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="2"><hp:t>2. 법률적 쟁점 및 심층 검토 의견</hp:t></hp:run></hp:p>
   `);
+  }
 
   const opinionParagraphs = cleanText(opinionText).split('\n\n').filter(Boolean);
   for (const block of opinionParagraphs) {
@@ -156,6 +158,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t></hp:t></hp:run></hp:p>
   `);
 
+  if (meta.preset !== 'contract_risk') {
   // 3. 리스크 평가 및 보완 조치 사항
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="2" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="2"><hp:t>3. 리스크 평가 및 보완 조치 사항</hp:t></hp:run></hp:p>
@@ -189,6 +192,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t></hp:t></hp:run></hp:p>
   `);
 
+  }
   // 면책 고지
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="4" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="4"><hp:t>${escapeXml(review.disclaimer || '※ 본 검토의견서는 AI 법령검토 시스템에 의해 작성된 참고자료이며, 최종 법적 분쟁 및 처분에 대해서는 법률전문가의 자문을 받으시기 바랍니다.')}</hp:t></hp:run></hp:p>
@@ -213,12 +217,12 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
  */
 export async function generateDocx({ title = '법률검토의견서', contentMarkdown = '', reviewData = {} }) {
   const zip = new JSZip();
-  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
+  const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + reportTitle(title, reviewData));
   const review = reviewData?.review || {};
   const meta = reviewData?.meta || {};
 
-  const query = meta.query || review.facts || docTitle;
-  const lawName = meta.primaryLawName || '관련 법령';
+  const query = cleanText(meta.query || review.facts || docTitle);
+  const lawName = cleanText(reportLawName(meta, review));
   const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
   const docNo = `LR-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -257,6 +261,8 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
       <w:r><w:rPr><w:b/></w:rPr><w:t>[주요법령] </w:t></w:r><w:r><w:rPr><w:color w:val="1E3A8A"/><w:b/></w:rPr><w:t>${escapeXml(lawName)}</w:t></w:r>
     </w:p>
     <w:p><w:r><w:t></w:t></w:r></w:p>
+  `;
+  if (meta.preset !== 'contract_risk') docxBody += `
 
     <!-- 1. 검토 배경 및 질의 요지 -->
     <w:p>
@@ -264,7 +270,7 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
       <w:r><w:rPr><w:b/><w:color w:val="1E3A8A"/><w:sz w:val="28"/></w:rPr><w:t>1. 검토 배경 및 질의 요지</w:t></w:r>
     </w:p>
     <w:p>
-      <w:r><w:t>• ${escapeXml(cleanText(review.facts || query))}</w:t></w:r>
+      <w:r><w:t>• ${escapeXml(cleanText(meta.preset === 'contract_risk' ? query : review.facts || query))}</w:t></w:r>
     </w:p>
 
     <!-- 2. 법률적 쟁점 및 심층 검토 의견 -->
@@ -294,6 +300,7 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
     }
   }
 
+  if (meta.preset !== 'contract_risk') {
   // 3. 리스크 평가 및 보완 조치 사항
   docxBody += `
     <w:p>
@@ -332,6 +339,7 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
     </w:p>`;
   });
 
+  }
   // 면책 고지
   docxBody += `
     <w:p>
@@ -367,12 +375,12 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
         doc.font(fontPath);
       }
 
-      const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + (title || '법률검토의견서'));
+      const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + reportTitle(title, reviewData));
       const review = reviewData?.review || {};
       const meta = reviewData?.meta || {};
 
-      const query = meta.query || review.facts || docTitle;
-      const lawName = meta.primaryLawName || '관련 법령';
+      const query = cleanText(meta.query || review.facts || docTitle);
+      const lawName = cleanText(reportLawName(meta, review));
       const todayStr = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
       const docNo = `LR-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -394,14 +402,16 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       doc.moveDown(1.0);
 
       // 3. 1. 검토 배경 및 질의 요지
+      if (meta.preset !== 'contract_risk') {
       doc.fillColor('#1E3A8A').fontSize(13).text('1. 검토 배경 및 질의 요지');
       doc.moveDown(0.3);
-      doc.fillColor('#334155').fontSize(9.5).text(`• ${cleanText(review.facts || query)}`);
+      doc.fillColor('#334155').fontSize(9.5).text(`• ${cleanText(meta.preset === 'contract_risk' ? query : review.facts || query)}`);
       doc.moveDown(1.0);
 
       // 4. 2. 법률적 쟁점 및 심층 검토 의견
       doc.fillColor('#1E3A8A').fontSize(13).text('2. 법률적 쟁점 및 심층 검토 의견');
       doc.moveDown(0.4);
+      }
 
       const opinionParas = cleanText(opinionText).split('\n\n').filter(Boolean);
       for (const block of opinionParas) {
@@ -418,6 +428,8 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       }
       doc.moveDown(1.0);
 
+      // 계약서 본문에는 권고 수정안과 근거 부록이 이미 있으므로 범용 서식을 반복하지 않는다.
+      if (meta.preset !== 'contract_risk') {
       // 5. 3. 리스크 평가 및 보완 조치 사항
       doc.fillColor('#1E3A8A').fontSize(13).text('3. 리스크 평가 및 보완 조치 사항');
       doc.moveDown(0.4);
@@ -444,6 +456,7 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       });
 
       doc.moveDown(1.5);
+      }
 
       // 7. 면책 고지문
       doc.fillColor('#64748B').fontSize(8.5).text(
@@ -458,9 +471,23 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
   });
 }
 
+function reportTitle(title, data) {
+  const value = title || '법률검토의견서';
+  if (data?.meta?.preset === 'contract_risk' && /^(?:법률검토의견서|.+ 검토의견서)$/.test(value))
+    return '계약서 법률검토의견서';
+  return value;
+}
+
+function reportLawName(meta, review) {
+  if (meta.preset !== 'contract_risk') return meta.primaryLawName || '관련 법령';
+  const applied = [...new Set((review.legalBasis || []).filter(item => item.verificationStatus !== 'UNVERIFIED')
+    .map(item => item.lawName).filter(Boolean))];
+  return (applied.length ? applied : meta.governingLaws || []).join(', ') || '계약 관련 법령';
+}
+
 function cleanText(text) {
   if (!text) return '';
-  return String(text)
+  return sanitizeExportText(String(text))
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
     .replace(/^#+\s+/gm, '')
     .replace(/\*\*([^*]+)\*\*/g, '$1')

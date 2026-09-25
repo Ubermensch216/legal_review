@@ -9,7 +9,7 @@ const reasoning = {
     id: 'I1', question: '동의가 필요한가?', factIds: ['F1'],
     elements: [{ id: 'E1', text: '불리한 변경', sourceIds: ['A1.1'], mandatory: true }],
     assessments: [{ elementId: 'E1', status: 'UNKNOWN', proof: 'NO_EVIDENCE', factIds: ['F1'], contraryFactIds: [],
-      evidenceIds: ['A1.1'], analysis: '불리한지 확인되지 않았다', openQuestion: '변경 전후 조건은?' }],
+      evidenceIds: ['A1.1'], authorityEvidenceIds: ['A1.1'], analysis: '불리한지 확인되지 않았다', openQuestion: '변경 전후 조건은?' }],
     conclusion: { legal: 'CONDITIONAL', proof: 'NO_EVIDENCE', reasons: ['불이익 여부 미확정'], decidingElementIds: ['E1'] }
   }],
   gaps: [{ issueId: 'I1', route: 'EXTERNAL_INQUIRY', state: 'OPEN', question: '해석 기준 확인' }],
@@ -37,9 +37,24 @@ test('공식 출처가 없는 규범을 공식으로 표시하거나 입력 HTML
   const input = structuredClone(reasoning);
   input.issues[0].elements[0].sourceIds = [];
   input.issues[0].assessments[0].evidenceIds = [];
+  input.issues[0].assessments[0].authorityEvidenceIds = [];
   input.issues[0].question = '<script>alert(1)</script>';
   const html = renderReasoningOpinion(input);
   assert.match(html, /연결된 공식 출처 없음 · 확인 필요/);
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+test('화면과 보고서 보기에는 내부 조문 번호 대신 뜻을 알 수 있는 출처를 표시한다', () => {
+  const input = structuredClone(reasoning);
+  input.evidence = [{ id: 'A23', label: '민법 제673조', title: '완성전의 도급인의 해제권',
+    preview: '도급인은 일이 완성되기 전에는 손해를 배상하고 계약을 해제할 수 있다.',
+    official: true, inForce: true }];
+  input.issues[0].elements[0].sourceIds = ['A23'];
+  input.issues[0].assessments[0].evidenceIds = ['A23'];
+  input.issues[0].assessments[0].authorityEvidenceIds = ['A23'];
+  input.gateReasons = ['요건 분해 미검증 조문: A23'];
+  const html = renderReasoningOpinion(input, {}, { report: true });
+  assert.match(html, /민법 제673조.*완성전의 도급인의 해제권.*조문 첫머리/);
+  assert.doesNotMatch(html, /\bA23\b|\bI1\b/);
 });

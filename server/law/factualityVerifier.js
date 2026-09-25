@@ -11,7 +11,8 @@ export async function verifyAndCorrectReviewCitations({ review, workbenchContext
   const lawDetail = evidence.lawDetail;
   const basisIsMock = workbenchContext.meta?.dataIntegrity?.sources?.articles === 'MOCK';
   const legalBasis = (Array.isArray(review.legalBasis) ? review.legalBasis : []).map(item => ({ ...item }));
-  let hasOfficialBasis = !basisIsMock && isOfficial(lawDetail) && (evidence.articles || []).length > 0;
+  const availableArticles = [...(evidence.articles || []), ...(evidence.supplementalArticles || [])];
+  let hasOfficialBasis = !basisIsMock && isOfficial(lawDetail) && availableArticles.length > 0;
   const details = [];
 
   const validMatch = (result, item, number, lawName) => {
@@ -31,7 +32,7 @@ export async function verifyAndCorrectReviewCitations({ review, workbenchContext
     let verified = false;
     // Ranges and compound citations need separate entries; do not validate just the first number.
     if (lawName && /^\d+(?:의\d+)?$/.test(number) && !/[~,]|및|부터/.test(raw) && !basisIsMock) {
-      const candidates = (evidence.articles || []).filter(a => sameLaw(a.lawName || lawDetail?.lawName || primaryLaw, lawName));
+      const candidates = availableArticles.filter(a => sameLaw(a.lawName || lawDetail?.lawName || primaryLaw, lawName));
       const article = exactArticle(candidates, number);
       const local = article ? { ...lawDetail, ...article, lawName: article.lawName || lawDetail?.lawName || primaryLaw, article } : null;
       if (isOfficial(local)) hasOfficialBasis = true;

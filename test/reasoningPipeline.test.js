@@ -185,6 +185,8 @@ test('재검토: 공식 근거가 같으면 기존 쟁점·조사·요건을 재
   // 외부 전문가 답변(K1)이 I1의 공백을 메운다. 답을 받은 뒤의 모델은 해당 요건을 충족으로 판단한다.
   const withKnowledge = { ...workbenchContext(), learningKnowledge: [{ id: 'k-1', title: '불이익 변경 판단 기준', source: 'USER_APPROVED_HUMAN_EXPERT',
     card: { issue: '불이익 변경' }, answers: [{ questionNo: 1, position: '임금 총액이 줄면 불리한 변경이다' }] }] };
+  withKnowledge.officialEvidence.supplementalArticles = [{ ...OFFICIAL, lawName: law, fullArticleNo: '999',
+    content: '승인 답변의 인용을 공식 본문에서 추가 확인했다.', enforceDate: '20200101' }];
   const calls = [];
   globalThis.fetch = async (url, options) => {
     if (String(url).endsWith('/api/tags')) return { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }] }) };
@@ -216,13 +218,15 @@ test('재검토: 공식 근거가 같으면 기존 쟁점·조사·요건을 재
   assert.doesNotMatch(calls[0], /\[A1\.E1\]/, '이미 채워진 요건은 모델에 다시 묻지 않는다');
   assert.deepEqual(second.reasoning.reuse.rerunIssueIds.sort(), ['I1', 'I2']);
   assert.deepEqual(second.reasoning.reuse.reusedStages, ['S1', 'S2', 'S3']);
+  assert.ok(second.reasoning.evidence.some(e => e.label === '근로기준법 제999조'),
+    '추가 확인 조문을 등록하면서 원 검토의 쟁점 구조를 재사용한다');
   assert.deepEqual(second.reasoning.issues[0].assessments[0], first.reasoning.issues[0].assessments[0],
     '기존에 확정한 요건 판단을 그대로 유지한다');
   assert.deepEqual(second.reasoning.issues[1].assessments, first.reasoning.issues[1].assessments,
     '후속 쟁점의 요건 판단도 그대로 유지한다');
   const finalPrompt = calls.find(prompt => prompt.includes('[과제: 종합]'));
   assert.match(finalPrompt, /원 검토 구조에 외부 답변을 보충한 최종 검토 데이터/);
-  assert.match(finalPrompt, /"elementId":"A1.E1"/);
+  assert.match(finalPrompt, /"decidingElementIds":\["A1.E1"/);
   assert.match(finalPrompt, /"elementId":"A1.E2"/);
   assert.equal(second.reasoning.issues[0].conclusion.legal, 'APPLIES');
   const transition = second.reasoning.reuse.gapTransitions.find(t => t.previousGapId === openGap.id);

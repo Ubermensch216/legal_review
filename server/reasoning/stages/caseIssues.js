@@ -87,7 +87,7 @@ function breakCycles(issues) {
 /**
  * 모델 출력을 검증·정리한다. LLM 호출과 분리해 두어 결정적 규칙을 따로 시험할 수 있게 한다.
  */
-export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5 }) {
+export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5, preserveIssues = false }) {
   const diagnostics = { rejectedIds: [], downgradedFacts: [], mergedIssues: [], droppedIssues: [], removedDependencies: [] };
 
   // ── 사실 ──
@@ -137,7 +137,7 @@ export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5 }) {
     }
     issues.push(candidate);
   }
-  if (issues.length > maxIssues) {
+  if (!preserveIssues && issues.length > maxIssues) {
     // 우선순위가 높은 것부터 남기되 원래 순서는 유지한다.
     const keep = new Set([...issues].sort((a, b) => PRIORITIES.indexOf(a.priority) - PRIORITIES.indexOf(b.priority)).slice(0, maxIssues));
     diagnostics.droppedIssues = issues.filter(i => !keep.has(i)).map(i => i.question);
@@ -170,7 +170,8 @@ export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5 }) {
  * @param {string} args.prefix buildCommonPrefix(...).text — 이후 단계와 공유한다
  * @param {object} args.config 게이트웨이 설정(budget, model). think는 여기서 false로 고정한다.
  */
-export async function planCaseAndIssues({ registry, query, preset, prefix, provider, config, session, maxIssues = 5, forceSplit = false }) {
+export async function planCaseAndIssues({ registry, query, preset, prefix, provider, config, session, maxIssues = 5,
+  preserveIssues = false, forceSplit = false }) {
   const schema = caseIssuesSchema({ maxIssues: maxIssues + 2 }); // 병합·상한 정리 여지를 조금 둔다
   const run = (text, stage) => runStage({ stage, provider, system: REASONING_SYSTEM,
     prefix: text, task: TASK({ maxIssues }), schema, config: { ...config, think: false }, session });
@@ -178,7 +179,7 @@ export async function planCaseAndIssues({ registry, query, preset, prefix, provi
     if (forceSplit) throw new StageError('s1', '공통 입력에서 문서 조각이 제외되어 조각별 추출로 전환합니다.',
       { budgetExceeded: true });
     const { value, attempts } = await run(prefix, 's1');
-    const result = normalizeCaseIssues(value, { registry, query, maxIssues });
+    const result = normalizeCaseIssues(value, { registry, query, maxIssues, preserveIssues });
     result.diagnostics.attempts = attempts;
     return result;
   } catch (err) {
@@ -250,7 +251,7 @@ export async function planCaseAndIssues({ registry, query, preset, prefix, provi
     };
     for (const task of tasks) await processTask(task);
     if (!collected.issues.length) throw err;
-    const result = normalizeCaseIssues(collected, { registry, query, maxIssues });
+    const result = normalizeCaseIssues(collected, { registry, query, maxIssues, preserveIssues });
     result.diagnostics.splitCalls = splitCalls;
     result.diagnostics.skippedDocumentIds = [...new Set(skippedDocumentIds)];
     result.diagnostics.skippedQueryRanges = skippedQueryRanges;

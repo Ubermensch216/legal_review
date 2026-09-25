@@ -555,6 +555,7 @@ function renderCard(item) {
       ${list('예외', item.card.exceptions)}
       ${list('검토 원리', item.card.principles)}
       ${list('점검 순서', item.card.checklist)}
+      ${checks.some(c => c.status !== 'VERIFIED_EXISTENCE') ? `<div class="learning-message warn">확인되지 않은 인용이 있어 이 카드는 최종 재검토에 사용되지 않습니다. 원 검토에 저장된 공식 근거를 확인하십시오.</div>` : ''}
       ${checks.length ? `<div class="learning-field"><span>인용</span><ul>${checks.map(c =>
         `<li class="${c.status === 'VERIFIED_EXISTENCE' ? 'ok' : 'warn'}">${esc(c.lawName)} ${esc(c.articleNo)}
           — ${esc(CITATION_LABEL[c.status] || '확인 불가')}</li>`).join('')}</ul></div>` : ''}
@@ -610,6 +611,8 @@ function renderStep5(open = false) {
   const unmet = (c.questions || []).filter(q => q.state !== 'APPROVED');
   const used = state.lastReviewResult?.review?.learningReferences || [];
   const dropped = state.lastReviewResult?.review?.learningExcluded || [];
+  const impacts = state.lastReviewResult?.review?.reasoning?.knowledgeImpact || [];
+  const partial = state.lastReviewResult?.review?.reviewStatus === 'PARTIAL';
 
   return `
     <details class="panel learning-step learning-fold" data-learning-fold="step5"${foldOpen('step5', open)}>
@@ -620,10 +623,12 @@ function renderStep5(open = false) {
         ${unmet.length ? `<p class="learning-desc learning-warn">아직 충족되지 않은 질문 ${unmet.length}건:
           ${unmet.map(q => `#${q.no}`).join(', ')} — 모든 답변을 승인해야 최종 검토를 다시 실행할 수 있습니다.</p>` : ''}
         ${!hasBaseline ? '<p class="learning-desc learning-warn">원 검토의 쟁점·요건 구조가 없어 이 답변을 끼워 넣을 수 없습니다. 단계형 최초 검토를 다시 완료하십시오.</p>' : ''}
-        ${used.length ? `<div class="learning-message notice">승인된 외부 참고 지식 ${used.length}건을 반영하여 최종 검토를 완료했습니다.
+        ${used.length ? `<div class="learning-message ${partial ? 'warn' : 'notice'}">승인된 외부 참고 지식 ${used.length}건을 반영하여 ${partial ? '부분 재검토를 진행했습니다. 제외된 카드와 검토 제한 사항을 확인하십시오' : '최종 검토를 완료했습니다'}.
           법률검토의견서 상단의 ‘외부 반영’ 표시와 검토 구분을 확인하십시오.</div>` : ''}
         ${used.length ? `<p class="learning-desc">직전 검토에 실린 지식 ${used.length}건:
           ${used.map(r => `${esc(r.title)} (${r.source === 'USER_APPROVED_HUMAN_EXPERT' ? '외부 전문가' : '외부 AI'})`).join(' · ')}</p>` : ''}
+        ${impacts.length ? `<div class="learning-message notice">영향을 받은 판단
+          <ul>${impacts.map(item => `<li>${esc(item.usedFor)} — ${item.officiallyVerified ? '공식 근거 연결 확인' : '공식 근거 추가 확인 필요'}</li>`).join('')}</ul></div>` : ''}
         ${dropped.length ? `<div class="learning-message warn">직전 검토에서 적용하지 않은 지식 ${dropped.length}건
           <ul class="learning-dropped">${dropped.map(d =>
             `<li>${esc(d.title || '(제목 없음)')} — ${esc(d.message)}</li>`).join('')}</ul></div>` : ''}
@@ -679,7 +684,7 @@ function renderReviewIssues() {
       <h3>외부 전문가 질의 사항 <span class="learning-issue-count">${questions.length}건</span></h3></div></div>
     <div class="panel-body">
       <ul class="learning-review-issue-list">${questions.map(issue => `<li class="learning-review-issue ${issue.kind}">
-        <span class="learning-issue-group">${esc(issue.group)}</span><span>${esc(issue.detail)}</span></li>`).join('')}</ul>
+        <span class="learning-issue-group">${esc(issue.group)}</span><span>${esc(issue.displayDetail || issue.detail)}</span></li>`).join('')}</ul>
     </div>
   </section>`;
 }

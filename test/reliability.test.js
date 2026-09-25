@@ -283,6 +283,17 @@ test('워크벤치 확보 통계는 재정렬 전 전체 후보와 실패 경고
   assert.equal(result.meta.dataIntegrity.isFallback, false, '본문을 확보한 판례가 있으면 다른 조회 실패만으로 제한 결과가 되지 않는다');
 });
 
+test('내보내기 경고와 자동 본문에서는 내부 조문 ID를 설명으로 표시한다', () => {
+  const data = { review: { draftOpinion: '검토 근거 [A23]을 확인하십시오.',
+    warnings: ['요건 분해 미검증 조문: A23'],
+    reasoning: { evidence: [{ id: 'A23', label: '민법 제673조', title: '완성전의 도급인의 해제권',
+      preview: '도급인은 일이 완성되기 전에는 손해를 배상하고 계약을 해제할 수 있다.' }] } } };
+  const output = reportText(data);
+  assert.match(output, /민법 제673조.*완성전의 도급인의 해제권/);
+  assert.doesNotMatch(output, /\bA23\b/);
+  assert.doesNotMatch(reportText(data, '편집한 의견 [A23]'), /\bA23\b/);
+});
+
 test('공식 XML의 장 제목을 같은 번호의 실제 조문으로 오인하지 않는다', () => {
   const detail = parseLawDetail(`<법령><기본정보><법령ID>667</법령ID><법령명_한글>약관의 규제에 관한 법률</법령명_한글></기본정보><조문>
     <조문단위><조문번호>6</조문번호><조문여부>전문</조문여부><조문내용>제2장 불공정약관조항</조문내용></조문단위>

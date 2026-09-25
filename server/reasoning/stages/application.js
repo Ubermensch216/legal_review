@@ -7,6 +7,7 @@
 import { runStage, StageError } from '../stageRunner.js';
 import { REASONING_SYSTEM } from '../prompts.js';
 import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from '../verify/conclusion.js';
+import { stripFalseDocumentAbsence } from '../contractReview.js';
 
 export const ELEMENT_STATUS = ['SATISFIED', 'NOT_SATISFIED', 'PARTIALLY_SATISFIED', 'DISPUTED', 'UNKNOWN'];
 export const PROOF = ['SUFFICIENT', 'INSUFFICIENT', 'CONFLICTING', 'NO_EVIDENCE'];
@@ -41,20 +42,21 @@ function issueBlock({ issue, elements, evidenceText, omittedEvidence, adverseIds
   ].filter(Boolean).join('\n\n');
 }
 
-const TASK = withReasoning => `[과제: 요건별 포섭]
+const TASK = (withReasoning, contractMode = false) => `[과제: 요건별 포섭]
 ${withReasoning ? '먼저 reasoning에 판단 과정을 200자 이내로 적는다.\n' : ''}1. assessments: [판단할 요건] 각각에 대해
    - status: SATISFIED / NOT_SATISFIED / PARTIALLY_SATISFIED / DISPUTED / UNKNOWN. 자료로 판단할 수 없으면 UNKNOWN이다.
    - proof: 그 판단을 뒷받침하는 사실이 원문으로 입증되는지 — SUFFICIENT / INSUFFICIENT / CONFLICTING / NO_EVIDENCE.
      법리상 충족 여부(status)와 입증 여부(proof)는 따로 판단한다.
    - factIds / contraryFactIds: 요건을 뒷받침하는 사실과 반대되는 사실의 ID.
    - evidenceIds: 판단의 법적 근거 ID. 외부 참고 지식(K…)만으로 판단하지 않는다.
+${contractMode ? '   - documentSupportIds: 계약서 문언을 뒷받침하는 D ID. 법적 근거인 evidenceIds와 구별한다. 계약에 권한이 적혀 있다는 사실과 실제 행사 사실을 구별한다.\n' : ''}
    - analysis: 120자 이내. openQuestion: 자료로는 답할 수 없어 판단을 막는 법리 질문이 있으면 한 문장(120자 이내), 없으면 빈 문자열.
 2. precedents: 근거 원문에 있는 판례·해석례 각각이 이 사안과 결정적 사실에서 같은지(ANALOGOUS) 다른지(DISTINGUISH), 무관한지(NOT_RELEVANT),
    그리고 이 쟁점에서 어느 쪽을 지지하는지(SUPPORTS: 요건 충족 쪽 / OPPOSES / NEUTRAL)와 결정적 차이·공통점을 적는다.
 3. counter: 가장 강한 반대 논리(반대 근거 후보를 먼저 검토)와 그 근거 ID, 그에 대한 응답. 응답할 수 없으면 response를 빈 문자열로 둔다.
 4. narrative: 쟁점 판단을 400자 이내로 쓴다. 법적 주장마다 [ID]를 붙인다. 판단할 수 없는 부분은 유보한다고 쓴다.`;
 
-export function applicationSchema({ elementIds, evidenceIds, factIds, authorityIds, withReasoning }) {
+export function applicationSchema({ elementIds, evidenceIds, documentIds = [], factIds, authorityIds, withReasoning }) {
   const idList = (values, max) => values.length
     ? { type: 'array', maxItems: max, items: { type: 'string', enum: values } }
     : { type: 'array', maxItems: 0, items: { type: 'string' } };
@@ -64,7 +66,8 @@ export function applicationSchema({ elementIds, evidenceIds, factIds, authorityI
       required: ['elementId', 'status', 'proof', 'factIds', 'contraryFactIds', 'evidenceIds', 'analysis', 'openQuestion'],
       properties: { elementId: { type: 'string', enum: elementIds }, status: { type: 'string', enum: ELEMENT_STATUS },
         proof: { type: 'string', enum: PROOF }, factIds: idList(factIds, 6), contraryFactIds: idList(factIds, 4),
-        evidenceIds: idList(evidenceIds, 6), analysis: { type: 'string', maxLength: 120 }, openQuestion: { type: 'string', maxLength: 120 } } } },
+        evidenceIds: idList(evidenceIds, 6), documentSupportIds: idList(documentIds, 6),
+        analysis: { type: 'string', maxLength: 120 }, openQuestion: { type: 'string', maxLength: 120 } } } },
     precedents: { type: 'array', maxItems: authorityIds.length, items: { type: 'object', additionalProperties: false,
       required: ['id', 'relation', 'stance', 'decisiveFactor'],
       properties: { id: authorityIds.length ? { type: 'string', enum: authorityIds } : { type: 'string' },
@@ -109,6 +112,7 @@ function mergeApplications(values, elements) {
       proof: statuses.length > 1 ? 'CONFLICTING' : material.some(a => a.proof === 'CONFLICTING') ? 'CONFLICTING' : first.proof,
       factIds: unique(rows.flatMap(a => a.factIds || [])), contraryFactIds: unique(rows.flatMap(a => a.contraryFactIds || [])),
       evidenceIds: unique(rows.flatMap(a => a.evidenceIds || [])),
+      documentSupportIds: unique(rows.flatMap(a => a.documentSupportIds || [])),
       analysis: statuses.length > 1 ? '근거 묶음 사이 판단 불일치' : first.analysis,
       openQuestion: statuses.length > 1 ? '상충하는 근거의 적용 관계 확인 필요' : first.openQuestion };
   }).filter(Boolean);
@@ -119,11 +123,21 @@ function mergeApplications(values, elements) {
   reasoning: values.map(v => v.reasoning || '').filter(Boolean).join('\n') };
 }
 
+function validateContractCounter(counter, registry) {
+  if (!counter?.position) return null;
+  const position = String(counter.position);
+  if (/자료로 확인되지|추측하지 않|모른다고 표시|시스템|프롬프트|검토 원칙|자료 부족|당사자.{0,8}합의.{0,15}유효할 수도/.test(position)) return null;
+  const basisIds = (counter.evidenceIds || []).filter(id => registry.get(id)?.official && registry.get(id)?.inForce);
+  if (!basisIds.length) return null;
+  return { ...counter, basisIds, basisType: 'AUTHORITY' };
+}
+
 /**
  * 한 쟁점의 포섭을 실행한다. 실패해도 예외를 올리지 않고 쟁점을 FAILED로 표시해 돌려준다.
  * 한 쟁점의 실패가 다른 쟁점 결과를 버리게 하지 않기 위함이다.
  */
-export async function applyIssue({ issue, elements, research, registry, facts, runPrefix, predecessors = [], provider, config, session }) {
+export async function applyIssue({ issue, elements, research, registry, facts, runPrefix, predecessors = [], provider, config, session,
+  contractMode = false }) {
   const factsById = new Map(facts.map(f => [f.id, f]));
   const evidenceIds = [...new Set([...research.evidenceIds, ...research.adverseCandidateIds])];
   const withReasoning = config.think !== true;
@@ -181,13 +195,14 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
     const authorityIds = [...new Set(batchEvidence.map(id => registry.get(id)).filter(e => /^(PRECEDENT|INTERPRETATION)/.test(e.kind))
       .map(e => e.parentId || e.id))];
     const schema = applicationSchema({ elementIds: groupElements.map(e => e.id), evidenceIds: batchEvidence,
+      documentIds: rendered.included.filter(id => registry.get(id)?.kind.startsWith('DOCUMENT')),
       factIds: facts.map(f => f.id), authorityIds, withReasoning });
     try {
       const result = await runStage({ stage: groupIndex || batch ? `s4:${issue.id}:part:${groupIndex + 1}:${batch + 1}` : `s4:${issue.id}`,
         provider, system: REASONING_SYSTEM,
         prefix: `${runPrefix}\n\n${issueBlock({ issue, elements: groupElements, evidenceText: rendered.text, omittedEvidence: rendered.omitted,
           adverseIds: research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId)), predecessors })}`,
-        task: TASK(withReasoning), schema, config, session });
+        task: TASK(withReasoning, contractMode), schema, config, session });
       values.push(result.value); attempts += result.attempts;
       included.push(...rendered.included);
       batchEvidence.forEach(id => allowedEvidence.add(id));
@@ -226,17 +241,44 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   const assessments = elements.map(e => {
     const raw = given.get(e.id);
     if (!raw) { warnings.push(`요건 ${e.id} 판단 누락 — UNKNOWN으로 처리`); return { elementId: e.id, status: 'UNKNOWN', proof: 'NO_EVIDENCE', factIds: [], contraryFactIds: [], evidenceIds: [], analysis: '판단 누락', openQuestion: '' }; }
-    const adjusted = applyFactProvenance({ ...raw, openQuestion: String(raw.openQuestion || '').trim() }, factsById);
+    const documentSupportIds = [...new Set([...(raw.documentSupportIds || []),
+      ...(raw.factIds || []).map(id => factsById.get(id)?.docRef).filter(id => id?.startsWith('D'))])]
+      .filter(id => research.documentIds.includes(registry.get(id)?.parentId || id));
+    const sourceIds = contractMode ? (e.sourceIds || []).filter(id => registry.get(id)?.official && registry.get(id)?.inForce) : [];
+    const sourceArticles = new Set(sourceIds.map(id => registry.get(id)?.parentId || id));
+    const evidenceIds = [...new Set([...sourceIds, ...(raw.evidenceIds || []).filter(id => {
+      const entry = registry.get(id);
+      return !contractMode || !/^(ARTICLE|ORDINANCE_ARTICLE)/.test(entry?.kind || '')
+        || !sourceArticles.size || sourceArticles.has(entry.parentId || id);
+    })])];
+    const adjusted = applyFactProvenance({ ...raw, evidenceIds, documentSupportIds,
+      authorityEvidenceIds: evidenceIds.filter(id => registry.get(id)?.official && registry.get(id)?.inForce),
+      openQuestion: String(raw.openQuestion || '').trim() }, factsById);
+    if (contractMode) {
+      for (const field of ['analysis', 'openQuestion']) {
+        const cleaned = stripFalseDocumentAbsence(adjusted[field], registry);
+        if (cleaned.removed) { adjusted[field] = cleaned.text; warnings.push(`요건 ${e.id} 서술에서 존재하는 문서의 부재 주장 제거`); }
+      }
+    }
     const official = adjusted.evidenceIds.some(id => registry.get(id)?.official);
     return { ...adjusted, knowledgeOnly: adjusted.evidenceIds.length > 0 && !official };
   });
 
   let conclusion = computeIssueConclusion(elements, assessments, predecessors);
+  if (contractMode && !facts.some(f => f.sourceType !== 'DOCUMENT' && f.quoteVerified && f.status === 'CONFIRMED')
+      && conclusion.legal !== 'CONDITIONAL') {
+    conclusion = { ...conclusion, ifResolved: conclusion.legal, legal: 'CONDITIONAL',
+      reasons: [...(conclusion.reasons || []), '계약 문언 외의 적용 사실과 선결 전제는 확인되지 않음'] };
+  }
   if (base.omittedEvidence.length || warnings.some(w => w.includes('판단 실패')) || elements.some(e => e.fallback)) {
     conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
   }
   const allowed = new Set([...allowedEvidence, ...facts.map(f => f.id), ...elements.map(e => e.id), ...research.documentIds]);
   const narrative = cleanNarrative(value.narrative, allowed);
+  if (contractMode) {
+    const cleaned = stripFalseDocumentAbsence(narrative.text, registry);
+    if (cleaned.removed) { narrative.text = cleaned.text; warnings.push('서술에서 존재하는 문서의 부재 주장 제거'); }
+  }
   if (narrative.removed.length) warnings.push(`서술에서 이 쟁점의 근거가 아닌 표기 제거: ${narrative.removed.join(', ')}`);
   const conflicts = narrativeConflicts(narrative.text, conclusion);
   if (conflicts.length) warnings.push(`서술이 판단 유보 결론과 달리 단정합니다: "${conflicts[0]}" — 결론 표를 따르십시오.`);
@@ -249,11 +291,13 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   if (elements.some(e => e.fallback)) gateReasons.push('골격으로 대체한 미검증 요건이 포함됨');
   if (!assessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official))) gateReasons.push('공식 근거에 기댄 요건 판단이 없음');
   if (decidingAssessments.some(a => a.knowledgeOnly)) gateReasons.push('결론을 좌우한 요건이 외부 참고 지식에만 기댐');
-  if (value.counter?.position && !value.counter.response) gateReasons.push('가장 강한 반대 논리에 대한 응답 없음');
+  if (warnings.some(w => w.includes('존재하는 문서의 부재 주장'))) gateReasons.push('계약 원문과 충돌하는 서술을 제거함');
+  const validCounter = contractMode ? validateContractCounter(value.counter, registry) : value.counter;
+  if (validCounter?.position && !validCounter.response) gateReasons.push('가장 강한 반대 논리에 대한 응답 없음');
 
   return { ...base, stageStatus: warnings.some(w => w.includes('판단 실패')) || base.omittedEvidence.length || elements.some(e => e.fallback) ? 'PARTIAL' : 'OK',
     attempts, reasoning: value.reasoning || null, assessments,
-    precedents: value.precedents, counter: value.counter, narrative: narrative.text,
+    precedents: value.precedents, counter: validCounter, narrative: narrative.text,
     openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),
     conclusion, gateReasons, warnings };
 }

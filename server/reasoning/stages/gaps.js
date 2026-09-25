@@ -26,7 +26,8 @@ const LEGAL_QUESTION = /해석|법리|법적|법률상|판례|조문|법령|효�
  * @param {string[]} args.unknownFacts S1이 찾은 자료 밖 사실
  * @param {string[]} args.collectionWarnings S2 조회 실패 경고
  */
-export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts = [], collectionWarnings = [] }) {
+export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts = [], collectionWarnings = [],
+  contractMode = false, registry = null }) {
   const gaps = [];
   const seen = new Set();
   const add = gap => {
@@ -73,7 +74,8 @@ export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts =
           question: `'${clip(element?.text, 120)}' 요건은 어떤 기준으로 판단하는가? (쟁점: ${clip(issue.question, 120)})` });
       }
       // 법리 판단과 별개로 입증이 모자라면 사용자에게 사실 확인을 요청한다.
-      if ((proofMissing || factualQuestion) && a.status !== 'NOT_SATISFIED') {
+      const genericDocumentGap = contractMode && issue.documentIds?.length && !factualQuestion;
+      if ((proofMissing || factualQuestion) && a.status !== 'NOT_SATISFIED' && !genericDocumentGap) {
         add({ ...base(a.elementId), type: 'FACT_UNKNOWN',
           question: factualQuestion
             ? clip(a.openQuestion, 300)
@@ -95,7 +97,10 @@ export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts =
     add({ issueId: w.issueId, elementId: w.elementId, changesOutcome: true, priority: 3, type: 'MISSING_AUTHORITY',
       question: clip(`인용 근거가 다음 판단을 뒷받침하지 않습니다. 이를 뒷받침하거나 반박하는 근거는 무엇인가? — ${w.text}`, 300) });
   }
-  for (const fact of unknownFacts) add({ issueId: null, elementId: null, changesOutcome: false, priority: 0, type: 'FACT_UNKNOWN', question: clip(fact, 300) });
+  for (const fact of unknownFacts) {
+    if (contractMode && /D\d+/.test(fact) && [...fact.matchAll(/D\d+(?:\.\d+)?/g)].some(m => registry?.get(m[0]))) continue;
+    add({ issueId: null, elementId: null, changesOutcome: false, priority: 0, type: 'FACT_UNKNOWN', question: clip(fact, 300) });
+  }
   for (const warning of collectionWarnings) add({ issueId: null, elementId: null, changesOutcome: false, priority: 0, type: 'COLLECTION_FAILURE', question: clip(warning, 300) });
 
   gaps.sort((a, b) => b.priority - a.priority);

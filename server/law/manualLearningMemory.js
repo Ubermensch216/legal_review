@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { articleText, containsCitation, inForceAt, isOfficial, normalizedLawName, today } from './evidence.js';
 import { normalizeArticleNo } from './lawArticleRef.js';
+import { getLawArticle } from './lawApiClient.js';
 import { getLearningStore } from './manualLearningStore.js';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical)
@@ -14,7 +15,31 @@ export function allCollectedArticles(context) {
     source: a.source || e.lawDetail?.source, isMockData: a.isMockData || e.lawDetail?.isMockData }));
   const cascading = Object.values(e.cascadingHierarchy || {}).filter(isOfficial).flatMap(law =>
     (law.articles || []).map(a => ({ ...a, lawName: law.lawName, source: law.source, isMockData: a.isMockData || law.isMockData })));
-  return [...direct, ...cascading, ...(e.ordinanceArticles || [])].filter(isOfficial);
+  return [...direct, ...cascading, ...(e.ordinanceArticles || []), ...(e.supplementalArticles || [])].filter(isOfficial);
+}
+
+/** 원 검토에 없던 승인 답변의 인용만 공식 API로 보충한다. 원본 근거 해시는 그대로 둔다. */
+export async function resolveLearningCitations(context, approvedItems, lookup = getLawArticle) {
+  if (context.meta?.targetDate) return [];
+  const citations = [...new Map((approvedItems || []).flatMap(item => item.card?.citations || [])
+    .map(c => [`${normalizedLawName(c.lawName)}|${normalizeArticleNo(c.articleNo)}`, c])).values()];
+  const supplements = [];
+  for (const citation of citations.slice(0, 40)) {
+    if (checkLearningCitations({ citations: [citation] }, { ...context, officialEvidence: {
+      ...context.officialEvidence, supplementalArticles: [...(context.officialEvidence?.supplementalArticles || []), ...supplements]
+    } })[0]?.status === 'VERIFIED_EXISTENCE') continue;
+    if (/[~,]|및|부터/.test(citation.articleNo)) continue;
+    try {
+      const found = await lookup(citation.lawName, citation.articleNo);
+      if (!isOfficial(found) || normalizedLawName(found.lawName) !== normalizedLawName(citation.lawName)
+        || normalizeArticleNo(found.article?.fullArticleNo || found.article?.articleNo) !== normalizeArticleNo(citation.articleNo)) continue;
+      const article = { ...found.article, lawName: found.lawName, source: found.source,
+        isMockData: Boolean(found.isMockData), enforceDate: found.enforceDate };
+      if (!inForceAt(article, context.meta?.asOfDate || today()) || !containsCitation(article, citation.articleNo)) continue;
+      supplements.push(article);
+    } catch { /* 조회 실패는 검증 실패로 남기며 해당 인용을 승인 근거로 쓰지 않는다. */ }
+  }
+  return supplements;
 }
 
 export function officialLearningArticles(context) {
@@ -86,8 +111,8 @@ export const EXCLUSION_REASON = Object.freeze({
 });
 
 /** 왜 제외되었는지 남긴다. 조용히 빠지면 사용자는 "답변을 다 넣었는데 반영이 안 됐다"고만 느낀다. */
-const excluded = (item, reason) => ({ id: item.id, title: item.card?.title || '', reason,
-  message: EXCLUSION_REASON[reason], inCase: Boolean(item.inCase) });
+const excluded = (item, reason, detail = '') => ({ id: item.id, title: item.card?.title || '', reason,
+  message: `${EXCLUSION_REASON[reason]}${detail ? ` 확인 불가: ${detail}.` : ''}`, inCase: Boolean(item.inCase) });
 
 /**
  * 승인된 지식 중 이번 검토에 쓸 수 있는 것을 고른다.
@@ -116,7 +141,9 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
     }
     const citations = checkLearningCitations(item.card, context);
     if (!citations.length || !citations.every(c => c.status === 'VERIFIED_EXISTENCE')) {
-      drops.push(excluded(tagged, 'CITATION_UNVERIFIED')); continue;
+      const invalid = citations.filter(c => c.status !== 'VERIFIED_EXISTENCE')
+        .map(c => `${c.lawName} ${c.articleNo}`).join(', ');
+      drops.push(excluded(tagged, 'CITATION_UNVERIFIED', invalid)); continue;
     }
     // 산문에 끼워 넣은 사건번호도 확인되지 않으면 쓰지 않는다. 조문만 맞고 판례가 지어낸 것이면
     // 그 지식은 근거 없는 법리를 검토에 실어 나른다.
@@ -164,4 +191,17 @@ export function knowledgeAnchors(usedItems, sourceHistoryId, store = getLearning
     if (issues.length) knowledgeIssues.set(item.id, issues);
   }
   return { knowledgeIssues, knowledgeTargets, rerunIssueIds: [...new Set([...knowledgeIssues.values()].flat())], answersById };
+}
+
+/** 제외된 카드가 답한 질문을 다른 사용 가능 카드도 모두 답했는지 확인한다. */
+export function excludedQuestionsCovered(usedItems, excludedItems, store = getLearningStore()) {
+  const covered = new Set((usedItems || []).flatMap(item => {
+    const saved = store.get(item.id);
+    return (saved?.answeredQuestions || []).map(no => `${saved.parentId}:${no}`);
+  }));
+  return (excludedItems || []).every(item => {
+    const saved = store.get(item.id);
+    return Boolean(saved?.answeredQuestions?.length)
+      && saved.answeredQuestions.every(no => covered.has(`${saved.parentId}:${no}`));
+  });
 }

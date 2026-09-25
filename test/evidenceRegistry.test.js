@@ -110,6 +110,9 @@ test('색인은 최상위 항목 한 줄씩이며 하위 ID를 함께 알려주�
   const small = r.renderIndex({ maxChars: 200 });
   assert.ok(small.omitted > 0);
   assert.deepEqual(JSON.parse(JSON.stringify(r)).find(e => e.id === 'A1').textChars > 0, true, '직렬화에는 원문 대신 길이만 남긴다');
+  const display = r.toJSON().find(e => e.id === 'A1');
+  assert.equal(display.text, undefined);
+  assert.match(display.preview, /지방자치단체의 장은 행정재산/);
 });
 
 test('번호·단서 분해 보조 함수', () => {

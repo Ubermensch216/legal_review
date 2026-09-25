@@ -4,6 +4,7 @@ import { openArticleViewer, openPrecedentViewer } from './documentViewer.js';
 import { openStudio } from './documentStudio.js';
 import { setLearningHistory, resetLearningTab } from './learningTab.js';
 import { renderReasoningOpinion } from './reasoningView.js';
+import { expandReferences, explainDiagnostic } from './learningIssues.js';
 
 export function initWorkbenchTabs() {
   const tabs = document.querySelectorAll('.wb-tab');
@@ -32,7 +33,8 @@ export function initWorkbenchTabs() {
   if (btnTabStudio) {
     btnTabStudio.addEventListener('click', () => {
       if (state.lastReviewResult && state.lastReviewResult.review) {
-        const title = `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
+        const title = state.lastReviewResult.meta?.preset === 'contract_risk'
+          ? '계약서 법률검토의견서' : `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
         openStudio(state.lastReviewResult.review.draftOpinion, title, state.lastReviewResult);
       }
     });
@@ -70,7 +72,8 @@ async function downloadQuickReport(format) {
     return;
   }
 
-  const title = `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
+  const title = state.lastReviewResult.meta?.preset === 'contract_risk'
+    ? '계약서 법률검토의견서' : `${state.lastReviewResult.meta?.primaryLawName || '법령'} 검토의견서`;
   const content = state.lastReviewResult.review.draftOpinion || state.lastReviewResult.review.legalOpinion || '';
 
   try {
@@ -172,7 +175,8 @@ export function renderWorkbench(data) {
     externalAiCount: learningReferences.filter(item => item.source !== 'USER_APPROVED_HUMAN_EXPERT').length
   };
   window.__reliability = data.reliability
-    ? { ...data.reliability, externalKnowledge }
+    ? { ...data.reliability, externalKnowledge,
+      warnings: (data.reliability.warnings || []).map(w => explainDiagnostic(w, data)) }
     : { externalKnowledge };
 
   const isFallback = Boolean(data.reliability && data.reliability.isFallback);
@@ -248,7 +252,7 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   const lawName = meta?.primaryLawName || '관련 법령';
   const query = meta?.query || '요청 사안에 관한 법적 검토';
-  const opinionText = cleanText(review.legalOpinion || review.draftOpinion || '');
+  const opinionText = cleanText(expandReferences(review.legalOpinion || review.draftOpinion || '', { review }));
 
   // 0. 조문 실존성 검증 뱃지 및 폴백 경고
   const badgeContainer = document.getElementById('draft-factuality-badge');
@@ -308,7 +312,7 @@ function renderDraftTab(review, officialEvidence, meta) {
     summaryEl.innerHTML = `
       <div class="summary-highlight-card">
         ${usedLabels.length ? `<div><strong>검토에 사용한 자료:</strong> ${escapeHtml(usedLabels.join(' · '))}</div>` : ''}
-        ${escapeHtml(cleanText(review.summary))}
+        ${escapeHtml(cleanText(expandReferences(review.summary, { review })))}
       </div>
     `;
   }
@@ -636,7 +640,7 @@ function renderDraftTab(review, officialEvidence, meta) {
  */
 /** 단일 호출 검토의 의견 본문을 문단 카드로 보여준다. */
 function legacyOpinionHtml(review) {
-  const opinionText = cleanText(review.legalOpinion || '');
+  const opinionText = cleanText(expandReferences(review.legalOpinion || '', { review }));
   const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
 
   let opinionCardsHtml = '<div class="opinion-section-block">';

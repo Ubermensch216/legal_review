@@ -6,11 +6,17 @@
 import { runStage, StageError } from '../stageRunner.js';
 import { PROMPT_VERSION, REASONING_SYSTEM } from '../prompts.js';
 import { getStageCache, stageCacheKey } from '../stageCache.js';
+import { contractSeedEvidenceIds } from '../contractReview.js';
 
 const ARTICLE_KINDS = new Set(['ARTICLE', 'ORDINANCE_ARTICLE']);
 const BATCH = 1;           // 조문 사이에 사건 전체 입력을 반복하지 않는다.
 const UNIT_BATCH = 4;      // 긴 조문은 항·호·단서 묶음별로 분해한다.
 const MAX_ELEMENTS = 8;    // 한 호출의 출력 상한. 조문 전체 결과의 상한은 아니다.
+const provenanceOnly = text => {
+  const value = String(text || '').trim();
+  return /^(?:출처(?:를)?\s*확인(?:하지 못한 자료| 필요)?|공식 근거(?:를)?\s*확인 필요|자료 확인 필요)\s*[·:—-]*\s*$/.test(value)
+    || (/출처/.test(value) && /확인/.test(value) && value.length < 100);
+};
 
 export const elementsSchema = {
   type: 'object', additionalProperties: false, required: ['articles'],
@@ -37,7 +43,7 @@ ${articlesText}
 export function skeletonElements(registry, articleId) {
   const units = registry.children(articleId).filter(u => u.kind === 'ARTICLE_UNIT' || u.kind === 'ARTICLE_PROVISO');
   const source = units.length ? units : [registry.get(articleId)];
-  return source.slice(0, MAX_ELEMENTS).map((u, i) => ({ id: `${articleId}.E${i + 1}`, text: String(u.text).slice(0, 160),
+  return source.filter(u => !provenanceOnly(u.text)).slice(0, MAX_ELEMENTS).map((u, i) => ({ id: `${articleId}.E${i + 1}`, text: String(u.text).slice(0, 160),
     mandatory: !u.isException, isException: Boolean(u.isException), sourceIds: [u.id] }));
 }
 
@@ -82,13 +88,13 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
     if (!answer?.elements?.length) throw new StageError('s3', `${id} 응답에 요건이 없습니다.`);
     const elements = answer.elements.map(e => ({ text: String(e.text).trim(), mandatory: e.mandatory,
       isException: e.isException, sourceIds: e.sourceIds.filter(s => own.has(s)) }))
-      .filter(e => e.text && e.sourceIds.length);
+      .filter(e => e.text && e.sourceIds.length && !provenanceOnly(e.text));
     if (!elements.length) throw new StageError('s3', `${id} 응답에 유효한 출처 ID가 없습니다.`);
     const covered = new Set(elements.flatMap(e => e.sourceIds));
     const missing = fragments.filter(f => f.text.trim() && !covered.has(f.id));
     if (missing.length) {
       warnings.push(`조문 ${id}의 원문 단위 ${missing.map(f => f.id).join(', ')}가 요건 응답에서 누락되어 골격 요건으로 보충했습니다.`);
-      elements.push(...missing.map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
+        elements.push(...missing.filter(f => !provenanceOnly(f.text)).map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
         isException: f.isException, sourceIds: [f.id], fallback: true })));
     }
     return { elements, burden: String(answer.burden || '').trim(), partial: Boolean(missing.length) };
@@ -110,7 +116,7 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
       }
     }
     warnings.push(`조문 요건 분해 실패(${id}: ${fragments.map(f => f.id).join(', ')}) — 골격 요건으로 대체: ${err.message}`);
-    return { elements: fragments.map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
+    return { elements: fragments.filter(f => !provenanceOnly(f.text)).map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
       isException: f.isException, sourceIds: [f.id], fallback: true })), burden: '', partial: true };
   }
 }
@@ -152,7 +158,10 @@ export async function decomposeArticles({ articleIds, registry, prefix, provider
  * 조문 전체(A1)를 가리켰으면 조문의 요건 전부를 싣는다.
  */
 export function selectIssueElements(issue, decomposed, registry) {
-  const referenced = issue.evidenceIds.map(id => registry.get(id)).filter(Boolean);
+  const allowedArticles = new Set(issue.contractKinds?.length
+    ? contractSeedEvidenceIds(issue.contractKinds, registry) : []);
+  const referenced = issue.evidenceIds.map(id => registry.get(id)).filter(entry => entry
+    && (!allowedArticles.size || allowedArticles.has(entry.parentId || entry.id)));
   const wanted = new Map();
   for (const entry of referenced) {
     const articleId = entry.parentId && ARTICLE_KINDS.has(registry.get(entry.parentId)?.kind) ? entry.parentId : entry.id;
@@ -171,5 +180,11 @@ export function selectIssueElements(issue, decomposed, registry) {
       if (!units.size || element.sourceIds.some(s => units.has(s) || s === articleId)) selected.push(element);
     }
   }
-  return selected;
+  const seen = new Set();
+  return selected.filter(element => {
+    const key = String(element.text || '').replace(/\s+/g, '').replace(/[.,，。]/g, '');
+    if (!key || provenanceOnly(element.text) || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

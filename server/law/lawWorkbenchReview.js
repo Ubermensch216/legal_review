@@ -6,9 +6,51 @@ import { PipelineError, pipelineEnabled, runReasoningPipeline } from '../reasoni
 import { ENV } from '../env.js';
 import { maskLawSecrets } from './lawErrors.js';
 import { verifyAndCorrectReviewCitations } from './factualityVerifier.js';
-import { findLearningKnowledge, knowledgeAnchors } from './manualLearningMemory.js';
+import { excludedQuestionsCovered, findLearningKnowledge, knowledgeAnchors, resolveLearningCitations } from './manualLearningMemory.js';
 import { getHistoryById } from './lawHistoryDb.js';
+import { getLearningStore } from './manualLearningStore.js';
 import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
+import { buildEvidenceRegistry } from '../reasoning/evidenceRegistry.js';
+import { buildContractInventory, stripFalseDocumentAbsence } from '../reasoning/contractReview.js';
+
+function includeContractDocumentFindings(review, { preset, documentText, query, workbenchContext }) {
+  if (preset !== 'contract_risk' || !documentText || review.contractFindings) return review;
+  const registry = buildEvidenceRegistry(workbenchContext, { documentText });
+  const clean = value => stripFalseDocumentAbsence(value, registry).text;
+  const inventory = buildContractInventory(registry, query);
+  const findings = inventory.findings.map((finding, index) => ({
+    issueId: `C${index + 1}`, kind: finding.kind, label: finding.label,
+    analysisMode: 'HYBRID', documentSupportIds: finding.documentSupportIds, documentFinding: finding.sourceText,
+    sourceSpans: finding.sourceSpans, facialRisk: finding.facialRisk, legalValidity: 'NOT_REVIEWED',
+    authorityEvidenceIds: [], additionalFactsRequired: finding.additionalFactsRequired,
+    facialAssessment: { risk: finding.facialRisk, finding: finding.sourceText,
+      documentSupportIds: finding.documentSupportIds },
+    legalAssessment: { status: 'VALIDITY_DEPENDS_ON_FACTS', authorityEvidenceIds: [] },
+    ...(finding.ipDimensions ? { ipDimensions: finding.ipDimensions } : {})
+  }));
+  const lines = findings.map(f => `- ${f.label} (${f.facialRisk}, ${f.documentSupportIds.join(', ')}): ${f.documentFinding}`);
+  const missing = inventory.missingClauseAdditions.map(m => `- ${m.title}: ${m.reason} 권고 추가 문안: ${m.suggestedText}`);
+  const section = ['## 계약 문언상 위험',
+    '아래 항목은 계약 원문에서 확인한 협상·운영상 위험입니다. 개별 조항의 법적 효력은 적용 법체계와 추가 사실에 따라 별도 판단해야 합니다.',
+    ...lines, '## 적용 법체계 선결 사항',
+    `계약 성격: ${inventory.regime.contractNature.candidates.join(' / ')} 중 추가 판단 필요`,
+    `약관성: ${inventory.regime.termsRegulation.needsFacts.join(' / ')} 확인 필요`,
+    `발주기관 유형: ${inventory.regime.publicProcurement.institutionType} · ${inventory.regime.publicProcurement.needsFacts.join(' / ')}`,
+    ...(missing.length ? ['## 누락 조항 검토', ...missing] : [])].join('\n\n');
+  return { ...review, summary: clean(review.summary), facts: clean(review.facts),
+    coreIssues: (review.coreIssues || []).map(clean),
+    contractFindings: findings, missingClauseAdditions: inventory.missingClauseAdditions,
+    missingClauseAudit: inventory.missingClauseAudit,
+    contractRegime: inventory.regime,
+    risks: [...new Map([...(review.risks || []), ...findings.map(f => ({ level: f.facialRisk, title: f.label,
+      description: `${f.documentSupportIds.join(', ')} 계약 문언에서 확인된 위험`, issueId: f.issueId }))]
+      .map(r => [`${r.title}|${r.level}`, { ...r, title: clean(r.title), description: clean(r.description) }])).values()],
+    redlineDiffs: (review.redlineDiffs || []).map(d => ({ ...d, reason: clean(d.reason) })),
+    furtherChecks: [...new Set([...(review.furtherChecks || []), ...findings.flatMap(f => f.additionalFactsRequired)]
+      .map(clean).filter(Boolean))],
+    legalOpinion: clean([review.legalOpinion, section].filter(Boolean).join('\n\n')),
+    draftOpinion: clean([review.draftOpinion, section].filter(Boolean).join('\n\n')) };
+}
 
 /**
  * 근거와 제한 사항을 구분하는 법률 검토 출력 스키마
@@ -72,6 +114,8 @@ export async function generateLegalReview({ query, preset, documentText, workben
   sourceHistoryId = null, progress = NOOP_PROGRESS }) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
+  const withContractFindings = review => includeContractDocumentFindings(review,
+    { preset, documentText, query, workbenchContext });
   const priorReasoning = sourceHistoryId ? getHistoryById(sourceHistoryId)?.data?.review?.reasoning : null;
 
   // Human-imported knowledge stays on the local model path and is never official evidence.
@@ -84,6 +128,13 @@ export async function generateLegalReview({ query, preset, documentText, workben
   if (provider === 'ollama' && sourceHistoryId) {
     progress.start('learning', '승인된 외부 참고 지식 조회', '같은 사건의 재검토', '준비');
     try {
+      const approved = getLearningStore().list('knowledge', 'APPROVED').filter(item => item.historyId === sourceHistoryId);
+      const supplementalArticles = await resolveLearningCitations(workbenchContext, approved);
+      if (supplementalArticles.length) {
+        workbenchContext.officialEvidence.supplementalArticles = [
+          ...(workbenchContext.officialEvidence.supplementalArticles || []), ...supplementalArticles];
+        progress.note('learning', `원 검토에 없던 인용 조문 ${countLabel(supplementalArticles.length, '개')}를 공식 본문으로 추가 확인했습니다.`);
+      }
       const found = findLearningKnowledge(workbenchContext, query, undefined,
         { historyId: sourceHistoryId, onlyInCase: true, limit: priorReasoning ? Number.MAX_SAFE_INTEGER : 2 });
       learningKnowledge = found.used;
@@ -98,12 +149,17 @@ export async function generateLegalReview({ query, preset, documentText, workben
   workbenchContext = { ...workbenchContext, learningKnowledge, learningExcluded, learningWarning };
 
   let input = buildReviewInput(workbenchContext, documentText, query, learningBudgets);
+  let incompleteApprovedKnowledge = false;
   if (priorReasoning) {
     const missing = input.learningExcluded.filter(item => item.inCase);
-    if (!input.learningReferences.some(item => item.inCase) || missing.length) {
+    const usable = input.learningReferences.filter(item => item.inCase);
+    if (!usable.length || (missing.length && !excludedQuestionsCovered(usable, missing))) {
       const reason = missing.map(item => `${item.title}: ${item.message}`).join(' / ') || learningWarning || '사용 가능한 승인 지식이 없습니다.';
       throw new PipelineError(`승인된 외부 답변을 원 검토의 공백에 모두 연결할 수 없어 재검토를 중단했습니다. ${reason}`);
     }
+    incompleteApprovedKnowledge = missing.length > 0;
+    if (incompleteApprovedKnowledge) progress.warn('learning',
+      `승인된 답변 ${missing.length}건은 제외했습니다. 다른 승인 답변이 동일한 질문에 연결되어 부분 재검토를 진행합니다.`);
   }
   // 조문 특정 1단계는 입력이 짧아 축소 대상이 아니다.
   // 축소된 발췌를 쓰면 결정적 단서가 잘려 나가 엉뚱한 조항을 고르게 된다.
@@ -281,7 +337,7 @@ ${resolvedProvisionsText}` : ''}
       progress.start('verify', '인용 조문 실존성 검증', '', '검증');
       const { verifiedReview } = await verifyAndCorrectReviewCitations({ review: generateRuleBasedReview(query, preset, documentText, workbenchContext), workbenchContext });
       progress.done('verify', describeVerification(verifiedReview));
-      return verifiedReview;
+      return withContractFindings(verifiedReview);
     }
     const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
     const initialBudget = resolveBudget(provider, { ...llmConfig, model });
@@ -310,7 +366,8 @@ ${resolvedProvisionsText}` : ''}
         progress.start('verify', '인용 조문 실존성 검증', `인용 ${countLabel(staged.legalBasis.length, '개')} 대조`, '검증');
         const { verifiedReview } = await verifyAndCorrectReviewCitations({ review: staged, workbenchContext });
         progress.done('verify', describeVerification(verifiedReview));
-        return verifiedReview;
+        if (incompleteApprovedKnowledge) verifiedReview.reviewStatus = 'PARTIAL';
+        return withContractFindings(verifiedReview);
       } catch (err) {
         // 후속 검토를 단일 호출로 바꾸면 저장된 논리 구조가 사라진다.
         if (sourceHistoryId || workbenchContext.meta?.learningMode === 'manual') throw err;
@@ -495,7 +552,7 @@ ${resolvedProvisionsText}` : ''}
     progress.done('verify', describeVerification(verifiedReview));
     for (const w of (verifiedReview.factualityVerification?.warnings || []).slice(0, 5)) progress.warn('verify', w);
 
-    return verifiedReview;
+    return withContractFindings(verifiedReview);
   } catch (err) {
     if (sourceHistoryId || workbenchContext.meta?.learningMode === 'manual') throw err;
     console.warn('[LawWorkbenchReview] LLM 호출 실패, 규칙 기반 점검으로 대체합니다:', maskLawSecrets(err.message || ''));
@@ -515,7 +572,7 @@ ${resolvedProvisionsText}` : ''}
     });
     progress.done('verify', describeVerification(verifiedReview));
 
-    return verifiedReview;
+    return withContractFindings(verifiedReview);
   }
 }
 

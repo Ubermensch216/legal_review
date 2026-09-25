@@ -11,15 +11,19 @@
 import { createTokenCounter, resolveBudget } from '../law/llmBudget.js';
 import { NOOP_PROGRESS, countLabel } from '../law/progressReporter.js';
 import { buildEvidenceRegistry } from './evidenceRegistry.js';
+import { normalizedLawName } from '../law/evidence.js';
+import { normalizeArticleNo } from '../law/lawArticleRef.js';
 import { buildCommonPrefix, PROMPT_VERSION, REASONING_SYSTEM } from './prompts.js';
 import { planCaseAndIssues } from './stages/caseIssues.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
 import { computeIssueConclusion } from './verify/conclusion.js';
-import { verifyWarrants } from './verify/warrant.js';
+import { verifyWarrants, verifyDocumentFindings } from './verify/warrant.js';
+import { attachVerifiedRules, exactAuthorityMatch } from './verifiedRules.js';
 import { deriveGaps } from './stages/gaps.js';
 import { draftRedlines, renderReview, synthesize } from './stages/synthesis.js';
+import { attachContractInventory, buildContractInventory, contractAssessments, scoreContractRisk } from './contractReview.js';
 
 export class PipelineError extends Error {
   constructor(message, cause) { super(message); this.name = 'PipelineError'; this.cause = cause; }
@@ -34,7 +38,8 @@ export const pipelineEnabled = (llmConfig = {}) =>
   (llmConfig.pipeline || process.env.REVIEW_PIPELINE || 'monolithic') === 'staged';
 
 const thinkStages = () => new Set(String(process.env.REVIEW_THINK_STAGES || '').split(',').map(s => s.trim()).filter(Boolean));
-const maxIssues = () => Math.min(8, Math.max(1, parseInt(process.env.REVIEW_MAX_ISSUES || '5', 10) || 5));
+const maxIssues = preset => preset === 'contract_risk' ? Math.min(30, Math.max(15, parseInt(process.env.REVIEW_MAX_ISSUES || '15', 10) || 15))
+  : Math.min(8, Math.max(1, parseInt(process.env.REVIEW_MAX_ISSUES || '5', 10) || 5));
 
 /** 선결 쟁점이 먼저 오도록 정렬한다. 순환은 S1에서 이미 끊었다. */
 export function orderByDependency(issues) {
@@ -65,6 +70,18 @@ export function withDependents(issues, ids) {
 
 /** 등록부의 공식 근거 지문. 외부 참고 지식(K)은 재검토마다 달라지므로 뺀다. */
 const evidenceFingerprint = entries => entries.filter(e => e.kind !== 'KNOWLEDGE').map(e => `${e.id}:${e.textHash}`).join('|');
+const reusableWithSupplement = (current, previous, supplements) => {
+  const old = new Map(previous.filter(e => e.kind !== 'KNOWLEDGE').map(e => [e.id, e]));
+  const now = new Map(current.filter(e => e.kind !== 'KNOWLEDGE').map(e => [e.id, e]));
+  if ([...old].some(([id, entry]) => now.get(id)?.textHash !== entry.textHash)) return false;
+  const allowed = new Set((supplements || []).map(a =>
+    `${normalizedLawName(a.lawName)}|${normalizeArticleNo(a.fullArticleNo || a.articleNo)}`));
+  return [...now].filter(([id]) => !old.has(id)).every(([, entry]) => {
+    const root = entry.parentId ? now.get(entry.parentId) : entry;
+    return root?.kind === 'ARTICLE' && root.official
+      && allowed.has(`${normalizedLawName(root.lawName)}|${normalizeArticleNo(root.articleNo)}`);
+  });
+};
 
 /** 이전 검토의 쟁점 기록을 S4 결과 형태로 되돌린다. */
 const reusedResult = issue => ({ issueId: issue.id, elements: issue.elements, assessments: issue.assessments, precedents: issue.precedents,
@@ -124,6 +141,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   // ── S0 근거 등록부와 공통 접두부 ──
   progress.start('s0', '근거 등록부 구성', '조문·판례·해석례·첨부문서에 ID 부여', '분석');
   const registry0 = buildEvidenceRegistry(workbenchContext, { documentText });
+  const contractInventory = preset === 'contract_risk' && documentText ? buildContractInventory(registry0, query) : null;
   const s1Limit = budgetFor(OUTPUT_TOKENS.s1).inputLimit;
   let budgets = { document: 14000, index: 6000 };
   let common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
@@ -138,7 +156,9 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (previous?.reasoning?.version && previous.reasoning.promptVersion === PROMPT_VERSION) {
     const addedItems = previous.reasoning.diagnostics?.research?.addedItems || {};
     const candidate = buildEvidenceRegistry(reapplyResearch(workbenchContext, addedItems), { documentText });
-    if (evidenceFingerprint(candidate.list()) === evidenceFingerprint(previous.reasoning.evidence || [])) {
+    if (evidenceFingerprint(candidate.list()) === evidenceFingerprint(previous.reasoning.evidence || [])
+      || reusableWithSupplement(candidate.list(), previous.reasoning.evidence || [],
+        workbenchContext.officialEvidence?.supplementalArticles)) {
       reuse = { registry: candidate, addedItems };
     } else {
       throw new PipelineError('원 검토 이후 공식 근거가 달라졌습니다. 저장된 쟁점 구조에 외부 답변을 끼워 넣을 수 없으므로 최종 재검토를 중단했습니다.');
@@ -154,6 +174,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (reuse) {
     const prior = previous.reasoning;
     caseIssues = { facts: prior.facts, issues: prior.issues.map(bareIssue), unknownFacts: prior.unknownFacts || [],
+      unreviewedCandidates: prior.unreviewedCandidates || [],
       diagnostics: { ...(prior.diagnostics?.s1 || {}), reused: true } };
     registry = reuse.registry;
     plan = { queries: prior.diagnostics?.research?.queries || [], skipped: prior.diagnostics?.research?.skippedQueries || [],
@@ -168,11 +189,13 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.start('s1', '사건 사실·쟁점 정리', '쟁점을 먼저 확정하고 근거 후보를 ID로 지정', '분석');
     try {
       caseIssues = await planCaseAndIssues({ registry: registry0, query, preset, prefix: common.text, provider,
-        config: configFor('s1'), session, maxIssues: maxIssues(), forceSplit: common.documentOmitted.length > 0 });
+        config: configFor('s1'), session, maxIssues: maxIssues(preset), preserveIssues: preset === 'contract_risk',
+        forceSplit: common.documentOmitted.length > 0 });
     } catch (err) {
       progress.fail('s1', `쟁점 정리 실패: ${err.message}`);
       throw new PipelineError(`쟁점 정리(S1) 실패: ${err.message}`, err);
     }
+    if (contractInventory) caseIssues = attachContractInventory(caseIssues, contractInventory, registry0);
     if (!caseIssues.issues.length) {
       progress.fail('s1', '쟁점을 세우지 못했습니다');
       throw new PipelineError('쟁점을 세우지 못했습니다.');
@@ -186,7 +209,9 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
 
     // ── S2 쟁점별 조사 ──
     progress.start('s2', '쟁점별 판례·해석례 조사', '', '수집');
-    plan = planResearchQueries(caseIssues.issues, registry0);
+    plan = planResearchQueries(caseIssues.issues, registry0, preset === 'contract_risk'
+      ? { termsPerIssue: 2, articleQueries: 1, totalQueries: 30, perQuery: 3 }
+      : undefined);
     if (plan.skipped.length) warnings.push(`검색어 상한으로 추가 조사를 수행하지 못한 검색어 ${plan.skipped.length}개가 있습니다.`);
     research = await runResearchQueries(workbenchContext, plan, { ...(clients ? { clients } : {}), issues: caseIssues.issues,
       provider, model, apiKey, session });
@@ -262,11 +287,11 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     }
     const narrow = prior && targets.length && targets.every(t => t.elementId) && targetedIds.size;
     const elements = prior ? (narrow ? prior.elements.filter(e => targetedIds.has(e.id)) : prior.elements)
-      : selectIssueElements({ evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
+      : selectIssueElements({ ...issue, evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
     const issueFacts = caseIssues.facts.filter(f => issue.factIds.includes(f.id));
     const freshResult = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
       runPrefix: buildIssuePrefix(registry, issue, issueFacts), predecessors,
-      provider, config: configFor('s4', think), session });
+      provider, config: configFor('s4', think), session, contractMode: preset === 'contract_risk' });
     const result = narrow ? patchIssue(prior, freshResult, predecessors, registry) : freshResult;
     directlyUpdated.add(issue.id);
     issueResults.push(result);
@@ -277,14 +302,18 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   }
   // 결과는 원래 쟁점 순서로 둔다.
   issueResults.sort((a, b) => a.issueId.localeCompare(b.issueId, 'en', { numeric: true }));
+  const findings = contractInventory ? contractAssessments(caseIssues.issues, issueResults, contractInventory, registry) : [];
+  const documentWarrants = verifyDocumentFindings(findings, registry);
 
   // ── S6 근거 검증 (다시 판단한 쟁점만; 나머지는 이전 원장을 쓴다) ──
   progress.start('s6', '근거-주장 대응 검증', '존재·공식성·시점 확인 후 모든 주장·근거 쌍의 함의 확인', '검증');
   const fresh = await verifyWarrants({ issueResults: issueResults.filter(r => !r.reused), registry, provider,
-    config: configFor('s6'), session, ...embedOption, entailment: process.env.REVIEW_ENTAILMENT !== 'off' });
+    config: configFor('s6'), session, ...embedOption, entailment: process.env.REVIEW_ENTAILMENT !== 'off',
+    contractMode: preset === 'contract_risk' });
   warnings.push(...fresh.warnings);
   for (const warning of fresh.warnings) progress.warn('s6', warning);
   const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !directlyUpdated.has(w.issueId)), ...fresh.ledger];
+  attachVerifiedRules(issueResults, ledger, registry, caseIssues.facts);
   for (const result of issueResults) {
     const unresolved = ledger.filter(w => w.issueId === result.issueId && w.overall !== 'SUPPORTED');
     if (!unresolved.length) continue;
@@ -293,12 +322,30 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     if (result.conclusion.legal !== 'CONDITIONAL') result.conclusion = { ...result.conclusion, legal: 'CONDITIONAL',
       reasons: [...(result.conclusion.reasons || []), '인용 근거가 주장을 충분히 뒷받침하는지 확인되지 않음'] };
   }
+  for (const finding of findings) {
+    const linked = issueResults.find(r => r.issueId === finding.issueId);
+    const verifiedIds = linked?.appliedAuthorities || [];
+    finding.authorityEvidenceIds = verifiedIds;
+    finding.legalAssessment.authorityEvidenceIds = verifiedIds;
+    const documentCheck = documentWarrants.find(w => w.issueId === finding.issueId && w.kind === finding.kind);
+    const legalChecks = ledger.filter(w => w.issueId === finding.issueId);
+    if (documentCheck?.overall !== 'SUPPORTED') {
+      finding.facialRisk = 'NONE';
+      finding.facialAssessment.risk = 'NONE';
+    }
+    if (legalChecks.length && legalChecks.some(w => w.overall !== 'SUPPORTED')) {
+      finding.legalValidity = 'NOT_REVIEWED';
+      finding.legalAssessment.authorityEvidenceIds = [];
+    }
+    finding.riskAxes = scoreContractRisk(finding,
+      { institutionType: contractInventory?.regime?.publicProcurement?.institutionType });
+  }
   const tally = status => ledger.filter(w => w.overall === status).length;
   progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 공식 근거 없음 ${tally('NO_OFFICIAL_SUPPORT')} · 불일치 ${tally('NOT_SUPPORTED')}`);
 
   // ── S7 공백 ──
   const gaps = deriveGaps({ issues: caseIssues.issues, issueResults, warrants: ledger, unknownFacts: caseIssues.unknownFacts,
-    collectionWarnings: research.warnings });
+    collectionWarnings: research.warnings, contractMode: preset === 'contract_risk', registry });
   // 이전 공백이 이번 판단에서 사라졌으면 해소, 남았으면 미해결로 표시한다. 답을 받았다는 것과 판단이 확정됐다는 것은 다르다.
   const transitions = [];
   if (reuse) {
@@ -329,14 +376,17 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     remainingGaps: gaps.map(g => ({ issueId: g.issueId, elementId: g.elementId, type: g.type, question: g.question }))
   } : null;
   const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider,
-    config: configFor('s5'), session, finalReviewData });
+    config: configFor('s5'), session, finalReviewData, contractFindings: findings });
   if (synthesis.warning) warnings.push(synthesis.warning);
   // 수정 조문은 첨부문서가 있고, 견해 비교가 산출물인 사전 컨설팅감사가 아닐 때만 만든다.
   const redline = documentText && preset !== 'pre_consulting_audit'
-    ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, provider, config: configFor('s5'), session })
+    ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, provider, config: configFor('s5'), session,
+      contractFindings: findings })
     : { redlines: [], warnings: [] };
   warnings.push(...redline.warnings);
-  const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines });
+  const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines,
+    contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
+    missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null });
   progress.done('s5', synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
 
   const gateReasons = [...new Set(issueResults.flatMap(r => (r.gateReasons || []).map(g => `${r.issueId}: ${g}`)))];
@@ -350,26 +400,32 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (common.indexOmitted || caseIssues.diagnostics?.indexOmitted) gateReasons.push('쟁점 추출에서 공식 근거 색인 일부를 보지 못함');
   if (plan.skipped.length) gateReasons.push(`추가 조사에서 처리하지 못한 검색어 ${plan.skipped.length}개`);
   if (caseIssues.diagnostics?.droppedIssues?.length) gateReasons.push(`쟁점 상한으로 제외된 쟁점 ${caseIssues.diagnostics.droppedIssues.length}개`);
+  if (caseIssues.unreviewedCandidates?.length) gateReasons.push(`계약 조항과 연결되지 않은 쟁점 후보 ${caseIssues.unreviewedCandidates.length}개`);
   for (const result of issueResults.filter(r => r.stageStatus === 'SKIPPED')) {
     gateReasons.push(`${result.issueId}: 적용할 공식 근거 또는 판단 요건이 없어 쟁점을 검토하지 못함`);
   }
   if (tally('NOT_SUPPORTED')) gateReasons.push(`근거가 뒷받침하지 않는 주장 ${tally('NOT_SUPPORTED')}개`);
   if (tally('UNCONFIRMED')) gateReasons.push(`근거와 주장의 관계가 미확인된 주장 ${tally('UNCONFIRMED')}개`);
   if (tally('NO_OFFICIAL_SUPPORT')) gateReasons.push(`공식 근거가 없는 주장 ${tally('NO_OFFICIAL_SUPPORT')}개`);
+  if (documentWarrants.some(w => w.overall !== 'SUPPORTED')) gateReasons.push('계약 문언과 출처 연결 검증 실패');
   const complete = issueResults.every(r => r.stageStatus === 'OK') && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';
   review.reasoning = {
-    version: 1, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf,
+    version: 2, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf,
+    contractRegime: contractInventory?.regime || null, contractFindings: findings,
+    missingClauseAudit: contractInventory?.missingClauseAudit || [],
     facts: caseIssues.facts, unknownFacts: caseIssues.unknownFacts,
+    unreviewedCandidates: caseIssues.unreviewedCandidates || [],
     issues: caseIssues.issues.map(issue => {
       const r = issueResults.find(x => x.issueId === issue.id);
       const s = perIssue.get(issue.id);
       return { ...issue, research: { queries: plan.byIssue[issue.id] || [], evidenceIds: s.evidenceIds, adverseCandidateIds: s.adverseCandidateIds,
         documentIds: s.documentIds, candidates: s.candidates }, elements: r.elements, assessments: r.assessments, precedents: r.precedents,
         counter: r.counter, narrative: r.narrative, openQuestions: r.openQuestions, conclusion: r.conclusion, stageStatus: r.stageStatus,
+        rulePropositions: r.rulePropositions || [], appliedAuthorities: r.appliedAuthorities || [],
         omittedEvidence: r.omittedEvidence, warnings: r.warnings, gateReasons: r.gateReasons || [], ...(r.reused ? { reused: true } : {}) };
     }),
-    warrants: ledger, gaps,
+    warrants: ledger, documentWarrants, gaps,
     gate: gateReasons.length ? 'HUMAN_REVIEW_REQUIRED' : 'OK', gateReasons,
     reuse: reuse ? { fromHistoryId: previous.historyId || null, evidenceMatched: true, rerunIssueIds: [...rerun], reusedStages: ['S1', 'S2', 'S3'],
       gapTransitions: transitions } : null,
@@ -377,10 +433,57 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       // 조사로 덧붙인 자료 원문을 남겨 둔다. 재검토에서 등록부를 똑같이 다시 만들려면 필요하다.
       research: { queries: plan.queries, skippedQueries: plan.skipped, added: research.added,
         screening: research.screening || [], addedItems: research.addedItems || {} },
+      ...(contractInventory ? { contract: {
+        detectedFindings: contractInventory.findings.length,
+        linkedFindings: findings.filter(f => f.documentSupportIds.length).length,
+        documentLinkRate: caseIssues.issues.length
+          ? caseIssues.issues.filter(i => i.documentIds?.length).length / caseIssues.issues.length : 0,
+        documentWarrantSupportRate: documentWarrants.length
+          ? documentWarrants.filter(w => w.overall === 'SUPPORTED').length / documentWarrants.length : 0,
+        missingClauses: contractInventory.missingClauseAdditions.length,
+        redlineCoverage: new Set(redline.redlines.flatMap(d => d.issueIds || []).filter(id => findings.some(f => f.issueId === id))).size
+          / Math.max(1, new Set(findings.map(f => f.issueId)).size),
+        authorityPrecision: (() => {
+          const applied = issueResults.flatMap(r => r.appliedAuthorities || []);
+          return applied.length ? applied.filter(id => registry.get(id)?.official && registry.get(id)?.inForce).length / applied.length : null;
+        })(),
+        ruleAuthorityAccuracy: (() => {
+          const checks = ledger.flatMap(w => (w.checks || []).map(c => ({ claim: w.text, check: c })));
+          return checks.length ? checks.filter(({ claim, check }) => ['SUPPORTS', 'PARTIAL'].includes(check.entailment)
+            && exactAuthorityMatch(claim, registry.get(check.evidenceId))).length / checks.length : null;
+        })(),
+        elementRelevance: (() => {
+          const elements = issueResults.flatMap(r => r.elements || []);
+          return elements.length ? elements.filter(e => e.relevance === 'DECISIVE' || e.relevance === 'SUPPORTING').length / elements.length : null;
+        })(),
+        synthesisSuccessRate: synthesis.source === 'LLM' ? 1 : 0,
+        reportCompressionRatio: registry.list().reduce((n, e) => n + String(e.text || '').length, 0)
+          ? review.draftOpinion.length / registry.list().reduce((n, e) => n + String(e.text || '').length, 0) : null
+      } } : {}),
       elements: Object.fromEntries([...decomposed.byArticle].map(([id, v]) => [id, v.source])),
       warrantVerification: { entailmentCalls: fresh.entailmentCalls, unreviewedPairs: fresh.unreviewedPairs },
       prefixBudgets: budgets },
     evidence: registry.toJSON()
+  };
+  review.reasoning.knowledgeImpact = [...(previous?.knowledgeTargets || new Map())].flatMap(([knowledgeId, targets]) =>
+    targets.map(target => {
+      const result = issueResults.find(r => r.issueId === target.issueId);
+      const element = result?.elements.find(e => e.id === target.elementId);
+      const assessment = result?.assessments.find(a => a.elementId === target.elementId);
+      return { knowledgeId, issueId: target.issueId, elementId: target.elementId,
+        usedFor: element?.text || caseIssues.issues.find(i => i.id === target.issueId)?.question || '해당 쟁점의 판단',
+        officiallyVerified: Boolean(assessment?.authorityEvidenceIds?.length) };
+    }));
+  if (review.appendix) review.appendix.knowledgeImpact = review.reasoning.knowledgeImpact;
+  if (preset === 'contract_risk') review.appendix = {
+    authorities: [...new Set(issueResults.flatMap(r => r.appliedAuthorities || []))],
+    warrants: ledger.map(w => ({ claim: w.text, result: w.overall,
+      authorityIds: (w.checks || []).filter(c => ['SUPPORTS', 'PARTIAL'].includes(c.entailment)).map(c => c.evidenceId) })),
+    researchCandidates: caseIssues.issues.map(issue => ({ issue: issue.question,
+      ids: (perIssue.get(issue.id)?.candidates || []).map(c => c.id) })),
+    unconfirmed: ledger.filter(w => w.overall !== 'SUPPORTED').map(w => w.text),
+    dispatchFactors: findings.filter(f => f.dispatchFactors?.length).flatMap(f => f.dispatchFactors),
+    additionalChecks: review.furtherChecks
   };
   review.warnings = warnings;
   return review;

@@ -130,7 +130,8 @@ export function buildEvidenceRegistry(context = {}, { documentText = '' } = {}) 
     return isOfficial(law) ? (law.articles || []).map(a => ({ ...a, lawName: law.lawName, source: law.source })) : [];
   });
   const actName = evidence.cascadingHierarchy?.act?.lawName;
-  const collected = (evidence.articles || []).filter(a => isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData));
+  const collected = [...(evidence.articles || []), ...(evidence.supplementalArticles || [])]
+    .filter(a => isOfficial(a) || (isOfficial(evidence.lawDetail) && !a.isMockData));
   const seen = new Set();
   let articleIndex = 0;
   for (const article of [...cascading.filter(a => sameLaw(a.lawName, actName)), ...collected, ...cascading]) {
@@ -192,13 +193,16 @@ export function buildEvidenceRegistry(context = {}, { documentText = '' } = {}) 
   // 원문을 주지 않으면 워크벤치가 선별한 조항만 등록한다(사실 출처 확인 범위도 그만큼 좁다).
   const chunks = documentText ? chunkLegalDocument(documentText) : (context.impactAndRevisions?.documentChunks || []);
   let documentIndex = 0;
+  let documentCursor = 0;
   for (const chunk of chunks) {
     const text = String(chunk.content || chunk.excerpt || '').trim();
     if (!text) continue;
     const id = `D${++documentIndex}`;
     const label = chunk.articleNo && chunk.articleNo !== '전문' ? `첨부문서 ${chunk.articleNo}${chunk.title ? `(${chunk.title})` : ''}` : '첨부문서 서두';
+    const offset = documentText ? documentText.indexOf(text, documentCursor) : -1;
+    if (offset >= 0) documentCursor = offset + text.length;
     add({ id, kind: 'DOCUMENT', label, title: chunk.title || '', text, isRiskClause: Boolean(chunk.isRiskClause),
-      partial: !documentText });
+      partial: !documentText, sourceSpan: offset >= 0 ? { start: offset, end: offset + text.length } : null });
     const pieces = splitLongText(text);
     if (pieces.length > 1) pieces.forEach((piece, i) => add({ id: `${id}.${i + 1}`, kind: 'DOCUMENT_PART', parentId: id,
       label: `${label} 조각 ${i + 1}`, text: piece }));
@@ -296,7 +300,16 @@ function createRegistryView(entries, order, asOf) {
     toJSON() {
       return order.map(id => {
         const { text, ...rest } = entries.get(id);
-        return { ...rest, textChars: text.length };
+        // 화면에는 내부 ID 대신 조문명과 짧은 원문 첫머리를 보여준다.
+        // 판례·계약문서 원문은 이 직렬화에 포함하지 않는다.
+        const previewSource = text.replace(/^\s*제\s*\d+(?:의\d+)?조\s*(?:\([^)]*\))?\s*/, '').trim()
+          || (childrenOf.get(id) || []).map(childId => entries.get(childId))
+            .find(child => child?.kind?.endsWith('UNIT') && !child.isException)?.text || '';
+        const preview = rest.official && /^(ARTICLE|ORDINANCE_ARTICLE)/.test(rest.kind)
+          ? previewSource.replace(/\s+/g, ' ').trim()
+          : '';
+        return { ...rest, textChars: text.length,
+          ...(preview ? { preview: `${preview.slice(0, 85)}${preview.length > 85 ? '…' : ''}` } : {}) };
       });
     }
   };

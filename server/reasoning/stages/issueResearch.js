@@ -12,6 +12,7 @@ import { screenEvidenceCandidates, hydrateSelectedCandidates } from '../../law/e
 import { isOfficial } from '../../law/evidence.js';
 import { authorityKey, formatArticleNo } from '../evidenceRegistry.js';
 import { cosine, embedTexts } from '../embeddings.js';
+import { contractSeedEvidenceIds } from '../contractReview.js';
 
 export const RESEARCH_LIMITS = Object.freeze({
   termsPerIssue: 2,       // 쟁점당 검색어
@@ -130,6 +131,7 @@ export async function selectIssueEvidence({ issue, registry, facts, plan, hits, 
   // 쟁점이 가리킨 조문(법령·자치법규)의 최상위 ID. 하위 단위를 가리켰어도 조문 단위로 모은다.
   const issueArticleIds = new Set(issue.evidenceIds.map(id => registry.get(id)).filter(Boolean)
     .map(e => e.parentId || e.id).filter(id => /^[AO]\d+$/.test(id)));
+  const issueLawNames = [...new Set([...issueArticleIds].map(id => registry.get(id)?.lawName).filter(Boolean))];
   const retrieved = new Set((plan.byIssue[issue.id] || []).flatMap(q => hits[q] || []));
   const authorities = registry.list(e => (e.kind === 'PRECEDENT' || e.kind === 'INTERPRETATION') && e.inForce);
 
@@ -164,16 +166,36 @@ export async function selectIssueEvidence({ issue, registry, facts, plan, hits, 
   }).filter(c => c.features.namedByS1 || c.features.articleMatch || c.features.retrievedForIssue || c.features.termHits > 0)
     .sort((a, b) => b.rank - a.rank);
 
-  const chosen = candidates;
+  const classified = candidates.map(candidate => {
+    const entry = registry.get(candidate.id);
+    const lawMatch = issueLawNames.some(name => String(entry?.referencedArticles || entry?.text || '').includes(name));
+    const legalIssueMatch = Math.min(candidate.features.termHits / 2, 1);
+    const factText = facts.filter(f => issue.factIds.includes(f.id)).map(f => f.text || '').join(' ');
+    const factTerms = factText.split(/\s+/).filter(term => term.length >= 3).slice(0, 8);
+    const factualSimilarity = factTerms.length
+      ? factTerms.filter(term => containsTerm(entry?.text, term)).length / factTerms.length : 0;
+    const gates = { lawMatch, articleMatch: candidate.features.articleMatch,
+      legalIssueMatch, factualSimilarity, semanticSimilarity: Math.max(0, candidate.features.semantic || 0) };
+    return { ...candidate, gates,
+      relevanceRole: candidate.features.articleMatch || candidate.features.namedByS1 && (lawMatch || entry?.kind === 'PRECEDENT') ? 'DIRECT'
+        : candidate.features.retrievedForIssue && legalIssueMatch === 1
+          && (entry?.kind === 'PRECEDENT' || lawMatch) ? 'ANALOGY' : 'NOT_RELEVANT',
+      authorityRelevance: Number(((lawMatch ? 0.3 : 0) + (gates.articleMatch ? 0.25 : 0)
+        + legalIssueMatch * 0.25 + factualSimilarity * 0.15
+        + gates.semanticSimilarity * 0.05).toFixed(3)) };
+  });
+  const chosen = classified.filter(candidate => candidate.relevanceRole !== 'NOT_RELEVANT');
   // 판례는 명제 전부를 싣는다. 가장 가까운 명제만 실으면 같은 판례 안의 반대 명제(예외·제한)가
   // 빠져 결론이 한쪽으로 기운다. 판결요지는 짧으므로 입력 부담이 크지 않다. focusId는 표시용이다.
   const authorityIds = chosen.map(c => c.id);
-  const statuteIds = issue.evidenceIds.filter(id => !/^[PQ]/.test(id));
+  const contractSeeds = contractSeedEvidenceIds(issue.contractKinds || [], registry);
+  const statuteIds = [...new Set(contractSeeds.length ? contractSeeds
+    : issue.evidenceIds.filter(id => !/^[PQ]/.test(id)))];
   // 쟁점 조문의 단서는 반대 근거 후보로 항상 싣는다.
   const adverseCandidateIds = [...issueArticleIds].flatMap(id => registry.children(id)).filter(e => e.isException).map(e => e.id);
-  const documentIds = [...new Set(facts.filter(f => issue.factIds.includes(f.id) && f.docRef && f.docRef !== 'QUERY')
-    .map(f => registry.get(f.docRef)?.parentId || f.docRef))];
+  const documentIds = [...new Set([...(issue.documentIds || []), ...facts.filter(f => issue.factIds.includes(f.id) && f.docRef && f.docRef !== 'QUERY')
+    .map(f => registry.get(f.docRef)?.parentId || f.docRef)])];
 
   return { evidenceIds: [...new Set([...statuteIds, ...authorityIds])], adverseCandidateIds: adverseCandidateIds.filter(id => !statuteIds.includes(id)),
-    documentIds, candidates, warning };
+    documentIds, candidates: classified, warning };
 }
