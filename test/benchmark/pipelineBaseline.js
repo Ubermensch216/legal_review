@@ -1,6 +1,6 @@
 // test/benchmark/pipelineBaseline.js - 검토 파이프라인 효율·안정성 기준선
 //
-// 단계형 파이프라인(docs/reasoning-pipeline-plan-2026-09-23.md)과 비교할 기준값을 잰다.
+// 단계형 파이프라인(docs/current-status.md)과 비교할 기준값을 잰다.
 // 법리 정확도 평가가 아니다. 같은 입력에서 시간·토큰·폴백·파싱 실패·인용 존재율이 어떻게
 // 변하는지를 보는 용도이며, 결과는 실행한 모델·Ollama·법령 API 상태에 묶인다.
 //

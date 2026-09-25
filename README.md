@@ -2,11 +2,11 @@
 
 **Legal Reviewer**는 국가법령정보센터 공식 자료, 문서 파서, LLM 검토, 인용 확인과 HWPX/PDF/DOCX 보고서 생성을 연결한 로컬 법률 검토 워크벤치입니다. 결과는 근거·시점·사실관계를 확인하는 사람의 검토가 필요합니다.
 
-**현재 상태 (2026-09-24):** 기본 검토는 단일 호출 경로이지만, 입력 예산을 초과하면 단계형 분할 검토를 먼저 시도합니다. 판례·해석례는 검색 목록을 선별한 뒤 필요한 공식 본문만 조회합니다. 단계형 검토(`REVIEW_PIPELINE=staged`)는 여전히 시험 중이며, 기존 5건 진단 측정에서 쟁점 생략과 인용·속도 문제가 확인되어 기본값으로 전환하지 않았습니다. [현재 구현·검증 상태](docs/current-status.md)와 [단계형 비교 기록](docs/audit/pipeline-comparison-2026-09-23.md)을 먼저 확인하세요.
+**현재 상태 (2026-09-25):** 기본 검토는 단일 호출 경로이지만, 입력 예산을 초과하면 토큰 안전을 위해 단계형 분할 검토를 먼저 시도합니다. 판례·해석례는 검색 목록을 선별한 뒤 필요한 공식 본문만 2단계로 정밀 조회합니다. 단계형 검토(`REVIEW_PIPELINE=staged`)는 검증 시험 중이며, 쟁점 생략 방지 및 인용 실존성 검증 강화가 적용되어 있습니다. [현재 구현·검증 상태](docs/current-status.md)와 [단계형 비교 기록](docs/audit/pipeline-comparison-2026-09-23.md)을 참고하세요.
 
 ---
 
-![Legal Reviewer 워크벤치 메인 화면](docs/images/screenshot_main.png)
+![Legal Reviewer 최종 검토보고서 전체 화면](docs/images/full_size_screenshot.png)
 
 ---
 
@@ -270,7 +270,7 @@ BENCH_ALLOW_FALLBACK=1 node test/benchmark/runBenchmark.js
 npm test
 ```
 
-2026-09-23 현재 **186건 통과, 0건 실패**입니다. 단위 테스트는 외부 통신을 차단한 픽스처 중심이며, 실서비스 법리 품질을 판정하지 않습니다.
+2026-09-25 현재 **231건 통과, 0건 실패**입니다. 단위 테스트는 외부 통신을 차단한 픽스처 중심이며, 법령 파싱·조문 실존성 검증·시맨틱 Re-ranking·진행률 스트리밍·단계형 검토 등 시스템 전반을 검증합니다.
 
 이전 README에 있던 "17건 중 16건 통과, 1건 실패(cascadingRetriever 시행령 조회)"
 기재는 사실과 달랐습니다. 해당 시점에도 스위트는 전부 통과하고 있었으며,
@@ -313,6 +313,15 @@ legal_review/
 ├── .env                          # 환경 설정 (LAW_OC, LLM_PROVIDER 등)
 ├── package.json                  # 프로젝트 의존성 및 스크립트
 ├── README.md                     # 프로젝트 종합 안내서
+├── docs/                         # 핵심 문서 및 실측 자료
+│   ├── current-status.md         # 현재 아키텍처·구현·검증 상태 통합 문서
+│   ├── images/                   # 스크린샷 및 아이콘 에셋
+│   │   ├── full_size_screenshot.png # 최종 검토보고서 전체 화면
+│   │   ├── screenshot_main.png   # 워크벤치 메인 화면
+│   │   └── app_icon.png          # 앱 아이콘
+│   └── audit/                    # 벤치마크 및 진단 실측 기록
+│       ├── pipeline-comparison-2026-09-23.md # 5건 실측 비교 분석
+│       └── *.json                # 벤치마크 원본 데이터
 ├── public/                       # 프론트엔드 정적 파일
 │   ├── index.html                # 메인 워크벤치 UI (검토 4개 탭 + 학습 탭)
 │   ├── css/
@@ -382,4 +391,4 @@ legal_review/
 
 기본 바인딩은 `127.0.0.1`입니다. 외부 서비스로 공개하려면 별도의 사용자 인증·권한 통제가 필요합니다. 출처·조문 존재 확인은 법리 타당성 검증과 다르며, 관련도 점수는 휴리스틱입니다. 시행령·시행규칙 연결 결과는 부분 탐색입니다.
 
-현재 상태는 [현황 문서](docs/current-status.md), 2026-09-21 당시 수정·검증 범위는 [구현 검증 기록](docs/audit/implementation-2026-09-21.md)을 참고하십시오.
+현재 아키텍처 및 상태는 [현재 구현·검증 상태](docs/current-status.md)와 [단계형 비교 기록](docs/audit/pipeline-comparison-2026-09-23.md)을 참고하십시오.
