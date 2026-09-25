@@ -91,6 +91,8 @@ test('S1이 쟁점을 5개만 반환해도 계약 후보를 삭제하지 않고 
   assert.equal((review.legalOpinion.match(/문언 판단:/g) || []).length, caseIssues.issues.length);
   assert.equal((review.legalOpinion.match(/법적 판단:/g) || []).length, caseIssues.issues.length);
   assert.equal((review.legalOpinion.match(/추가 확인사항:/g) || []).length, caseIssues.issues.length);
+  assert.match(review.legalOpinion, /문구에 대한 평가이며 조항의 무효 판정은 아닙니다/);
+  assert.match(review.legalOpinion, /현재 결과만으로 유효·무효를 단정할 수 없습니다/);
   assert.doesNotMatch(review.legalOpinion, /판단 미확정 요건: 출처를 확인하지 못한 자료|해당 쟁점의 판단 단계가 완료되지 않았습니다/);
   assert.match(review.legalOpinion, /도급 또는 도급적 요소인 경우.*민법 제673조/);
   assert.equal(findings.find(f => f.kind === 'PERSONNEL_DIRECTION').facialRiskConclusion.level, 'HIGH');

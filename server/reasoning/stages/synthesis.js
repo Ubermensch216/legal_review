@@ -8,6 +8,7 @@ import { REASONING_SYSTEM } from '../prompts.js';
 import { formatArticleNo } from '../evidenceRegistry.js';
 import { stripFalseDocumentAbsence } from '../contractReview.js';
 import { createTokenCounter } from '../../law/llmBudget.js';
+import { CONTRACT_LEGAL_EXPLANATION, CONTRACT_RISK_LABEL, explainConclusionReasons, explainContractRisk, explainExternalFacts } from '../../../public/js/conclusionLanguage.js';
 
 export const LEGAL_LABEL = { APPLIES: '요건 충족', NOT_APPLICABLE: '요건 불충족', EXCEPTION_APPLIES: '예외 적용', CONDITIONAL: '판단 유보' };
 const PROOF_LABEL = { SUFFICIENT: '입증 충분', INSUFFICIENT: '입증 부족', CONFLICTING: '자료 상충', NO_EVIDENCE: '입증 자료 없음' };
@@ -306,13 +307,12 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
         .map(id => registry.get(id)).filter(Boolean);
       const redline = redlines.find(d => d.issueIds?.includes(issue.id));
       const legalStatus = linked[0]?.legalValidity || (r?.stageStatus === 'FAILED' ? 'FAILED' : 'AUTHORITY_INCOMPLETE');
-      const legalLabels = { REVIEWED: '공식 근거에 따라 검토 완료', REVIEWED_WITH_WARNINGS: '핵심 근거 검증 완료 · 부수 근거 경고',
-        CONDITIONAL_ON_MATERIAL_FACT: '결론을 좌우하는 외부 사실 확인 필요', AUTHORITY_INCOMPLETE: '핵심 공식 근거 확인 필요',
-        FAILED: '해당 쟁점의 판단 단계가 완료되지 않았습니다.' };
-      const material = linked.flatMap(f => f.additionalFactDetails || []).filter(f => f.materiality === 'OUTCOME_DETERMINATIVE');
+      const humanReasons = explainConclusionReasons(c, r?.elements || [], id =>
+        issues.find(item => item.id === id)?.question || registry.get(id)?.label || '출처를 확인하지 못한 자료');
+      const externalFacts = explainExternalFacts(linked.flatMap(f => f.additionalFactDetails || []));
       return [`[쟁점 ${issue.id.slice(1)}] ${issue.question}`,
         `[조항]\n${sources.map(e => `[${e.id}] ${e.label}: ${e.text.slice(0, 220)}${e.text.length > 220 ? '…' : ''}`).join('\n') || '원문 연결 미완료'}`,
-        `[문언상 위험]\n${linked.map(f => `${f.facialRisk} · ${f.label}`).join('\n') || '별도 문언 위험 분류 없음'}`,
+        `[문언상 위험]\n${linked.map(f => `${f.label}: 계약 문구상 위험 ${CONTRACT_RISK_LABEL[f.facialRisk] || '확인 필요'}`).join('\n') || '별도 문언 위험 분류 없음'}`,
         `[법률 검토]\n${(r?.rulePropositions || []).filter(p => p.verified)
           .map(p => `- ${p.text} — ${p.authorityIds.map(id => registry.get(id)?.label).filter(Boolean).join(', ')}`)
           .join('\n') || '- 적용 규범의 공식 근거 확인 필요'}`,
@@ -320,12 +320,13 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
           ...(f.legalPaths?.length ? [`[계약 성질에 따른 적용 경로]\n${f.legalPaths.map(p => `- ${p.condition}: ${p.lawName} 제${p.articleNo}조`).join('\n')}`] : []),
           ...(f.penaltyClassification ? [`[위약금 성격]\n${f.penaltyClassification === 'UNCLEAR' ? '손해배상액 예정인지 진정한 위약벌인지 추가 판단 필요' : '손해배상액 예정 가능성 · 실제 약정 성격 확인 필요'}`] : []),
           ...(f.actualDispatchStatus ? [`[실제 근로자파견 성립 여부]\n${f.actualDispatchStatus}`] : [])]),
-        `문언 판단: ${linked.length ? `${linked.map(f => `${f.facialRisk} — ${f.label}`).join(' / ')} (확정)` : '연결된 계약 문언 확인 필요'}`,
-        `법적 판단: ${legalLabels[legalStatus] || legalStatus}${c.reasons?.length ? ` · ${c.reasons.join('; ')}` : ''}`,
-        `추가 확인사항: ${material.map(f => f.text).join(' / ') || '결론을 좌우하는 외부 사실 없음'}`,
+        `문언 판단: ${linked.length ? linked.map(explainContractRisk).join(' / ') : '연결된 계약 문언 확인 필요'}`,
+        `법적 판단: ${CONTRACT_LEGAL_EXPLANATION[legalStatus] || '법적 판단 상태를 확인해야 합니다.'}`,
+        ...(humanReasons.length ? [`${c.legal === 'CONDITIONAL' ? '아직 결론을 내리지 못한 이유' : '판단의 제한 사항'}: ${humanReasons.join(' / ')}`] : []),
+        `추가 확인사항: ${externalFacts}`,
         ...(linked.some(f => f.kind === 'TERMINATION' && f.legalPaths?.length) ?
           [`조건별 결론: ${linked.flatMap(f => f.legalPaths || []).map(p => `${p.condition}에는 ${p.lawName} 제${p.articleNo}조 적용경로 검토`).join(' / ')}`] : []),
-        `[판단을 바꿀 추가 사실]\n${[...new Set(linked.flatMap(f => f.additionalFactsRequired))].map(x => `- ${x}`).join('\n') || '- 없음'}`,
+        `[추가로 확인할 사실]\n${[...new Set(linked.flatMap(f => f.additionalFactsRequired))].map(x => `- ${x}`).join('\n') || '- 따로 지정된 사실 없음'}`,
         `[권고 수정안]\n${redline?.revisedText || '수정 문안 검토 필요'}`].join('\n');
     }
     const issueFacts = (issue.factIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);

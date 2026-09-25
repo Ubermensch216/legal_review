@@ -2099,6 +2099,9 @@
 .rv-application-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .rv-status { flex: none; font-size: 11px; font-weight: 700; color: #315a9c; }
 .rv-conclusion { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.rv-conclusion-summary { margin: 10px 0 !important; padding: 10px 12px; border-left: 3px solid #4673b6; border-radius: 4px; background: #f4f8ff; font-weight: 700; }
+.rv-conclusion-reasons { margin: 9px 0; }
+.rv-conclusion-reasons .rv-list { margin-top: 3px; }
 .rv-followup { margin: 0 18px 13px 64px; padding: 10px 12px; border-radius: 7px; background: #f8fafc; font-size: 12.5px; line-height: 1.6; }
 .rv-followup p { margin: 3px 0; }
 .rv-synthesis { margin-top: 20px; padding: 18px; border: 2px solid #b8cef0; border-radius: 10px; background: #f8fbff; break-inside: avoid; }
@@ -2108,6 +2111,7 @@
 .rv-table th { color: var(--brand-primary); }
 .rv-table td:first-child { width: 42px; text-align: center; font-weight: 700; }
 .rv-table .rv-verdict { white-space: nowrap; }
+.rv-table td p { margin: 6px 0 0; line-height: 1.55; }
 .rv-overall { padding: 12px 14px; margin-top: 12px; border-left: 4px solid var(--brand-primary); border-radius: 5px; background: #fff; font-size: 13px; line-height: 1.7; }
 .rv-overall p { margin: 5px 0 0; white-space: pre-line; }
 .rv-open { margin-top: 12px; font-size: 12.5px; line-height: 1.6; }

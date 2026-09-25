@@ -26,13 +26,13 @@ test('외부 질의 단계는 진행 중 열리고 완료 후 접힌다', async 
   response = { inquiries: [inquiry({ total: 1, answered: 0, approved: 0, questions: [question('UNANSWERED')] })], knowledge: [] };
   let html = await show({});
   assert.equal(open(html, 'step3'), true);
-  assert.equal(open(html, 'step5'), false);
+  assert.equal(open(html, 'step5'), true);
 
   response = { inquiries: [inquiry({ total: 1, answered: 1, approved: 0, questions: [question('ANSWERED')] })], knowledge: [card('DRAFT')] };
   html = await show({});
   assert.equal(open(html, 'step3'), false);
   assert.equal(open(html, 'step4'), true);
-  assert.equal(open(html, 'step5'), false);
+  assert.equal(open(html, 'step5'), true);
   assert.doesNotMatch(html, /질문 연결 저장/);
 
   response = { inquiries: [inquiry({ total: 1, answered: 1, approved: 1, questions: [question('APPROVED')] })], knowledge: [card('APPROVED')] };

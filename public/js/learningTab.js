@@ -393,7 +393,7 @@ function defaultFolds() {
     step2: inquiry?.state === 'DRAFT',
     step3: inquiry?.state === 'READY' && !hasAnswers,
     step4: view.knowledge.length > 0 && !allApproved,
-    step5: allApproved && !view.finalized
+    step5: inquiry?.state === 'READY' && !view.finalized
   };
 }
 const foldSummary = (icon, title, status) => `<summary class="learning-fold-summary">

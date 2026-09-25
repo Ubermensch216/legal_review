@@ -18,7 +18,7 @@ const reasoning = {
 
 test('쟁점별 I-R-A-C 뒤에 전체 결론과 남은 확인 사항을 표시한다', () => {
   const html = renderReasoningOpinion(reasoning, { summary: '현재 판단 유보', recommendations: ['변경 조건 확보'] });
-  const markers = ['Issue · 쟁점', 'Rule · 적용 규범', 'Application · 사실에 적용', 'Conclusion · 쟁점별 결론', '종합 분석 결과'];
+  const markers = ['무엇이 문제인가', '어떤 법률 기준을 적용하나', '기준을 사실에 대입하면', '쟁점별 결론과 남은 확인 사항', '종합 분석 결과'];
   let position = -1;
   for (const marker of markers) {
     const next = html.indexOf(marker);
@@ -26,7 +26,7 @@ test('쟁점별 I-R-A-C 뒤에 전체 결론과 남은 확인 사항을 표시�
     position = next;
   }
   assert.match(html, /공식·기준일 유효 · 근로기준법 제94조 제1항/);
-  assert.match(html, /포섭 판단.*불리한지 확인되지 않았다/);
+  assert.match(html, /사실에 대입한 판단.*불리한지 확인되지 않았다/);
   assert.match(html, /현재 판단 유보/);
   assert.match(html, /결론을 제한하는 남은 확인 사항/);
   assert.match(html, /data-open-learning/);
@@ -57,4 +57,35 @@ test('화면과 보고서 보기에는 내부 조문 번호 대신 뜻을 알 �
   const html = renderReasoningOpinion(input, {}, { report: true });
   assert.match(html, /민법 제673조.*완성전의 도급인의 해제권.*조문 첫머리/);
   assert.doesNotMatch(html, /\bA23\b|\bI1\b/);
+});
+
+test('계약 쟁점의 위험과 판단 유보 사유를 화면과 보고서에서 쉬운 문장으로 설명한다', () => {
+  const input = {
+    facts: [], evidence: [{ id: 'D1', label: '계약서 제8조' }, { id: 'D2', label: '계약서 제9조' }],
+    issues: [
+      { id: 'I1', question: '면책과 책임 범위는 적정한가?', elements: [], assessments: [],
+        conclusion: { legal: 'CONDITIONAL', reasons: ['검증된 판단 요건이 없음'] } },
+      { id: 'I2', question: '기존 지식재산은 누구에게 귀속되는가?',
+        elements: [{ id: 'A1.E1', text: '출처를 확인하지 못한 자료' }], assessments: [],
+        conclusion: { legal: 'CONDITIONAL', reasons: ['판단 미확정 요건: A1.E1'] },
+        counter: { position: '기존 자산의 귀속 범위가 지나치게 넓다.', response: '기존 자산과 신규 산출물을 구분해야 한다.' } }
+    ], gaps: []
+  };
+  const review = { contractFindings: [
+    { issueId: 'I1', label: '면책 및 무한책임', facialRisk: 'HIGH', legalValidity: 'AUTHORITY_INCOMPLETE',
+      documentSupportIds: ['D1'], documentFinding: '을이 손해 전액을 부담한다.', additionalFactDetails: [] },
+    { issueId: 'I2', label: '기존 지식재산 귀속', facialRisk: 'HIGH', legalValidity: 'REVIEWED_WITH_WARNINGS',
+      documentSupportIds: ['D2'], documentFinding: '기존 모듈도 갑에게 귀속된다.', additionalFactDetails: [] }
+  ] };
+  for (const report of [false, true]) {
+    const html = renderReasoningOpinion(input, review, { report });
+    assert.match(html, /문구에 대한 평가이며 조항의 무효 판정은 아닙니다/);
+    assert.match(html, /이 조항에 적용할 핵심 공식 근거의 검증이 끝나지 않았습니다/);
+    assert.match(html, /관련 법 조항에서 이 사안에 적용할 판단 기준을 검증하지 못했습니다/);
+    assert.match(html, /다른 인용 자료에는 확인되지 않은 부분이 남아 있습니다/);
+    assert.match(html, /판단에 사용된 자료의 출처를 확인하지 못했습니다/);
+    assert.match(html, /결론을 바꿀 외부 사실을 따로 지정하지 않았습니다/);
+    assert.match(html, /추가 검토 의견/);
+    assert.doesNotMatch(html, /판단 미확정 요건:|검증된 판단 요건이 없음|핵심 근거 검토 완료 · 부수 경고|HIGH/);
+  }
 });
