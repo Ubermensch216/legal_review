@@ -253,7 +253,7 @@ function renderDraftTab(review, officialEvidence, meta) {
 
   const lawName = meta?.primaryLawName || '관련 법령';
   const query = meta?.query || '요청 사안에 관한 법적 검토';
-  const opinionText = cleanText(expandReferences(review.legalOpinion || review.draftOpinion || '', { review }));
+  const opinionText = expandReferences(review.legalOpinion || review.draftOpinion || '', { review });
 
   // 0. 조문 실존성 검증 뱃지 및 폴백 경고
   const badgeContainer = document.getElementById('draft-factuality-badge');
@@ -642,39 +642,9 @@ function renderDraftTab(review, officialEvidence, meta) {
 /** 단일 호출 검토의 의견 본문을 문단 카드로 보여준다. */
 function legacyOpinionHtml(review) {
   const opinionText = expandReferences(review.legalOpinion || '', { review });
-  const rawParagraphs = opinionText.split('\n\n').filter(p => p.trim());
-
-  let opinionCardsHtml = '<div class="opinion-section-block">';
-  if (rawParagraphs.length > 0) {
-    rawParagraphs.forEach((block, idx) => {
-      const lines = block.trim().split('\n').map(l => l.trim()).filter(Boolean);
-      let cardTitle = `[쟁점 ${idx + 1}] 심층 법리 해석 및 적법성 판단`;
-      let cardBodyLines = lines;
-
-      if (lines.length > 1 && (lines[0].startsWith('[') || lines[0].startsWith('■') || /^[0-9]\./.test(lines[0]))) {
-        cardTitle = lines[0].replace(/^\[|\]$/g, '').replace(/^■\s*/, '');
-        cardBodyLines = lines.slice(1);
-      }
-
-      const bodyHtml = cardBodyLines.map(line => `<p style="margin-bottom: 8px; line-height: 1.85;">${escapeHtml(line)}</p>`).join('');
-
-      opinionCardsHtml += `
-        <div class="opinion-item-card">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
-            <span class="material-symbols-outlined icon-sm" style="color:var(--brand-primary);">gavel</span>
-            <h4 style="margin:0; font-size:15px; font-weight:700; color:var(--brand-primary);">${escapeHtml(cardTitle)}</h4>
-          </div>
-          <div class="opinion-body-text" style="font-size:14px; color:#334155;">
-            ${bodyHtml}
-          </div>
-        </div>
-      `;
-    });
-  } else {
-    opinionCardsHtml += `<p class="placeholder-text">검토의견이 없습니다.</p>`;
-  }
-  opinionCardsHtml += '</div>';
-  return opinionCardsHtml;
+  return `<div class="opinion-section-block report-rich-body">${opinionText
+    ? renderReportBlocksHtml(parseReportBlocks(opinionText))
+    : '<p class="placeholder-text">검토의견이 없습니다.</p>'}</div>`;
 }
 
 function renderEvidenceTab(evidence, meta) {
@@ -1117,14 +1087,7 @@ function renderRevisionsTab(impactData, meta) {
 }
 
 function cleanText(text) {
-  if (!text) return '';
-  return String(text)
-    .replace(/^#+\s+/gm, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/^>\s+/gm, '')
-    .replace(/`([^`]+)`/g, '$1')
-    .trim();
+  return stripReportMarkup(text);
 }
 
 function escapeHtml(unsafe) {

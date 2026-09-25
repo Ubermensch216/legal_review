@@ -46,7 +46,7 @@ export function stripFalseDocumentAbsence(value, registry) {
     if (!registry.get(id)) return match;
     removed = true;
     return '';
-  }).replace(/\s{2,}/g, ' ').trim();
+  }).replace(/[^\S\r\n]{2,}/g, ' ').trim();
   return { text, removed };
 }
 function tableCells(entry) {
@@ -144,7 +144,7 @@ export function buildContractInventory(registry, query = '') {
       additionalFactsRequired: rule.facts, documentSupportIds: [entry.id],
       sourceText: entry.text, sourceSpans: entry.sourceSpan
         ? [{ documentId: entry.id, ...entry.sourceSpan, tableCells: tableCells(entry) }] : [],
-      facialRisk: rule.risk?.(text) || 'HIGH', legalValidity: 'NOT_REVIEWED',
+      facialRisk: rule.risk?.(text) || 'HIGH', legalValidity: 'AUTHORITY_INCOMPLETE',
       ...(rule.kind === 'INTELLECTUAL_PROPERTY' ? { ipDimensions: ipDimensionAudit(entry.text) } : {})
     });
   }
@@ -236,20 +236,34 @@ export function attachContractInventory(caseIssues, inventory, registry) {
     unreviewedCandidates, contractInventory: inventory };
 }
 
+export function contractFactDetails(kind, facts = []) {
+  return facts.map(text => ({ text, materiality: kind === 'PERSONNEL_DIRECTION' || kind === 'TERMINATION'
+    || kind === 'DISPUTE_WAIVER' ? 'OUTCOME_DETERMINATIVE'
+    : kind === 'INTELLECTUAL_PROPERTY' ? 'SCOPE_ONLY'
+      : kind === 'DELAY_DAMAGES' || kind === 'LIABILITY' ? 'QUANTIFICATION_ONLY' : 'BACKGROUND' }));
+}
+
 export function contractAssessments(issues, issueResults, inventory, registry) {
   return issues.flatMap(issue => {
     const result = issueResults.find(r => r.issueId === issue.id);
     return inventory.findings.filter(f => f.documentSupportIds.some(id => issue.documentIds?.includes(id))
-      && (!issue.contractKinds?.length || issue.contractKinds.includes(f.kind))).map(f => ({
+      && (!issue.contractKinds?.length || issue.contractKinds.includes(f.kind))).map(f => {
+      const authorityEvidenceIds = [...new Set((result?.assessments || []).flatMap(a => a.evidenceIds || []))]
+        .filter(id => registry.get(id)?.official && registry.get(id)?.inForce);
+      const legalValidity = result?.stageStatus === 'FAILED' ? 'FAILED' : 'AUTHORITY_INCOMPLETE';
+      const additionalFactDetails = contractFactDetails(f.kind, f.additionalFactsRequired);
+      return {
         issueId: issue.id, kind: f.kind, label: f.label, analysisMode: issue.analysisMode || 'HYBRID',
         documentSupportIds: f.documentSupportIds,
         documentFinding: f.sourceText, sourceSpans: f.sourceSpans, facialRisk: f.facialRisk,
-        legalValidity: result?.stageStatus === 'OK'
-          && (result.assessments || []).some(a => a.evidenceIds?.some(id => registry.get(id)?.official))
-          ? 'VALIDITY_DEPENDS_ON_FACTS' : 'NOT_REVIEWED',
-        authorityEvidenceIds: [...new Set((result?.assessments || []).flatMap(a => a.evidenceIds || []))]
-          .filter(id => registry.get(id)?.official && registry.get(id)?.inForce),
+        legalValidity,
+        authorityEvidenceIds,
         additionalFactsRequired: f.additionalFactsRequired,
+        additionalFactDetails,
+        documentConclusion: { status: 'CONFIRMED', finding: f.sourceText },
+        facialRiskConclusion: { status: 'CONFIRMED', level: f.facialRisk, reason: `${f.label} 문언이 확인됨` },
+        legalValidityConclusion: { status: legalValidity, reason: legalValidity === 'FAILED'
+          ? '요건 판단 단계 실패' : '결론 요건의 공식 근거 검증 대기' },
         ...(f.kind === 'PERSONNEL_DIRECTION' ? { dispatchFactors: DISPATCH_FACTORS.map((question, index) => ({
           question, status: index === 3 ? 'DOCUMENT_INDICATES_DIRECTION' : 'ACTUAL_PRACTICE_UNKNOWN' })),
           actualDispatchStatus: '실제 업무수행 형태 추가 확인 필요' } : {}),
@@ -260,11 +274,10 @@ export function contractAssessments(issues, issueResults, inventory, registry) {
           { condition: '위임 또는 위임적 요소인 경우', lawName: '민법', articleNo: '689' }] } : {}),
         facialAssessment: { risk: f.facialRisk, finding: f.sourceText,
           documentSupportIds: f.documentSupportIds },
-        legalAssessment: { status: 'VALIDITY_DEPENDS_ON_FACTS',
-        authorityEvidenceIds: [...new Set((result?.assessments || []).flatMap(a => a.evidenceIds || []))]
-          .filter(id => registry.get(id)?.official && registry.get(id)?.inForce) },
+        legalAssessment: { status: legalValidity, authorityEvidenceIds },
         ...(f.ipDimensions ? { ipDimensions: f.ipDimensions } : {})
-      }));
+      };
+    });
   });
 }
 

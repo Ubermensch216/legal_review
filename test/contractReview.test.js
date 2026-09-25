@@ -75,17 +75,26 @@ test('S1이 쟁점을 5개만 반환해도 계약 후보를 삭제하지 않고 
   const findings = contractAssessments(caseIssues.issues, result, inventory, registry);
   assert.ok(findings.every(f => f.analysisMode === 'HYBRID'));
   assert.ok(findings.every(f => f.facialAssessment.documentSupportIds.length > 0));
-  assert.ok(findings.every(f => f.legalAssessment.status === 'VALIDITY_DEPENDS_ON_FACTS'));
+  assert.ok(findings.every(f => f.legalAssessment.status === 'AUTHORITY_INCOMPLETE'));
+  assert.ok(findings.every(f => f.documentConclusion.status === 'CONFIRMED'));
+  assert.ok(findings.every(f => f.facialRiskConclusion.status === 'CONFIRMED'));
   assert.equal(findings.find(f => f.kind === 'INTELLECTUAL_PROPERTY').ipDimensions.length, 8);
   assert.equal(verifyDocumentFindings(findings, registry).filter(w => w.overall === 'SUPPORTED').length, 10);
   assert.equal(verifyDocumentFindings([{ ...findings[0], documentFinding: '원문에 없는 주장' }], registry)[0].overall,
     'NOT_SUPPORTED');
-  assert.ok(findings.every(f => f.legalValidity === 'NOT_REVIEWED'));
+  assert.ok(findings.every(f => f.legalValidity === 'AUTHORITY_INCOMPLETE'));
   const review = renderReview({ caseIssues, issueResults: result,
     synthesis: { summary: 'D4의 구체적 내용이 없다. 요약', table: '', risks: [], recommendations: [] },
     gaps: [], registry, preset: 'contract_risk', contractFindings: findings,
     missingClauseAdditions: inventory.missingClauseAdditions });
   assert.match(review.legalOpinion, /직접 인력 지휘/);
+  assert.equal((review.legalOpinion.match(/문언 판단:/g) || []).length, caseIssues.issues.length);
+  assert.equal((review.legalOpinion.match(/법적 판단:/g) || []).length, caseIssues.issues.length);
+  assert.equal((review.legalOpinion.match(/추가 확인사항:/g) || []).length, caseIssues.issues.length);
+  assert.doesNotMatch(review.legalOpinion, /판단 미확정 요건: 출처를 확인하지 못한 자료|해당 쟁점의 판단 단계가 완료되지 않았습니다/);
+  assert.match(review.legalOpinion, /도급 또는 도급적 요소인 경우.*민법 제673조/);
+  assert.equal(findings.find(f => f.kind === 'PERSONNEL_DIRECTION').facialRiskConclusion.level, 'HIGH');
+  assert.equal(findings.find(f => f.kind === 'INTELLECTUAL_PROPERTY').additionalFactDetails[0].materiality, 'SCOPE_ONLY');
   assert.match(review.draftOpinion, /비밀유지 조항 부재/);
   assert.doesNotMatch(review.legalOpinion, /D[4-9].{0,30}내용이 없다/);
   assert.doesNotMatch(review.draftOpinion, /D4의 구체적 내용이 없다/);

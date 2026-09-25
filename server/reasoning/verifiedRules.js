@@ -1,4 +1,5 @@
 // S6 원장에서 실제 뒷받침된 명제만 사용자 보고서의 근거로 승격한다.
+import { provenanceOnly } from './stages/elements.js';
 const ROLE = Object.freeze({ ARTICLE: 'DIRECT_RULE', ORDINANCE_ARTICLE: 'DIRECT_RULE',
   PRECEDENT: 'INTERPRETIVE_PRECEDENT', INTERPRETATION: 'INTERPRETIVE_PRECEDENT' });
 const ARTICLE_EXPECTATIONS = [
@@ -27,10 +28,13 @@ export function attachVerifiedRules(issueResults, ledger, registry, facts = []) 
     const propositions = [];
     const selected = { statutes: [], precedents: [], interpretations: [] };
     for (const element of result.elements || []) {
+      if (provenanceOnly(element.text)) continue;
       const assessment = (result.assessments || []).find(a => a.elementId === element.id);
       const claim = ledger.find(w => w.issueId === result.issueId && w.elementId === element.id);
       const text = String(element.text || '').trim();
-      const verifiedChecks = (claim?.checks || []).filter(check => ['SUPPORTS', 'PARTIAL'].includes(check.entailment))
+      const decisive = (result.conclusion?.decidingElementIds || []).includes(element.id);
+      const verifiedChecks = (claim?.checks || []).filter(check => check.entailment === 'SUPPORTS'
+        || (!decisive && check.entailment === 'PARTIAL'))
         .filter(check => {
           const entry = registry.get(check.evidenceId);
           return entry?.official && entry?.inForce && String(entry.text || '').trim()
@@ -41,17 +45,18 @@ export function attachVerifiedRules(issueResults, ledger, registry, facts = []) 
       const proposition = { id: `RP-${result.issueId}-${String(propositions.length + 1).padStart(2, '0')}`,
         issueId: result.issueId, text, authorityIds,
         authorityRole: element.isException ? 'EXCEPTION' : ROLE[root(first, registry)?.kind] || 'DIRECT_RULE',
-        verified: Boolean(authorityIds.length), relevance: authorityIds.length ? 'DIRECT' : 'UNCONFIRMED',
+        verified: Boolean(authorityIds.length), relevance: decisive ? 'DECISIVE' : 'SUPPORTING',
         verificationStatus: authorityIds.length ? 'VERIFIED' : 'UNVERIFIED',
         verificationMessage: authorityIds.length ? '' : '해당 명제와 연결되는 공식 원문 근거를 확인하지 못함' };
       propositions.push(proposition);
       element.rulePropositionIds = [proposition.id];
-      element.relevance = (result.conclusion?.decidingElementIds || []).includes(element.id) ? 'DECISIVE' : 'SUPPORTING';
-      element.factRequirement = (assessment?.factIds || []).length ? 'DOCUMENT' : 'EXTERNAL';
+      element.relevance = decisive ? 'DECISIVE' : element.relevance || 'SUPPORTING';
+      const linkedFacts = (assessment?.factIds || []).map(id => factById.get(id)).filter(Boolean);
+      element.factRequirement ||= linkedFacts.some(f => f.sourceType === 'DOCUMENT') ? 'DOCUMENT'
+        : linkedFacts.length ? 'EXTERNAL' : 'UNKNOWN';
       if (assessment) {
         assessment.authorityEvidenceIds = authorityIds;
         assessment.ruleStatus = proposition.verificationStatus;
-        const linkedFacts = (assessment.factIds || []).map(id => factById.get(id)).filter(Boolean);
         assessment.factStatus = linkedFacts.some(f => f.sourceType === 'DOCUMENT' && f.quoteVerified) ? 'DOCUMENT_CONFIRMED'
           : linkedFacts.some(f => f.status === 'CONFIRMED') ? 'EXTERNALLY_CONFIRMED'
             : linkedFacts.some(f => f.status === 'DISPUTED') ? 'DISPUTED' : 'UNKNOWN';

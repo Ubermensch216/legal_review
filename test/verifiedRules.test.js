@@ -37,6 +37,21 @@ test('미확인 근거는 명제의 표시 근거가 되지 않는다', () => {
   assert.equal(result[0].rulePropositions[0].verified, false);
 });
 
+test('결론 요건의 PARTIAL 근거는 미검증으로 두고 부수 요건의 PARTIAL만 경고와 함께 보존한다', () => {
+  const registry = { get: () => ({ kind: 'ARTICLE', lawName: '민법', articleNo: '398', text: '원문', official: true, inForce: true }) };
+  const result = [{ issueId: 'I1', elements: [
+    { id: 'E1', text: '결론 요건' }, { id: 'E2', text: '부수 요건' }],
+    assessments: [{ elementId: 'E1', factIds: [] }, { elementId: 'E2', factIds: [] }],
+    conclusion: { decidingElementIds: ['E1'] } }];
+  const ledger = ['E1', 'E2'].map(elementId => ({ issueId: 'I1', elementId,
+    checks: [{ evidenceId: 'A1', entailment: 'PARTIAL' }] }));
+  attachVerifiedRules(result, ledger, registry);
+  assert.equal(result[0].rulePropositions[0].verificationStatus, 'UNVERIFIED');
+  assert.equal(result[0].rulePropositions[1].verificationStatus, 'VERIFIED');
+  assert.deepEqual(result[0].assessments[0].authorityEvidenceIds, []);
+  assert.deepEqual(result[0].assessments[1].authorityEvidenceIds, ['A1']);
+});
+
 test('종합 입력은 조문 전문과 검색 후보를 싣지 않고 쟁점별로 제한한다', () => {
   const issues = Array.from({ length: 10 }, (_, n) => ({ id: `I${n + 1}`, question: '계약 위험'.repeat(100) }));
   const results = issues.map(issue => ({ issueId: issue.id, appliedAuthorities: ['A1'],

@@ -135,6 +135,20 @@ test('요건이 없으면 모델을 부르지 않는다', async () => {
   assert.equal(result.stageStatus, 'SKIPPED');
 });
 
+test('명시적 논리 그룹은 A AND B AND (C OR D)를 계산하고 미승격 골격은 차단하지 않는다', () => {
+  const elements = [
+    { ...el('A1.E1'), logicGroup: 'G1', operator: 'ALL_OF' },
+    { ...el('A1.E2'), logicGroup: 'G1', operator: 'ALL_OF' },
+    { ...el('A1.E3'), logicGroup: 'G2', operator: 'ANY_OF' },
+    { ...el('A1.E4'), logicGroup: 'G2', operator: 'ANY_OF' },
+    { ...el('A1.E5'), fallback: true, relevance: 'UNASSESSED', blocksConclusion: false }
+  ];
+  const result = computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'SATISFIED'),
+    as('A1.E3', 'NOT_SATISFIED'), as('A1.E4', 'SATISFIED')]);
+  assert.equal(result.legal, 'APPLIES');
+  assert.ok(!result.decidingElementIds.includes('A1.E5'));
+});
+
 test('한 호출에 안 들어가는 근거는 여러 묶음으로 판단하고 누락 없이 합친다', async () => {
   const largeRegistry = buildEvidenceRegistry({ meta: { primaryLawName: law, asOfDate: '20260923' },
     officialEvidence: { lawDetail: { ...OFFICIAL, lawName: law }, articles: [{ ...OFFICIAL, lawName: law,

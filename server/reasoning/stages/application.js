@@ -265,12 +265,23 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   });
 
   let conclusion = computeIssueConclusion(elements, assessments, predecessors);
-  if (contractMode && !facts.some(f => f.sourceType !== 'DOCUMENT' && f.quoteVerified && f.status === 'CONFIRMED')
-      && conclusion.legal !== 'CONDITIONAL') {
+  const decisiveIds = new Set(conclusion.decidingElementIds || []);
+  const decisive = elements.filter(e => decisiveIds.has(e.id));
+  const missingMaterialExternalFact = decisive.some(e => (e.factRequirement === 'EXTERNAL'
+    || /실제|현장|손해.{0,8}발생|채무불이행.{0,8}발생/.test(e.text))
+    && !assessments.find(a => a.elementId === e.id)?.factIds?.some(id => {
+      const fact = factsById.get(id);
+      return fact?.sourceType !== 'DOCUMENT' && fact?.quoteVerified && fact?.status === 'CONFIRMED';
+    }));
+  if (contractMode && missingMaterialExternalFact && conclusion.legal !== 'CONDITIONAL') {
     conclusion = { ...conclusion, ifResolved: conclusion.legal, legal: 'CONDITIONAL',
-      reasons: [...(conclusion.reasons || []), '계약 문언 외의 적용 사실과 선결 전제는 확인되지 않음'] };
+      legalOutcome: 'CONDITIONAL_ON_MATERIAL_FACT',
+      reasons: [...(conclusion.reasons || []), '결론을 좌우하는 외부 사실 확인 필요'] };
   }
-  if (base.omittedEvidence.length || warnings.some(w => w.includes('판단 실패')) || elements.some(e => e.fallback)) {
+  const decisiveIncomplete = decisive.some(e => (e.fallback && e.blocksConclusion === true)
+    || (e.sourceIds || []).some(id => base.omittedEvidence.includes(id))
+    || !assessments.some(a => a.elementId === e.id && a.analysis !== '판단 누락'));
+  if (decisiveIncomplete && conclusion.legal !== 'CONDITIONAL') {
     conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
   }
   const allowed = new Set([...allowedEvidence, ...facts.map(f => f.id), ...elements.map(e => e.id), ...research.documentIds]);
@@ -286,16 +297,18 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   // 게이트 사유: 사람이 반드시 봐야 하는 경우.
   const decidingAssessments = assessments.filter(a => conclusion.decidingElementIds.includes(a.elementId));
   const gateReasons = [];
-  if (warnings.some(w => w.includes('판단 실패'))) gateReasons.push('일부 근거 묶음 판단 실패');
-  if (base.omittedEvidence.length) gateReasons.push(`포섭에서 처리하지 못한 근거: ${base.omittedEvidence.join(', ')}`);
-  if (elements.some(e => e.fallback)) gateReasons.push('골격으로 대체한 미검증 요건이 포함됨');
-  if (!assessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official))) gateReasons.push('공식 근거에 기댄 요건 판단이 없음');
+  if (decisiveIncomplete && warnings.some(w => w.includes('판단 실패'))) gateReasons.push('결론 요건의 근거 묶음 판단 실패');
+  if (decisiveIncomplete && base.omittedEvidence.length) gateReasons.push(`결론 요건에서 처리하지 못한 근거: ${base.omittedEvidence.join(', ')}`);
+  if (decisive.some(e => e.fallback && e.blocksConclusion === true)) gateReasons.push('결론 요건이 골격으로 대체됨');
+  if (decidingAssessments.length && !decidingAssessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official)))
+    gateReasons.push('결론 요건의 공식 근거 판단이 없음');
   if (decidingAssessments.some(a => a.knowledgeOnly)) gateReasons.push('결론을 좌우한 요건이 외부 참고 지식에만 기댐');
   if (warnings.some(w => w.includes('존재하는 문서의 부재 주장'))) gateReasons.push('계약 원문과 충돌하는 서술을 제거함');
   const validCounter = contractMode ? validateContractCounter(value.counter, registry) : value.counter;
   if (validCounter?.position && !validCounter.response) gateReasons.push('가장 강한 반대 논리에 대한 응답 없음');
 
-  return { ...base, stageStatus: warnings.some(w => w.includes('판단 실패')) || base.omittedEvidence.length || elements.some(e => e.fallback) ? 'PARTIAL' : 'OK',
+  const hasWarnings = warnings.some(w => w.includes('판단 실패')) || base.omittedEvidence.length || elements.some(e => e.fallback);
+  return { ...base, stageStatus: decisiveIncomplete ? 'PARTIAL' : hasWarnings ? 'OK_WITH_WARNINGS' : 'OK',
     attempts, reasoning: value.reasoning || null, assessments,
     precedents: value.precedents, counter: validCounter, narrative: narrative.text,
     openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),

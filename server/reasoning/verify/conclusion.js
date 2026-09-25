@@ -33,24 +33,26 @@ export function applyFactProvenance(assessment, factsById) {
 export function computeIssueConclusion(elements, assessments, predecessors = []) {
   const byId = new Map(assessments.map(a => [a.elementId, a]));
   const statusOf = e => byId.get(e.id)?.status || 'UNKNOWN';
-  const principal = elements.filter(e => !e.isException);
-  const mandatory = principal.filter(e => e.mandatory);
+  // 원문을 분해하지 못해 만든 골격은 적용 요건으로 검증되기 전까지 결론을 좌우하지 않는다.
+  const applicable = elements.filter(e => !e.fallback || e.blocksConclusion === true);
+  const principal = applicable.filter(e => !e.isException && e.operator !== 'EXCEPTION');
+  const mandatory = principal.filter(e => !['ANY_OF', 'ALTERNATIVE'].includes(e.operator) && e.mandatory !== false);
   // 필수가 아닌 요건은 같은 조문 안에서 "여러 경우 중 하나"(열거된 호)다. 조문별로 묶어 하나라도 충족되면 충족이다.
   const groups = new Map();
-  for (const e of principal.filter(e => !e.mandatory)) {
-    const article = e.id.replace(/\.E\d+$/, '');
-    (groups.get(article) || groups.set(article, []).get(article)).push(e);
+  for (const e of principal.filter(e => ['ANY_OF', 'ALTERNATIVE'].includes(e.operator) || e.mandatory === false)) {
+    const group = e.logicGroup || e.id.replace(/\.E\d+$/, '');
+    (groups.get(group) || groups.set(group, []).get(group)).push(e);
   }
   const groupState = list => list.some(e => statusOf(e) === 'SATISFIED') ? 'SATISFIED'
     : list.every(e => statusOf(e) === 'NOT_SATISFIED') ? 'NOT_SATISFIED' : 'OPEN';
-  const exceptions = elements.filter(e => e.isException);
+  const exceptions = applicable.filter(e => e.isException || e.operator === 'EXCEPTION');
 
   let legal;
   let deciding;
   const failed = [...mandatory.filter(e => statusOf(e) === 'NOT_SATISFIED'),
     ...[...groups.values()].filter(g => groupState(g) === 'NOT_SATISFIED').flat()];
   const open = [...mandatory.filter(e => OPEN.has(statusOf(e))), ...[...groups.values()].filter(g => groupState(g) === 'OPEN').flat()];
-  if (!elements.length) {
+  if (!applicable.length) {
     legal = LEGAL.CONDITIONAL; deciding = [];
   } else if (failed.length) {
     legal = LEGAL.NOT_APPLICABLE; deciding = failed;
@@ -67,7 +69,7 @@ export function computeIssueConclusion(elements, assessments, predecessors = [])
   }
 
   const reasons = [];
-  if (!elements.length) reasons.push('판단할 요건이 없음');
+  if (!applicable.length) reasons.push('검증된 판단 요건이 없음');
   const blocked = predecessors.filter(p => p.legal === LEGAL.CONDITIONAL || p.stageStatus === 'FAILED');
   if (blocked.length && legal !== LEGAL.CONDITIONAL) {
     // 선결 쟁점이 풀리지 않았으면 후속 쟁점을 확정하지 않는다. 계산된 결론은 조건부 결론으로 남긴다.

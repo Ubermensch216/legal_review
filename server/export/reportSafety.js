@@ -28,7 +28,7 @@ export function reportWarnings(data = {}) {
     .map(w => review.reasoning ? explainDiagnostic(w, data) : w))];
 }
 
-export function reportText(data = {}, content = '') {
+export function reportText(data = {}, content = '', { preserveStructure = false } = {}) {
   const review = data.review || {};
   const warnings = reportWarnings(data);
   // 사전 컨설팅감사 결과가 있으면 해당 서식으로 조립한다.
@@ -66,6 +66,7 @@ export function reportText(data = {}, content = '') {
     '외부 지식 영향', ...(review.appendix.knowledgeImpact || []).map(item =>
       `- ${item.usedFor}: ${item.officiallyVerified ? '공식 근거 연결 확인' : '공식 근거 추가 확인 필요'}`)
   ].join('\n') : '';
-  return sanitizeExportText([warnings.length ? `[검토 제한 및 출처 안내]\n${warnings.map(w => `- ${w}`).join('\n')}` : '',
-    evidenceLine, displayBody, appendix ? expandReferences(appendix, data) : '', citationNote].filter(Boolean).join('\n\n'));
+  const assembled = [warnings.length ? `[검토 제한 및 출처 안내]\n${warnings.map(w => `- ${w}`).join('\n')}` : '',
+    evidenceLine, displayBody, appendix ? expandReferences(appendix, data) : '', citationNote].filter(Boolean).join('\n\n');
+  return preserveStructure ? assembled : sanitizeExportText(assembled);
 }

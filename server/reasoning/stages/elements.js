@@ -12,9 +12,9 @@ const ARTICLE_KINDS = new Set(['ARTICLE', 'ORDINANCE_ARTICLE']);
 const BATCH = 1;           // 조문 사이에 사건 전체 입력을 반복하지 않는다.
 const UNIT_BATCH = 4;      // 긴 조문은 항·호·단서 묶음별로 분해한다.
 const MAX_ELEMENTS = 8;    // 한 호출의 출력 상한. 조문 전체 결과의 상한은 아니다.
-const provenanceOnly = text => {
+export const provenanceOnly = text => {
   const value = String(text || '').trim();
-  return /^(?:출처(?:를)?\s*확인(?:하지 못한 자료| 필요)?|공식 근거(?:를)?\s*확인 필요|자료 확인 필요)\s*[·:—-]*\s*$/.test(value)
+  return /출처를 확인하지 못한 자료|출처 확인 필요|공식 근거 확인 필요|자료 확인 필요|검토 미완료|검색 실패|원문 없음/.test(value)
     || (/출처/.test(value) && /확인/.test(value) && value.length < 100);
 };
 
@@ -26,6 +26,9 @@ export const elementsSchema = {
       elements: { type: 'array', minItems: 1, maxItems: MAX_ELEMENTS, items: { type: 'object', additionalProperties: false,
         required: ['text', 'mandatory', 'isException', 'sourceIds'],
         properties: { text: { type: 'string', maxLength: 160 }, mandatory: { type: 'boolean' }, isException: { type: 'boolean' },
+          logicGroup: { type: 'string', maxLength: 24 },
+          operator: { type: 'string', enum: ['ALL_OF', 'ANY_OF', 'EXCEPTION', 'ALTERNATIVE'] },
+          relevance: { type: 'string', enum: ['DECISIVE', 'SUPPORTING', 'BACKGROUND', 'UNASSESSED'] },
           sourceIds: { type: 'array', maxItems: 4, items: { type: 'string', maxLength: 16 } } } } } } } } }
 };
 
@@ -33,6 +36,7 @@ const TASK = articlesText => `[과제: 조문 요건 분해]
 아래 조문 각각을, 그 조문이 적용되기 위한 요건과 예외로 나눈다. 이 사건의 사실에 맞추지 말고 조문 문언 자체의 요건만 쓴다.
 - text: 요건 한 가지를 한 문장으로(160자 이내). 여러 요건을 한 문장에 묶지 않는다.
 - mandatory: 모두 충족해야 하는 요건이면 true, 여러 경우 중 하나(열거된 호 등)면 false.
+- logicGroup/operator: A AND B AND (C OR D)라면 A·B는 ALL_OF, C·D는 같은 logicGroup의 ANY_OF로 나타낸다.
 - isException: "다만" 단서나 적용 제외 사유이면 true.
 - sourceIds: 그 요건이 나온 하위 ID(예: A1.2, A1.2x). 조문 밖의 ID는 쓰지 않는다.
 - burden: 누가 무엇을 입증·소명해야 하는지 조문에서 읽히면 쓰고, 없으면 빈 문자열.
@@ -44,11 +48,13 @@ export function skeletonElements(registry, articleId) {
   const units = registry.children(articleId).filter(u => u.kind === 'ARTICLE_UNIT' || u.kind === 'ARTICLE_PROVISO');
   const source = units.length ? units : [registry.get(articleId)];
   return source.filter(u => !provenanceOnly(u.text)).slice(0, MAX_ELEMENTS).map((u, i) => ({ id: `${articleId}.E${i + 1}`, text: String(u.text).slice(0, 160),
-    mandatory: !u.isException, isException: Boolean(u.isException), sourceIds: [u.id] }));
+    mandatory: false, isException: Boolean(u.isException), sourceIds: [u.id], fallback: true,
+    relevance: 'UNASSESSED', blocksConclusion: false }));
 }
 
 const articleHash = (registry, id) => [registry.get(id).textHash, ...registry.children(id).map(c => c.textHash)].join(':');
 const FORMAT_VERSION = 'unit-batches-v1';
+export const ELEMENT_SCHEMA_VERSION = 'v3-rule-proposition';
 
 const splitText = text => {
   const middle = Math.floor(text.length / 2);
@@ -87,6 +93,8 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
     const answer = value.articles.find(a => String(a.articleId).match(/[AO]\d+/)?.[0] === id);
     if (!answer?.elements?.length) throw new StageError('s3', `${id} 응답에 요건이 없습니다.`);
     const elements = answer.elements.map(e => ({ text: String(e.text).trim(), mandatory: e.mandatory,
+      logicGroup: e.logicGroup || '', operator: e.operator || (e.isException ? 'EXCEPTION' : e.mandatory ? 'ALL_OF' : 'ANY_OF'),
+      relevance: 'UNASSESSED',
       isException: e.isException, sourceIds: e.sourceIds.filter(s => own.has(s)) }))
       .filter(e => e.text && e.sourceIds.length && !provenanceOnly(e.text));
     if (!elements.length) throw new StageError('s3', `${id} 응답에 유효한 출처 ID가 없습니다.`);
@@ -95,7 +103,8 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
     if (missing.length) {
       warnings.push(`조문 ${id}의 원문 단위 ${missing.map(f => f.id).join(', ')}가 요건 응답에서 누락되어 골격 요건으로 보충했습니다.`);
         elements.push(...missing.filter(f => !provenanceOnly(f.text)).map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
-        isException: f.isException, sourceIds: [f.id], fallback: true })));
+        isException: f.isException, sourceIds: [f.id], fallback: true,
+        relevance: 'UNASSESSED', blocksConclusion: false })));
     }
     return { elements, burden: String(answer.burden || '').trim(), partial: Boolean(missing.length) };
   } catch (err) {
@@ -117,7 +126,8 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
     }
     warnings.push(`조문 요건 분해 실패(${id}: ${fragments.map(f => f.id).join(', ')}) — 골격 요건으로 대체: ${err.message}`);
     return { elements: fragments.filter(f => !provenanceOnly(f.text)).map(f => ({ text: f.text.slice(0, 160), mandatory: !f.isException,
-      isException: f.isException, sourceIds: [f.id], fallback: true })), burden: '', partial: true };
+      isException: f.isException, sourceIds: [f.id], fallback: true,
+      relevance: 'UNASSESSED', blocksConclusion: false })), burden: '', partial: true };
   }
 }
 
@@ -129,13 +139,17 @@ export async function decomposeArticles({ articleIds, registry, prefix, provider
   const result = new Map();
   const warnings = [];
   const misses = [];
-  const keyOf = id => stageCacheKey('elements', PROMPT_VERSION, FORMAT_VERSION, provider, config.model || '', articleHash(registry, id));
+  const keyOf = id => stageCacheKey('elements', PROMPT_VERSION, ELEMENT_SCHEMA_VERSION, FORMAT_VERSION, provider, config.model || '', articleHash(registry, id));
   for (const id of [...new Set(articleIds)]) {
     const entry = registry.get(id);
     if (!entry || !ARTICLE_KINDS.has(entry.kind)) continue;
     const cached = cache?.get(keyOf(id));
-    if (cached) result.set(id, { ...cached, source: 'CACHE' });
-    else misses.push(id);
+    if (cached?.elements?.length && cached.elements.every(e => !provenanceOnly(e.text)))
+      result.set(id, { ...cached, source: 'CACHE' });
+    else {
+      if (cached) warnings.push(`조문 ${id}의 오래되거나 잘못된 요건 캐시를 무효화했습니다.`);
+      misses.push(id);
+    }
   }
 
   for (const id of misses) {

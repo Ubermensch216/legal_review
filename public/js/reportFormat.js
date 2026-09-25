@@ -16,7 +16,12 @@ const tableRule = line => /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.
 const tableLine = line => /^\s*\|.*\|\s*$/.test(line);
 
 export function parseReportBlocks(source) {
-  const lines = String(source ?? '').replace(/\r\n?/g, '\n').split('\n');
+  // 이전 저장본에는 생성 후처리가 모든 줄바꿈을 공백으로 합친 경우가 있다.
+  const normalized = String(source ?? '').replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+(?=#{1,6}\s+(?:\d+[.)]|계약서|법률))/g, '\n')
+    .replace(/(#{1,6}\s+\d+[.)]\s+(?:검토 요약|핵심 위험|전체 쟁점|조항별 검토|권고 수정안|추가 확인사항|검토 요지|사실관계|쟁점별 검토|결론 표 및 전체 쟁점 종합 분석|추가 확인 사항))(?=\s+\S)/g, '$1\n')
+    .replace(/[ \t]+(?=-\s+[^:\n]{2,50}:)/g, '\n');
+  const lines = normalized.split('\n');
   const blocks = [];
   let paragraph = [];
   let items = [];

@@ -1,5 +1,6 @@
 // 구조화된 추론 결과를 쟁점별 IRAC와 종합 판단으로 표시한다.
 import { createReferenceFormatter, explainDiagnostic } from './learningIssues.js';
+import { stripReportMarkup } from './reportFormat.js';
 const LEGAL = { APPLIES: ['요건 충족', 'ok'], NOT_APPLICABLE: ['요건 불충족', 'no'], EXCEPTION_APPLIES: ['예외 적용', 'warn'], CONDITIONAL: ['판단 유보', 'hold'] };
 const STATUS = { SATISFIED: '충족', NOT_SATISFIED: '불충족', PARTIALLY_SATISFIED: '일부 충족', DISPUTED: '다툼', UNKNOWN: '미확정' };
 const PROOF = { SUFFICIENT: '입증 충분', INSUFFICIENT: '입증 부족', CONFLICTING: '자료 상충', NO_EVIDENCE: '입증 자료 없음' };
@@ -8,7 +9,7 @@ const FACT_STATUS = { DOCUMENT_CONFIRMED: '계약 문언 확인', EXTERNALLY_CON
 const APPLICATION_STATUS = { SATISFIED: '적용 요건 충족', NOT_SATISFIED: '적용 요건 불충족', PARTIAL: '일부 적용', DEPENDS_ON_FACTS: '사실 확인 후 판단', DISPUTED: '적용 다툼' };
 const RISK = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음', NONE: '없음',
   HIGH_CANDIDATE: '높은 위험 가능성·법적 근거 확인 필요', UNRATED_NEEDS_AUTHORITY: '법적 근거 확인 필요' };
-const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const esc = value => stripReportMarkup(value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const list = (items, empty) => items.length ? `<ul class="rv-list">${items.map(x => `<li>${x}</li>`).join('')}</ul>` : `<p class="rv-empty">${empty}</p>`;
 
 function sources(ids, evidence, readable) {
@@ -35,6 +36,11 @@ function issueCard(issue, index, facts, evidence, gaps, contractFindings = [], r
   const assessmentByElement = new Map(assessments.map(a => [a.elementId, a]));
   const relatedFacts = (issue.factIds || []).map(id => facts.get(id)).filter(Boolean);
   const documentFacts = contract.map(f => `${(f.documentSupportIds || []).map(readable).join(', ')}: ${f.documentFinding}`);
+  const legalStatus = contract[0]?.legalValidityConclusion?.status || contract[0]?.legalValidity;
+  const legalLabels = { REVIEWED: '공식 근거 검토 완료', REVIEWED_WITH_WARNINGS: '핵심 근거 검토 완료 · 부수 경고',
+    CONDITIONAL_ON_MATERIAL_FACT: '결정적 사실 확인 필요', AUTHORITY_INCOMPLETE: '핵심 공식 근거 확인 필요',
+    FAILED: '해당 쟁점의 판단 단계가 완료되지 않았습니다.' };
+  const materialFacts = contract.flatMap(f => f.additionalFactDetails || []).filter(f => f.materiality === 'OUTCOME_DETERMINATIVE');
   const rules = elements.map(e => {
     const a = assessmentByElement.get(e.id);
     return `<div class="rv-rule"><strong>${esc(readable(e.text || e.id))}</strong>${e.isException ? ' <span class="rv-tag">예외</span>' : e.mandatory === false ? ' <span class="rv-tag">택일</span>' : ''}${e.fallback ? ' <span class="rv-tag">요건 미검증</span>' : ''}<div class="rv-sources">${sources(a?.authorityEvidenceIds || [], evidence, readableSource)}</div></div>`;
@@ -60,7 +66,7 @@ function issueCard(issue, index, facts, evidence, gaps, contractFindings = [], r
       ${step('I', 'Issue · 쟁점', `<p class="rv-question">${esc(readable(issue.question))}</p>${list(relatedFacts.map(f => esc(readable(f.text))), documentFacts.length ? '계약 원문은 위에 표시했습니다.' : '이 쟁점에 연결된 사실이 없습니다.')}`)}
       ${step('R', 'Rule · 적용 규범', rules.length ? rules.join('') : '<p class="rv-empty">확정된 적용 요건이 없습니다. 공식 법령 근거를 확인해야 합니다.</p>')}
       ${step('A', 'Application · 사실에 적용', applications.length ? applications.join('') : '<p class="rv-empty">요건별 적용 판단이 없습니다.</p>')}
-      ${step('C', 'Conclusion · 쟁점별 결론', `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong><span>${contract.length ? '법적 효력은 적용 전제·공식 근거에 따라 달라짐' : esc(PROOF[c.proof] || '입증 미평가')}</span></div>${list((c.reasons || []).map(x => esc(readable(x))), '판단 이유가 기록되지 않았습니다.')}${c.ifResolved && !contract.length ? `<p class="rv-note">선결 쟁점이 해결되면: ${esc((LEGAL[c.ifResolved] || LEGAL.CONDITIONAL)[0])}</p>` : ''}${issue.stageStatus && issue.stageStatus !== 'OK' ? '<p class="rv-note">해당 쟁점의 판단 단계가 완료되지 않았습니다.</p>' : ''}`)}
+      ${step('C', 'Conclusion · 쟁점별 결론', `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong><span>${contract.length ? esc(legalLabels[legalStatus] || legalStatus || '법적 판단 확인 필요') : esc(PROOF[c.proof] || '입증 미평가')}</span></div>${contract.length ? `<p>문언 판단: ${esc(contract.map(f => `${f.facialRisk} — ${f.label}`).join(' / '))}</p><p>법적 판단: ${esc(legalLabels[legalStatus] || legalStatus || '확인 필요')}</p><p>추가 확인사항: ${esc(materialFacts.map(f => f.text).join(' / ') || '결론을 좌우하는 외부 사실 없음')}</p>` : ''}${list((c.reasons || []).map(x => esc(readable(x))), '판단 이유가 기록되지 않았습니다.')}${c.ifResolved && !contract.length ? `<p class="rv-note">선결 쟁점이 해결되면: ${esc((LEGAL[c.ifResolved] || LEGAL.CONDITIONAL)[0])}</p>` : ''}${issue.stageStatus === 'FAILED' && !contract.length ? '<p class="rv-note">해당 쟁점의 판단 단계가 완료되지 않았습니다.</p>' : ''}`)}
     </div>
     ${issue.counter?.position ? `<div class="rv-followup"><b>반대 논리 검토</b><p>${esc(readable(issue.counter.position))}</p><p>${issue.counter.response ? `검토 의견: ${esc(readable(issue.counter.response))}` : '검토 의견 미작성 · 추가 검토 필요'}</p></div>` : ''}
     ${issueGaps.length ? `<div class="rv-followup"><b>남은 확인 사항</b>${list(issueGaps.map(g => esc(readable(g.question))), '')}</div>` : ''}

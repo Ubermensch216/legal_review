@@ -4,6 +4,7 @@ import JSZip from 'jszip';
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import { EXPORT_STYLES } from './exportStyles.js';
+import { parseReportBlocks } from '../../public/js/reportFormat.js';
 
 /**
  * 관련 법령 조문 근거 목록을 reviewData 및 contentMarkdown에서 안전하게 추출하는 헬퍼
@@ -31,7 +32,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
 
   const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
   const recommendations = review.recommendations || [];
-  const opinionText = reportText(reviewData, contentMarkdown);
+  const opinionBlocks = parseReportBlocks(reportText(reviewData, contentMarkdown, { preserveStructure: true }));
 
   // 공통 네임스페이스 선언 (한컴 정품 HWPX와 동일 세트 — 누락 시 손상 파일로 판정됨)
   const HWPX_NS = 'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph" xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history" xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page" xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf/" xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart" xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"';
@@ -69,12 +70,12 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   const borderFillXml = (id, type, color) =>
     `<hh:borderFill id="${id}" threeD="0" shadow="0" centerLine="NONE" breakCellSeparateLine="0"><hh:slash type="NONE" Crooked="0" isCounter="0"/><hh:backSlash type="NONE" Crooked="0" isCounter="0"/><hh:leftBorder type="${type}" width="0.1 mm" color="${color}"/><hh:rightBorder type="${type}" width="0.1 mm" color="${color}"/><hh:topBorder type="${type}" width="0.1 mm" color="${color}"/><hh:bottomBorder type="${type}" width="0.1 mm" color="${color}"/><hh:diagonal type="SOLID" width="0.1 mm" color="${color}"/></hh:borderFill>`;
 
-  // charPr: 0 본문(10pt) / 1 대제목(20pt 굵게) / 2 섹션제목(13pt 굵게) / 3 중제목(10.5pt 굵게) / 4 면책(9pt 회색)
+  // charPr: 0 본문(11pt) / 1 대제목(20pt 굵게) / 2 섹션제목(13pt 굵게) / 3 중제목(10.5pt 굵게) / 4 면책(9pt 회색)
   const charPrXml = (id, height, textColor, bold) =>
     `<hh:charPr id="${id}" height="${height}" textColor="${textColor}" shadeColor="none" useFontSpace="0" useKerning="0" symMark="NONE" borderFillIDRef="1"><hh:fontRef hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:ratio hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:spacing hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/><hh:relSz hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/><hh:offset hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>${bold ? '<hh:bold/>' : ''}<hh:underline type="NONE" shape="SOLID" color="#000000"/><hh:strikeout shape="NONE" color="#000000"/><hh:outline type="NONE"/><hh:shadow type="NONE" color="#C0C0C0" offsetX="10" offsetY="10"/></hh:charPr>`;
 
   const charPropertiesXml = [
-    charPrXml(0, 1000, '#1E293B', false),
+    charPrXml(0, 1100, '#1E293B', false),
     charPrXml(1, 2000, '#1E3A8A', true),
     charPrXml(2, 1300, '#1E3A8A', true),
     charPrXml(3, 1050, '#0F172A', true),
@@ -86,7 +87,7 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
     `<hh:paraPr id="${id}" tabPrIDRef="0" condense="0" fontLineHeight="0" snapToGrid="1" suppressLineNumbers="0" checked="0" textDir="AUTO"><hh:align horizontal="${align}" vertical="BASELINE"/><hh:heading type="NONE" idRef="0" level="0"/><hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/><hh:autoSpacing eAsianEng="0" eAsianNum="0"/><hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/><hc:right value="0" unit="HWPUNIT"/><hc:prev value="${prev}" unit="HWPUNIT"/><hc:next value="${next}" unit="HWPUNIT"/></hh:margin><hh:lineSpacing type="PERCENT" value="${lineSpacing}" unit="HWPUNIT"/><hh:border borderFillIDRef="1" offsetLeft="0" offsetRight="0" offsetTop="0" offsetBottom="0" connect="0" ignoreMargin="0"/></hh:paraPr>`;
 
   const paraPropertiesXml = [
-    paraPrXml(0, 'JUSTIFY', 0, 0, 160),
+    paraPrXml(0, 'LEFT', 0, 260, 165),
     paraPrXml(1, 'CENTER', 1000, 1000, 130),
     paraPrXml(2, 'LEFT', 1400, 400, 150),
     paraPrXml(3, 'LEFT', 800, 200, 150),
@@ -140,19 +141,19 @@ export async function generateHwpx({ title = '법률검토의견서', contentMar
   `);
   }
 
-  const opinionParagraphs = cleanText(opinionText).split('\n\n').filter(Boolean);
-  for (const block of opinionParagraphs) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.startsWith('[') || line.startsWith('■') || /^[0-9]\./.test(line)) {
-        paragraphsXml.push(`
-  <hp:p id="${pId++}" paraPrIDRef="3" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="3"><hp:t>${escapeXml(line)}</hp:t></hp:run></hp:p>`);
-      } else {
-        paragraphsXml.push(`
-  <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t>${escapeXml(line)}</hp:t></hp:run></hp:p>`);
-      }
-    }
+  const addHwpxParagraph = (value, paragraphStyle = 0, characterStyle = 0) => paragraphsXml.push(`
+  <hp:p id="${pId++}" paraPrIDRef="${paragraphStyle}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="${characterStyle}"><hp:t>${escapeXml(value)}</hp:t></hp:run></hp:p>`);
+  for (const block of opinionBlocks) {
+    if (block.type === 'heading') addHwpxParagraph(block.text, block.level <= 2 ? 2 : 3, block.level <= 2 ? 2 : 3);
+    else if (block.type === 'list') block.items.forEach(item => addHwpxParagraph(`•  ${item}`));
+    else if (block.type === 'table') {
+      addHwpxParagraph(block.headers.join('  ·  '), 3, 3);
+      block.rows.forEach(row => {
+        const label = row[0] || '';
+        const detail = block.headers.slice(1).map((header, index) => `${header}: ${row[index + 1] || ''}`).join('  ·  ');
+        addHwpxParagraph(`${label}${detail ? `  —  ${detail}` : ''}`);
+      });
+    } else addHwpxParagraph(block.text);
   }
   paragraphsXml.push(`
   <hp:p id="${pId++}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0"><hp:t></hp:t></hp:run></hp:p>
@@ -228,19 +229,23 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
 
   const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
   const recommendations = review.recommendations || [];
-  const opinionText = reportText(reviewData, contentMarkdown);
+  const opinionBlocks = parseReportBlocks(reportText(reviewData, contentMarkdown, { preserveStructure: true }));
 
   zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 </Types>`);
 
   zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
 </Relationships>`);
+
+  zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);
+  zip.file('word/styles.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="맑은 고딕" w:hAnsi="맑은 고딕" w:eastAsia="맑은 고딕"/><w:sz w:val="22"/><w:color w:val="334155"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="140" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style></w:styles>`);
 
   let docxBody = `
     <!-- 타이틀 -->
@@ -280,24 +285,27 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
     </w:p>
   `;
 
-  const opinionParas = cleanText(opinionText).split('\n\n').filter(Boolean);
-  for (const block of opinionParas) {
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-    for (const line of lines) {
-      if (line.startsWith('[') || line.startsWith('■') || /^[0-9]\./.test(line)) {
-        docxBody += `
-        <w:p>
-          <w:pPr><w:spacing w:before="160" w:after="60"/></w:pPr>
-          <w:r><w:rPr><w:b/><w:color w:val="0F172A"/><w:sz w:val="24"/></w:rPr><w:t>${escapeXml(line)}</w:t></w:r>
-        </w:p>`;
-      } else {
-        docxBody += `
-        <w:p>
-          <w:pPr><w:spacing w:after="100"/></w:pPr>
-          <w:r><w:rPr><w:color w:val="334155"/><w:sz w:val="21"/></w:rPr><w:t>${escapeXml(line)}</w:t></w:r>
-        </w:p>`;
-      }
-    }
+  const docxParagraph = (value, kind = 'body') => {
+    const heading = kind.startsWith('heading');
+    const size = kind === 'heading1' ? 34 : kind === 'heading2' ? 28 : kind === 'heading3' ? 24 : 22;
+    const before = heading ? (kind === 'heading3' ? 220 : 340) : 0;
+    const after = heading ? 130 : kind === 'list' ? 75 : 150;
+    const indent = kind === 'list' ? '<w:ind w:left="360" w:hanging="200"/>' : kind === 'quote' ? '<w:ind w:left="320"/>' : '';
+    const color = heading ? '1E3A8A' : kind === 'quote' ? '475569' : '334155';
+    return `<w:p><w:pPr><w:spacing w:before="${before}" w:after="${after}" w:line="350" w:lineRule="auto"/>${indent}${heading ? '<w:keepNext/>' : ''}</w:pPr><w:r><w:rPr><w:rFonts w:ascii="맑은 고딕" w:hAnsi="맑은 고딕" w:eastAsia="맑은 고딕"/>${heading ? '<w:b/>' : ''}<w:color w:val="${color}"/><w:sz w:val="${size}"/></w:rPr><w:t xml:space="preserve">${escapeXml(value)}</w:t></w:r></w:p>`;
+  };
+  const docxTable = block => {
+    const count = Math.max(1, block.headers.length);
+    const width = Math.floor(9360 / count);
+    const cell = (value, header = false) => `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/>${header ? '<w:shd w:fill="EAF2FF"/>' : ''}</w:tcPr><w:p><w:pPr><w:spacing w:after="50" w:line="300" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="맑은 고딕" w:hAnsi="맑은 고딕" w:eastAsia="맑은 고딕"/>${header ? '<w:b/>' : ''}<w:color w:val="${header ? '1E3A8A' : '334155'}"/><w:sz w:val="19"/></w:rPr><w:t>${escapeXml(value)}</w:t></w:r></w:p></w:tc>`;
+    const row = (values, header = false) => `<w:tr>${header ? '<w:trPr><w:tblHeader/></w:trPr>' : ''}${block.headers.map((_, i) => cell(values[i] || '', header)).join('')}</w:tr>`;
+    return `<w:tbl><w:tblPr><w:tblW w:w="9360" w:type="dxa"/><w:tblBorders><w:top w:val="single" w:sz="5" w:color="CBD5E1"/><w:bottom w:val="single" w:sz="5" w:color="CBD5E1"/><w:insideH w:val="single" w:sz="4" w:color="E2E8F0"/></w:tblBorders><w:tblCellMar><w:top w:w="100" w:type="dxa"/><w:left w:w="120" w:type="dxa"/><w:bottom w:w="100" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${block.headers.map(() => `<w:gridCol w:w="${width}"/>`).join('')}</w:tblGrid>${row(block.headers, true)}${block.rows.map(r => row(r)).join('')}</w:tbl>`;
+  };
+  for (const block of opinionBlocks) {
+    if (block.type === 'heading') docxBody += docxParagraph(block.text, `heading${block.level}`);
+    else if (block.type === 'list') docxBody += block.items.map(item => docxParagraph(`•  ${item}`, 'list')).join('');
+    else if (block.type === 'table') docxBody += docxTable(block);
+    else docxBody += docxParagraph(block.text, block.type === 'quote' ? 'quote' : 'body');
   }
 
   if (meta.preset !== 'contract_risk') {
@@ -352,6 +360,7 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
     ${docxBody}
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1100" w:right="1200" w:bottom="1100" w:left="1200" w:header="500" w:footer="500"/></w:sectPr>
   </w:body>
 </w:document>`);
 
@@ -364,16 +373,59 @@ export async function generateDocx({ title = '법률검토의견서', contentMar
 export async function generatePdf({ title = '법률검토의견서', contentMarkdown = '', reviewData = {} }) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 40, autoFirstPage: true });
+      const doc = new PDFDocument({ size: 'A4', margin: 48, autoFirstPage: true, bufferPages: true });
       const buffers = [];
 
       doc.on('data', b => buffers.push(b));
       doc.on('end', () => resolve(Buffer.concat(buffers)));
 
       const fontPath = 'C:\\Windows\\Fonts\\malgun.ttf';
+      const boldFontPath = 'C:\\Windows\\Fonts\\malgunbd.ttf';
       if (fs.existsSync(fontPath)) {
-        doc.font(fontPath);
+        doc.registerFont('reportBody', fontPath);
+        doc.registerFont('reportBold', fs.existsSync(boldFontPath) ? boldFontPath : fontPath);
+        doc.font('reportBody');
       }
+      const bodyFont = fs.existsSync(fontPath) ? 'reportBody' : 'Helvetica';
+      const boldFont = fs.existsSync(fontPath) ? 'reportBold' : 'Helvetica-Bold';
+      const left = 48;
+      const width = doc.page.width - 96;
+      const bottom = doc.page.height - 66;
+      const ensureSpace = height => { if (doc.y + height > bottom) doc.addPage(); };
+      const writeParagraph = (value, options = {}) => {
+        const text = cleanText(value);
+        if (!text) return;
+        const { size = 10.5, color = '#334155', indent = 0, font = bodyFont, before = 0, after = 9 } = options;
+        doc.font(font).fontSize(size);
+        const height = doc.heightOfString(text, { width: width - indent, lineGap: 3 });
+        ensureSpace(Math.min(height + before + after, bottom - 70));
+        doc.y += before;
+        doc.fillColor(color).text(text, left + indent, doc.y, { width: width - indent, lineGap: 3 });
+        doc.y += after;
+      };
+      const writeTable = block => {
+        const count = Math.max(1, block.headers.length);
+        const cellWidth = width / count;
+        const drawRow = (values, header = false) => {
+          doc.font(header ? boldFont : bodyFont).fontSize(header ? 9 : 9.2);
+          const rowHeight = Math.max(29, ...Array.from({ length: count }, (_, i) =>
+            doc.heightOfString(cleanText(values[i] || ''), { width: cellWidth - 16, lineGap: 2 }) + 15));
+          ensureSpace(rowHeight + 4);
+          const top = doc.y;
+          doc.save().strokeColor('#CBD5E1');
+          for (let i = 0; i < count; i++) {
+            const x = left + i * cellWidth;
+            doc.fillColor(header ? '#EAF1FB' : '#FFFFFF').rect(x, top, cellWidth, rowHeight).fillAndStroke();
+            doc.fillColor(header ? '#1E3A8A' : '#334155').font(header ? boldFont : bodyFont).fontSize(header ? 9 : 9.2)
+              .text(cleanText(values[i] || ''), x + 8, top + 7, { width: cellWidth - 16, lineGap: 2 });
+          }
+          doc.restore();
+          doc.y = top + rowHeight;
+        };
+        drawRow(block.headers, true);
+        for (const row of block.rows) drawRow(row);
+        doc.y += 12;
+      };
 
       const docTitle = cleanText((reviewData?.review?.isFallback || (reviewData?.review?.reviewStatus && reviewData.review.reviewStatus !== 'COMPLETE') ? '[검토 미완료] ' : '') + reportTitle(title, reviewData));
       const review = reviewData?.review || {};
@@ -386,14 +438,14 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
 
       const basisList = resolveBasisList(reviewData, contentMarkdown, lawName);
       const recommendations = review.recommendations || [];
-      const opinionText = reportText(reviewData, contentMarkdown);
+      const opinionBlocks = parseReportBlocks(reportText(reviewData, contentMarkdown, { preserveStructure: true }));
 
       // 1. 헤더 타이틀
-      doc.fillColor('#1E3A8A').fontSize(18).text(docTitle, { align: 'center' });
+      doc.font(boldFont).fillColor('#1E3A8A').fontSize(19).text(docTitle, { align: 'center' });
       doc.moveDown(1.0);
 
       // 2. 상단 메타 박스
-      doc.fillColor('#334155').fontSize(9.5);
+      doc.font(bodyFont).fillColor('#334155').fontSize(9.5);
       doc.text(`[문서 번호] ${docNo}     |     [검토 일자] ${todayStr}`);
       doc.text(`[검토 대상] ${query}`);
       doc.text(`[주요 법령] ${lawName}`);
@@ -413,17 +465,19 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       doc.moveDown(0.4);
       }
 
-      const opinionParas = cleanText(opinionText).split('\n\n').filter(Boolean);
-      for (const block of opinionParas) {
-        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-        for (const line of lines) {
-          if (line.startsWith('[') || line.startsWith('■') || /^[0-9]\./.test(line)) {
-            doc.moveDown(0.3);
-            doc.fillColor('#0F172A').fontSize(10).text(line);
-            doc.moveDown(0.2);
-          } else {
-            doc.fillColor('#334155').fontSize(9.5).text(line, { lineGap: 3 });
-          }
+      for (const block of opinionBlocks) {
+        if (block.type === 'heading') {
+          const size = block.level === 1 ? 14 : block.level === 2 ? 12 : 10.5;
+          writeParagraph(block.text, { size, color: '#1E3A8A', font: boldFont, before: 8, after: 7 });
+        } else if (block.type === 'list') {
+          for (const item of block.items) writeParagraph(`•  ${item}`, { indent: 12, after: 4 });
+          doc.y += 5;
+        } else if (block.type === 'table') {
+          writeTable(block);
+        } else if (block.type === 'quote') {
+          writeParagraph(block.text, { color: '#475569', indent: 15, before: 4, after: 12 });
+        } else {
+          writeParagraph(block.text);
         }
       }
       doc.moveDown(1.0);
@@ -459,11 +513,17 @@ export async function generatePdf({ title = '법률검토의견서', contentMark
       }
 
       // 7. 면책 고지문
-      doc.fillColor('#64748B').fontSize(8.5).text(
+      doc.font(bodyFont).fillColor('#64748B').fontSize(8.5).text(
         review.disclaimer || '※ 본 검토의견서는 AI 법령검토 시스템에 의해 작성된 참고자료이며, 최종 법적 분쟁 및 처분에 대해서는 법률전문가의 자문을 받으시기 바랍니다.',
         { align: 'center' }
       );
 
+      const pages = doc.bufferedPageRange();
+      for (let i = pages.start; i < pages.start + pages.count; i++) {
+        doc.switchToPage(i);
+        doc.font(bodyFont).fillColor('#94A3B8').fontSize(8)
+          .text(`${i - pages.start + 1} / ${pages.count}`, left, doc.page.height - 61, { width, align: 'center' });
+      }
       doc.end();
     } catch (err) {
       reject(err);

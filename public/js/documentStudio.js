@@ -2,6 +2,7 @@
 import { state } from './state.js';
 import { renderReasoningOpinion } from './reasoningView.js';
 import { expandReferences, explainDiagnostic } from './learningIssues.js';
+import { parseReportBlocks, renderReportBlocksHtml } from './reportFormat.js';
 
 const drawer = document.getElementById('studio-drawer');
 const btnOpen = document.getElementById('btn-open-studio');
@@ -16,6 +17,9 @@ const exportBtns = document.querySelectorAll('.btn-export');
 let currentMode = 'visual'; // 'visual' | 'source'
 let lastReviewPayload = null;
 let sourceAtModeChange = '';
+let initialReportSource = '';
+let initialVisualHtml = '';
+let initialExportSource = '';
 
 export function initDocumentStudio() {
   if (btnOpen) {
@@ -69,6 +73,9 @@ export function openStudio(initialText = '', title = '', reviewData = null) {
 
   const rawMd = expandReferences(initialText || lastReviewPayload?.review?.draftOpinion || '', lastReviewPayload || {});
   const reportView = document.getElementById('draft-official-report-view');
+  initialReportSource = lastReviewPayload?.review && reportView?.innerHTML.trim()
+    ? reportViewToMarkdown(reportView) : rawMd;
+  initialExportSource = rawMd || initialReportSource;
 
   // 의견서 탭에서 보던 전문과 동일한 문서를 편집기에 가져온다.
   if (lastReviewPayload?.review && reportView?.innerHTML.trim()) {
@@ -79,7 +86,8 @@ export function openStudio(initialText = '', title = '', reviewData = null) {
     visualEditor.innerHTML = convertMarkdownToVisualHtml(rawMd, titleInput.value);
   }
 
-  sourceEditor.value = visualEditor.innerText.trim() || rawMd;
+  initialVisualHtml = visualEditor.innerHTML;
+  sourceEditor.value = initialReportSource;
   sourceAtModeChange = sourceEditor.value;
   currentMode = 'visual';
   switchMode('visual');
@@ -94,6 +102,9 @@ export function closeStudio() {
 export function resetStudio() {
   lastReviewPayload = null;
   sourceAtModeChange = '';
+  initialReportSource = '';
+  initialVisualHtml = '';
+  initialExportSource = '';
   currentMode = 'visual';
   if (titleInput) titleInput.value = '법률검토의견서';
   if (visualEditor) visualEditor.innerHTML = '';
@@ -107,10 +118,14 @@ export function resetStudio() {
  */
 function switchMode(mode) {
   if (mode === 'source' && currentMode === 'visual') {
-    sourceEditor.value = visualEditor.innerText.trim();
+    sourceEditor.value = visualEditor.innerHTML === initialVisualHtml
+      ? initialReportSource : visualEditor.innerText.trim();
     sourceAtModeChange = sourceEditor.value;
   } else if (mode === 'visual' && currentMode === 'source' && sourceEditor.value !== sourceAtModeChange) {
     visualEditor.innerHTML = convertMarkdownToVisualHtml(sourceEditor.value, titleInput.value);
+    initialReportSource = sourceEditor.value;
+    initialVisualHtml = visualEditor.innerHTML;
+    initialExportSource = sourceEditor.value;
   }
   currentMode = mode;
 
@@ -186,7 +201,7 @@ function buildVisualReportHtml(data, reportTitle) {
         </h3>
         ${review.reasoning?.issues?.length
           ? renderReasoningOpinion(review.reasoning, review, { report: true })
-          : `<div style="font-size: 14px; line-height: 1.85; color: #1E293B; background: #F8FAFC; padding: 16px 20px; border-radius: 6px; border-left: 3px solid #2563EB;">${escapeHtml(cleanText(expandReferences(review.legalOpinion || '', data))).replace(/\n/g, '<br>')}</div>`}
+          : `<div class="report-rich-body">${renderReportBlocksHtml(parseReportBlocks(expandReferences(review.legalOpinion || '', data)))}</div>`}
       </div>
 
       <!-- 3. 리스크 평가 및 보완 조치 사항 -->
@@ -244,54 +259,30 @@ function buildVisualReportHtml(data, reportTitle) {
  */
 function convertMarkdownToVisualHtml(markdownText, reportTitle) {
   if (!markdownText) return '<p class="placeholder-text">보고서 내용이 비어 있습니다.</p>';
+  return `<div class="visual-report-container report-rich-body"><h2 class="report-header-title">${escapeHtml(reportTitle || '법률검토의견서')}</h2>${renderReportBlocksHtml(parseReportBlocks(markdownText))}</div>`;
+}
 
-  const lines = markdownText.split('\n');
-  let html = `<div class="visual-report-container" style="line-height: 1.8;">`;
-  html += `<h2 style="font-size: 20px; font-weight: 800; text-align: center; color: #1E3A8A; margin-bottom: 18px;">${escapeHtml(reportTitle || '법 률 검 토 의 견 서')}</h2>`;
-
-  let inList = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      if (inList) {
-        html += `</ul>`;
-        inList = false;
+function reportViewToMarkdown(reportView) {
+  if (!reportView.querySelectorAll) return reportView.innerText.trim();
+  const parts = [];
+  for (const node of reportView.querySelectorAll('h1, h2, h3, h4, p, li, table')) {
+    const text = node.innerText?.trim();
+    if (!text) continue;
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'table') {
+      const rows = [...node.querySelectorAll('tr')].map(row =>
+        [...row.querySelectorAll('th, td')].map(cell => cell.innerText.trim().replace(/\|/g, ' / ')));
+      const count = Math.max(...rows.map(row => row.length), 0);
+      if (count && rows.length) {
+        parts.push(`| ${rows[0].join(' | ')} |`);
+        parts.push(`| ${Array(count).fill('---').join(' | ')} |`);
+        for (const row of rows.slice(1)) parts.push(`| ${row.join(' | ')} |`);
       }
-      continue;
-    }
-
-    if (trimmed.startsWith('# ')) {
-      if (inList) { html += `</ul>`; inList = false; }
-      continue; // 타이틀은 위에서 표시
-    } else if (trimmed.startsWith('## ')) {
-      if (inList) { html += `</ul>`; inList = false; }
-      const text = cleanText(trimmed.replace('## ', ''));
-      html += `<h3 style="font-size: 15px; font-weight: 700; color: #1E3A8A; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-top: 18px; margin-bottom: 10px;">${escapeHtml(text)}</h3>`;
-    } else if (trimmed.startsWith('### ')) {
-      if (inList) { html += `</ul>`; inList = false; }
-      const text = cleanText(trimmed.replace('### ', ''));
-      html += `<h4 style="font-size: 14px; font-weight: 700; color: #334155; margin-top: 12px; margin-bottom: 6px;">■ ${escapeHtml(text)}</h4>`;
-    } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-      if (!inList) {
-        html += `<ul style="padding-left: 20px; margin-bottom: 10px;">`;
-        inList = true;
-      }
-      const text = cleanText(trimmed.substring(2));
-      html += `<li style="font-size: 13.5px; color: #1E293B; margin-bottom: 4px;">${escapeHtml(text)}</li>`;
-    } else if (trimmed.startsWith('> ')) {
-      if (inList) { html += `</ul>`; inList = false; }
-      const text = cleanText(trimmed.substring(2));
-      html += `<div style="background: #F8FAFC; border-left: 3px solid #3B82F6; padding: 8px 14px; margin: 6px 0; font-size: 13px; color: #475569;">${escapeHtml(text)}</div>`;
-    } else {
-      if (inList) { html += `</ul>`; inList = false; }
-      html += `<p style="font-size: 13.5px; color: #334155; margin-bottom: 8px;">${escapeHtml(cleanText(trimmed))}</p>`;
-    }
+    } else if (tag[0] === 'h') parts.push(`${'#'.repeat(Number(tag[1]))} ${text}`);
+    else if (tag === 'li') parts.push(`- ${text}`);
+    else parts.push(text);
   }
-
-  if (inList) html += `</ul>`;
-  html += `</div>`;
-  return html;
+  return parts.join('\n\n') || reportView.innerText.trim();
 }
 
 /**
@@ -303,9 +294,11 @@ async function exportReport(format) {
   // 현재 에디터 내용 추출 (비주얼 뷰의 innerText 또는 소스 뷰의 value)
   let content = '';
   if (currentMode === 'visual') {
-    content = visualEditor.innerText.trim();
+    content = visualEditor.innerHTML === initialVisualHtml
+      ? initialExportSource : visualEditor.innerText.trim();
   } else {
-    content = sourceEditor.value.trim();
+    content = sourceEditor.value === sourceAtModeChange
+      ? initialExportSource : sourceEditor.value.trim();
   }
 
   if (!content) {

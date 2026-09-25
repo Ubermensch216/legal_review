@@ -100,14 +100,16 @@ function patchIssue(prior, fresh, predecessors, registry) {
   const assessments = prior.assessments.map(a => changed.get(a.elementId) || a);
   let conclusion = computeIssueConclusion(prior.elements, assessments, predecessors);
   const omittedEvidence = [...new Set([...(prior.omittedEvidence || []), ...(fresh.omittedEvidence || [])])];
-  if (fresh.stageStatus === 'FAILED' || omittedEvidence.length || prior.elements.some(e => e.fallback)) {
+  const decisive = new Set(conclusion.decidingElementIds || []);
+  if (fresh.stageStatus === 'FAILED' || prior.elements.some(e => decisive.has(e.id) && e.fallback && e.blocksConclusion === true)) {
     conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
   }
   const counter = fresh.counter?.position ? fresh.counter : prior.counter;
   const gateReasons = [];
   if (fresh.stageStatus === 'FAILED') gateReasons.push('외부 답변으로 보충할 요건 판단 실패');
-  if (omittedEvidence.length) gateReasons.push(`포섭에서 처리하지 못한 근거: ${omittedEvidence.join(', ')}`);
-  if (prior.elements.some(e => e.fallback)) gateReasons.push('골격으로 대체한 미검증 요건이 포함됨');
+  if (omittedEvidence.length && conclusion.legal === 'CONDITIONAL')
+    gateReasons.push(`결론 요건에서 처리하지 못한 근거: ${omittedEvidence.join(', ')}`);
+  if (prior.elements.some(e => decisive.has(e.id) && e.fallback && e.blocksConclusion === true)) gateReasons.push('결론을 좌우한 요건이 골격으로 대체됨');
   if (!assessments.some(a => a.evidenceIds.some(id => registry.get(id)?.official))) gateReasons.push('공식 근거에 기댄 요건 판단이 없음');
   if (assessments.filter(a => conclusion.decidingElementIds.includes(a.elementId)).some(a => a.knowledgeOnly))
     gateReasons.push('결론을 좌우한 요건이 외부 참고 지식에만 기댐');
@@ -315,10 +317,17 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !directlyUpdated.has(w.issueId)), ...fresh.ledger];
   attachVerifiedRules(issueResults, ledger, registry, caseIssues.facts);
   for (const result of issueResults) {
+    const decisiveIds = new Set(result.conclusion?.decidingElementIds || []);
     const unresolved = ledger.filter(w => w.issueId === result.issueId && w.overall !== 'SUPPORTED');
     if (!unresolved.length) continue;
+    const blockingUnresolved = unresolved.filter(w => decisiveIds.has(w.elementId));
+    result.warnings = [...(result.warnings || []), `근거-주장 검증 미완료 ${unresolved.length}건`];
+    if (!blockingUnresolved.length) {
+      if (result.stageStatus === 'OK') result.stageStatus = 'OK_WITH_WARNINGS';
+      continue;
+    }
     result.stageStatus = result.stageStatus === 'FAILED' ? 'FAILED' : 'PARTIAL';
-    result.gateReasons = [...(result.gateReasons || []), `근거-주장 검증 미완료 ${unresolved.length}건`];
+    result.gateReasons = [...(result.gateReasons || []), `결론 요건 근거-주장 검증 미완료 ${blockingUnresolved.length}건`];
     if (result.conclusion.legal !== 'CONDITIONAL') result.conclusion = { ...result.conclusion, legal: 'CONDITIONAL',
       reasons: [...(result.conclusion.reasons || []), '인용 근거가 주장을 충분히 뒷받침하는지 확인되지 않음'] };
   }
@@ -332,11 +341,32 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     if (documentCheck?.overall !== 'SUPPORTED') {
       finding.facialRisk = 'NONE';
       finding.facialAssessment.risk = 'NONE';
+      finding.documentConclusion.status = 'UNCONFIRMED';
+      finding.facialRiskConclusion.status = 'UNCONFIRMED';
+      finding.facialRiskConclusion.level = 'NONE';
     }
-    if (legalChecks.length && legalChecks.some(w => w.overall !== 'SUPPORTED')) {
-      finding.legalValidity = 'NOT_REVIEWED';
-      finding.legalAssessment.authorityEvidenceIds = [];
-    }
+    const decisiveIds = new Set(linked?.conclusion?.decidingElementIds || []);
+    const blockingChecks = legalChecks.filter(w => decisiveIds.has(w.elementId) && w.overall !== 'SUPPORTED');
+    const decisiveVerified = decisiveIds.size > 0 && [...decisiveIds].every(id =>
+      legalChecks.some(w => w.elementId === id && w.overall === 'SUPPORTED'));
+    const missingDecisiveFact = [...decisiveIds].some(id => {
+      const assessment = linked?.assessments?.find(a => a.elementId === id);
+      const element = linked?.elements?.find(e => e.id === id);
+      return (assessment?.status === 'UNKNOWN' || assessment?.factStatus === 'UNKNOWN')
+        && element?.factRequirement === 'EXTERNAL';
+    });
+    const materialExternalFactsMissing = missingDecisiveFact
+      || finding.additionalFactDetails.some(f => f.materiality === 'OUTCOME_DETERMINATIVE');
+    finding.legalValidity = linked?.stageStatus === 'FAILED' ? 'FAILED'
+      : blockingChecks.length || !decisiveVerified ? 'AUTHORITY_INCOMPLETE'
+        : materialExternalFactsMissing ? 'CONDITIONAL_ON_MATERIAL_FACT'
+          : legalChecks.some(w => !decisiveIds.has(w.elementId) && w.overall !== 'SUPPORTED')
+            ? 'REVIEWED_WITH_WARNINGS' : 'REVIEWED';
+    finding.legalAssessment.status = finding.legalValidity;
+    finding.legalValidityConclusion.status = finding.legalValidity;
+    finding.legalValidityConclusion.reason = finding.legalValidity === 'CONDITIONAL_ON_MATERIAL_FACT'
+      ? finding.additionalFactDetails.filter(f => f.materiality === 'OUTCOME_DETERMINATIVE').map(f => f.text).join(' / ')
+      : finding.legalValidity === 'AUTHORITY_INCOMPLETE' ? '결론 요건의 공식 근거 검증이 완료되지 않음' : '';
     finding.riskAxes = scoreContractRisk(finding,
       { institutionType: contractInventory?.regime?.publicProcurement?.institutionType });
   }
@@ -408,7 +438,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (tally('UNCONFIRMED')) gateReasons.push(`근거와 주장의 관계가 미확인된 주장 ${tally('UNCONFIRMED')}개`);
   if (tally('NO_OFFICIAL_SUPPORT')) gateReasons.push(`공식 근거가 없는 주장 ${tally('NO_OFFICIAL_SUPPORT')}개`);
   if (documentWarrants.some(w => w.overall !== 'SUPPORTED')) gateReasons.push('계약 문언과 출처 연결 검증 실패');
-  const complete = issueResults.every(r => r.stageStatus === 'OK') && !gateReasons.length && !inquiry.length;
+  const complete = issueResults.every(r => ['OK', 'OK_WITH_WARNINGS'].includes(r.stageStatus))
+    && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';
   review.reasoning = {
     version: 2, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf,

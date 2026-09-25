@@ -11,7 +11,7 @@ import { getHistoryById } from './lawHistoryDb.js';
 import { getLearningStore } from './manualLearningStore.js';
 import { NOOP_PROGRESS, countLabel } from './progressReporter.js';
 import { buildEvidenceRegistry } from '../reasoning/evidenceRegistry.js';
-import { buildContractInventory, stripFalseDocumentAbsence } from '../reasoning/contractReview.js';
+import { buildContractInventory, contractFactDetails, stripFalseDocumentAbsence } from '../reasoning/contractReview.js';
 
 function includeContractDocumentFindings(review, { preset, documentText, query, workbenchContext }) {
   if (preset !== 'contract_risk' || !documentText || review.contractFindings) return review;
@@ -21,14 +21,20 @@ function includeContractDocumentFindings(review, { preset, documentText, query, 
   const findings = inventory.findings.map((finding, index) => ({
     issueId: `C${index + 1}`, kind: finding.kind, label: finding.label,
     analysisMode: 'HYBRID', documentSupportIds: finding.documentSupportIds, documentFinding: finding.sourceText,
-    sourceSpans: finding.sourceSpans, facialRisk: finding.facialRisk, legalValidity: 'NOT_REVIEWED',
+    sourceSpans: finding.sourceSpans, facialRisk: finding.facialRisk,
+    legalValidity: review.reviewStatus === 'FAILED' ? 'FAILED' : 'AUTHORITY_INCOMPLETE',
     authorityEvidenceIds: [], additionalFactsRequired: finding.additionalFactsRequired,
+    additionalFactDetails: contractFactDetails(finding.kind, finding.additionalFactsRequired),
+    documentConclusion: { status: 'CONFIRMED', finding: finding.sourceText },
+    facialRiskConclusion: { status: 'CONFIRMED', level: finding.facialRisk, reason: `${finding.label} 문언이 확인됨` },
+    legalValidityConclusion: { status: review.reviewStatus === 'FAILED' ? 'FAILED' : 'AUTHORITY_INCOMPLETE',
+      reason: '결론 요건의 공식 근거 검증이 완료되지 않음' },
     facialAssessment: { risk: finding.facialRisk, finding: finding.sourceText,
       documentSupportIds: finding.documentSupportIds },
-    legalAssessment: { status: 'VALIDITY_DEPENDS_ON_FACTS', authorityEvidenceIds: [] },
+    legalAssessment: { status: review.reviewStatus === 'FAILED' ? 'FAILED' : 'AUTHORITY_INCOMPLETE', authorityEvidenceIds: [] },
     ...(finding.ipDimensions ? { ipDimensions: finding.ipDimensions } : {})
   }));
-  const lines = findings.map(f => `- ${f.label} (${f.facialRisk}, ${f.documentSupportIds.join(', ')}): ${f.documentFinding}`);
+  const lines = findings.map(f => `- ${f.label} (${f.documentSupportIds.join(', ')})\n문언 판단: ${f.facialRisk} — 확정\n법적 판단: ${f.legalValidity === 'FAILED' ? '판단 단계 실패' : '핵심 공식 근거 확인 필요'}\n추가 확인사항: ${f.additionalFactDetails.filter(x => x.materiality === 'OUTCOME_DETERMINATIVE').map(x => x.text).join(' / ') || '결론을 좌우하는 외부 사실 없음'}\n${f.documentFinding}`);
   const missing = inventory.missingClauseAdditions.map(m => `- ${m.title}: ${m.reason} 권고 추가 문안: ${m.suggestedText}`);
   const section = ['## 계약 문언상 위험',
     '아래 항목은 계약 원문에서 확인한 협상·운영상 위험입니다. 개별 조항의 법적 효력은 적용 법체계와 추가 사실에 따라 별도 판단해야 합니다.',
