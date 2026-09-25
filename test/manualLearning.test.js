@@ -975,6 +975,22 @@ test('T13 실행 경고 21건은 내부 조치로 남기고 법리 공백과 판
   assert.doesNotMatch(item.text, /근거-주장 함의 확인 실패/);
 });
 
+test('T13 질의 3건에 연결된 긴 근거는 발췌 범위를 밝히고 질의서를 작성한다', async () => {
+  const ctx = stagedContext(Array.from({ length: 3 }, (_, i) =>
+    gap(`G${i + 1}`, 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', `법적 판단 기준 ${i + 1}은?`)));
+  ctx.review.reasoning.issues[0].research = { evidenceIds: Array.from({ length: 12 }, (_, i) => `P${i + 1}`) };
+  ctx.review.reasoning.evidence = Array.from({ length: 12 }, (_, i) => ({
+    id: `P${i + 1}`, label: `판례 ${i + 1}`, official: true, text: `판례 ${i + 1}의 판단 원문. ` + '법적 판단 조건. '.repeat(180)
+  }));
+  const s = stagedService(ctx, async () => ({ abstractFacts: ['추상 사실'], preservedLogic: ['판단 조건'],
+    missingFacts: [], sensitiveTerms: [] }));
+  const { item } = await s.createInquiry({ historyId: 'rev_staged' });
+  assert.equal(item.questions.length, 3);
+  assert.match(item.text, /원문 앞부분 발췌; 전문 확인 필요/);
+  assert.match(item.text, /분량상 원문 미수록 자료/);
+  assert.ok(item.text.length < 16000);
+});
+
 test('T13 원문이 빠진 근거 메타데이터에서도 공식 조문을 재구성해 질의서에 싣는다', async () => {
   const ctx = stagedContext([gap('G1', 'AUTHORITY_CONFLICT', 'EXTERNAL_INQUIRY',
     '반대 견해 "A1.6x"를 어떻게 평가해야 하는가?', { elementId: null })]);

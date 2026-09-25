@@ -309,15 +309,22 @@ export function createManualLearningService({ store = getLearningStore(), histor
     const issues = (reasoning.issues || []).filter(i => issueIds.has(i.id));
     const factIds = new Set(issues.flatMap(i => i.factIds || []));
     const questions = [...candidates.map(c => c.text), ...(focus ? [focus] : [])];
-    const referencedEvidenceIds = new Set(questions.flatMap(q => String(q).match(/\b(?:A|O|P|Q|R)\d+(?:\.[\dA-Za-z_]+)*x?\b/g) || []));
+    // 질문에 직접 나온 근거와 해당 판단 요건의 근거를 먼저 싣는다.
+    // 쟁점 전체의 조사 자료는 많을 수 있으므로 뒤에서 남는 분량에만 싣는다.
+    const referencedEvidenceIds = new Map();
+    const addEvidence = (id, priority) => {
+      if (id && (!referencedEvidenceIds.has(id) || referencedEvidenceIds.get(id) > priority)) referencedEvidenceIds.set(id, priority);
+    };
+    for (const id of questions.flatMap(q => String(q).match(/\b(?:A|O|P|Q|R)\d+(?:\.[\dA-Za-z_]+)*x?\b/g) || [])) addEvidence(id, 0);
     const referencedClaimIds = new Set(questions.flatMap(q => String(q).match(/\bI\d+:[A-Z]\d+(?:\.[A-Z]\d+)?\b/g) || []));
+    const targetElements = new Set(candidates.map(c => c.issue.elementId).filter(Boolean));
     for (const issue of issues) {
-      for (const id of issue.research?.evidenceIds || []) referencedEvidenceIds.add(id);
-      for (const id of issue.research?.documentIds || []) referencedEvidenceIds.add(id);
-      for (const element of issue.elements || []) for (const id of element.sourceIds || []) referencedEvidenceIds.add(id);
-      for (const assessment of issue.assessments || []) for (const id of assessment.evidenceIds || []) referencedEvidenceIds.add(id);
-      for (const id of issue.counter?.evidenceIds || []) referencedEvidenceIds.add(id);
-      for (const precedent of issue.precedents || []) if (precedent.id) referencedEvidenceIds.add(precedent.id);
+      for (const element of issue.elements || []) for (const id of element.sourceIds || []) addEvidence(id, targetElements.has(element.id) ? 0 : 2);
+      for (const assessment of issue.assessments || []) for (const id of assessment.evidenceIds || []) addEvidence(id, targetElements.has(assessment.elementId) ? 0 : 2);
+      for (const id of issue.counter?.evidenceIds || []) addEvidence(id, 1);
+      for (const id of issue.research?.evidenceIds || []) addEvidence(id, 2);
+      for (const id of issue.research?.documentIds || []) addEvidence(id, 2);
+      for (const precedent of issue.precedents || []) if (precedent.id) addEvidence(precedent.id, 2);
     }
     const issueSummaries = issues.map(issue => {
       const judgments = (issue.elements || []).map(element => {
@@ -337,7 +344,8 @@ export function createManualLearningService({ store = getLearningStore(), histor
     const registry = buildEvidenceRegistry(sourceContext);
     const evidence = [];
     let evidenceChars = 0;
-    for (const id of referencedEvidenceIds) {
+    const omitted = [];
+    for (const [id] of [...referencedEvidenceIds].sort((a, b) => a[1] - b[1])) {
       const saved = savedEvidence.get(id);
       const rebuilt = registry.get(id);
       const entry = rebuilt && (!saved || (saved.label === rebuilt.label
@@ -347,26 +355,39 @@ export function createManualLearningService({ store = getLearningStore(), histor
         `${saved.label || id}의 판단 자료 원문을 저장 자료에서 복원하지 못했습니다. 원문을 확보한 검토 이력으로 질의서를 다시 작성하십시오.`, 409);
       const documentExcerpt = /^DOCUMENT/.test(entry?.kind || '');
       if (!raw || (!entry?.official && !documentExcerpt)) continue;
-      const line = `${entry.label || entry.title || entry.kind}${documentExcerpt ? ' (첨부문서 발췌·공식 근거 아님)' : ''}: ${raw}`;
-      if (evidenceChars + line.length > 12000) throw learningError(
-        '질문에 필요한 공식 근거 원문이 질의서 분량을 초과합니다. 검토 범위를 나누어 질의서를 작성하십시오.', 413);
+      const label = `${entry.label || entry.title || entry.kind}${documentExcerpt ? ' (첨부문서 발췌·공식 근거 아님)' : ''}`;
+      // 한 건이 긴 경우에도 원문을 임의로 요약하지 않고 발췌 범위를 명시한다.
+      const excerpt = raw.length > 1500 ? `${raw.slice(0, 1500)}… (원문 앞부분 발췌; 전문 확인 필요)` : raw;
+      const line = `${label}: ${excerpt}`;
+      if (evidenceChars + line.length > 11000) { omitted.push(label); continue; }
       evidence.push(line);
       evidenceChars += line.length;
     }
-    evidence.push(...(reasoning.warrants || []).filter(w => referencedClaimIds.has(w.claimId)
+    const warrants = (reasoning.warrants || []).filter(w => referencedClaimIds.has(w.claimId)
       || issues.some(issue => w.issueId === issue.id || String(w.claimId || '').startsWith(`${issue.id}:`)))
-      .map(w => `원 검토의 판단 주장: ${expandReferences(String(w.text || '').replace(/\s+/g, ' ').trim(), context)}`));
+      .map(w => `원 검토의 판단 주장: ${expandReferences(String(w.text || '').replace(/\s+/g, ' ').trim(), context)}`);
+    const inquiryEvidence = () => [...evidence, ...(omitted.length
+      ? [`분량상 원문 미수록 자료 ${omitted.length}건 (전문 별도 확인 필요): ${omitted.slice(0, 8).join(', ')}${omitted.length > 8 ? ' 외' : ''}`]
+      : []), ...warrants];
     const material = { query: context.meta?.query, questions, issueSummaries,
       facts: (reasoning.facts || []).filter(f => factIds.has(f.id)).map(f => `${f.text}${f.status === 'INFERRED' ? ' (원문 미확인)' : ''}`),
-      unknownFacts: reasoning.unknownFacts || [], evidence };
-    const prompt = JSON.stringify(redactLearningValue(material, terms).value);
+      unknownFacts: reasoning.unknownFacts || [], evidence: inquiryEvidence() };
+    let prompt = JSON.stringify(redactLearningValue(material, terms).value);
+    // 로컬 모델 컨텍스트가 작은 경우에는 보조 근거부터 덜어낸다.
+    // 원문이 빠졌다는 사실을 질의서에 표시하며 질문과 핵심 판단 조건은 유지한다.
+    while (evidence.length && learningInputRoom(ABSTRACT_SYSTEM, prompt, 'analysis').overTokens > 0) {
+      const removed = evidence.pop();
+      omitted.push(removed.split(': ')[0]);
+      material.evidence = inquiryEvidence();
+      prompt = JSON.stringify(redactLearningValue(material, terms).value);
+    }
     fitLocalInput(ABSTRACT_SYSTEM, prompt, 'analysis', '질의 자료가 로컬 AI 입력 한도를 넘었습니다. 추가 쟁점을 줄이십시오.');
     const abstraction = await local(ABSTRACT_SYSTEM, prompt, { task: 'analysis' });
     const facts = list(abstraction?.abstractFacts, '추상 사실');
     const logic = list(abstraction?.preservedLogic, '핵심 조건');
     const missing = list(abstraction?.missingFacts ?? [], '누락 사실');
     if (!facts.length || !logic.length) throw learningError('질문에 필요한 사실·조건을 추상화하지 못했습니다.', 502);
-    const redacted = redactLearningText(inquiryText({ facts, logic, questions, missing, evidence, issueSummaries }), terms);
+    const redacted = redactLearningText(inquiryText({ facts, logic, questions, missing, evidence: inquiryEvidence(), issueSummaries }), terms);
     const parsed = parseInquiryQuestions(redacted.text);
     // 질문 번호 ↔ 원래 확인 사항. 전역 제한 사항은 모든 쟁점을 다시 판단하게 연결한다.
     const anchors = candidates.flatMap((candidate, i) => {

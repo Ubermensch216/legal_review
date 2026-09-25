@@ -672,13 +672,13 @@ function updateBadge() {
 }
 
 function renderReviewIssues() {
-  if (!view.reviewIssues.length) return `<div class="learning-message notice">이 검토에서 기록된 미해결 법리 쟁점이나 실행 제한 사항이 없습니다. 필요한 질문은 직접 입력할 수 있습니다.</div>`;
-  return `<section class="panel learning-review-issues" aria-label="검토 중 확인된 사항">
+  const questions = view.reviewIssues.filter(issue => issue.kind === 'inquiry');
+  if (!questions.length) return `<div class="learning-message notice">외부 전문가에게 질의할 법리 판단 공백이 없습니다. 필요한 질문은 직접 입력할 수 있습니다.</div>`;
+  return `<section class="panel learning-review-issues" aria-label="외부 전문가 질의 사항">
     <div class="panel-header"><div class="panel-title-group"><span class="material-symbols-outlined icon-sm">report</span>
-      <h3>검토 중 확인된 사항 <span class="learning-issue-count">${view.reviewIssues.length}건</span></h3></div></div>
+      <h3>외부 전문가 질의 사항 <span class="learning-issue-count">${questions.length}건</span></h3></div></div>
     <div class="panel-body">
-      <p class="learning-desc">법리 판단 공백만 외부 전문가 질의서에 포함됩니다. 자료 수집 실패와 실행 경고는 시스템에서 재수집하거나 원인을 확인할 항목이며 자동 질문으로 보내지 않습니다.</p>
-      <ul class="learning-review-issue-list">${view.reviewIssues.map(issue => `<li class="learning-review-issue ${issue.kind}">
+      <ul class="learning-review-issue-list">${questions.map(issue => `<li class="learning-review-issue ${issue.kind}">
         <span class="learning-issue-group">${esc(issue.group)}</span><span>${esc(issue.detail)}</span></li>`).join('')}</ul>
     </div>
   </section>`;
