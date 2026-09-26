@@ -975,6 +975,41 @@ test('T13 단계형 검토의 모든 외부 확인 사항을 질문으로 옮기
   assert.deepEqual(edited.anchors.map(a => a.no), [1, 3]);
 });
 
+test('T13 질문 9건의 판단 자료가 입력 한도를 넘으면 질문별로 나누고 모두 질의서에 남긴다', async () => {
+  const ctx = stagedContext([]);
+  const explanation = '계약 문언과 적용 조건을 함께 확인해야 한다. '.repeat(140);
+  ctx.review.reasoning.facts = Array.from({ length: 9 }, (_, i) =>
+    ({ id: `F${i + 1}`, text: `계약 사실 ${i + 1}`, status: 'CONFIRMED' }));
+  ctx.review.reasoning.issues = Array.from({ length: 9 }, (_, i) => ({
+    id: `I${i + 1}`, question: `계약 쟁점 ${i + 1}은?`, factIds: [`F${i + 1}`],
+    elements: [{ id: `I${i + 1}.E1`, text: `요건 ${i + 1}` }],
+    assessments: [{ elementId: `I${i + 1}.E1`, status: 'UNKNOWN', analysis: explanation }]
+  }));
+  ctx.review.reasoning.gaps = Array.from({ length: 9 }, (_, i) =>
+    gap(`G${i + 1}`, 'LEGAL_INTERPRETATION', 'EXTERNAL_INQUIRY', `법리 질문 ${i + 1}은?`,
+      { issueId: `I${i + 1}`, elementId: `I${i + 1}.E1` }));
+  const calls = [];
+  const s = stagedService(ctx, async (_system, user) => {
+    const input = JSON.parse(user);
+    calls.push(input);
+    const numbers = input.questions.map(question => Number(question.match(/\d+/)[0]));
+    return { abstractFacts: numbers.map(no => `추상 사실 ${no}`), preservedLogic: numbers.map(no => `판단 조건 ${no}`),
+      missingFacts: [], sensitiveTerms: [] };
+  });
+  const { item } = await s.createInquiry({ historyId: 'rev_staged' });
+  assert.ok(calls.length > 1 && calls.length <= 9, '큰 전체 프롬프트를 입력 예산에 맞춰 분할한다');
+  assert.deepEqual(calls.flatMap(call => call.questions),
+    Array.from({ length: 9 }, (_, i) => `법리 질문 ${i + 1}은?`));
+  for (let i = 0; i < 9; i++) {
+    const call = calls.find(entry => entry.questions.includes(`법리 질문 ${i + 1}은?`));
+    assert.ok(call.facts.includes(`계약 사실 ${i + 1}`));
+  }
+  assert.equal(item.questions.length, 9);
+  assert.deepEqual(item.questions.map(q => q.no), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.match(item.text, /추상 사실 9/);
+  assert.match(item.text, /판단 조건 9/);
+});
+
 test('T13 외부로 물을 법리 공백이 없으면 로컬 AI를 부르지 않는다', async () => {
   let called = false;
   const s = stagedService(stagedContext([gap('G1', 'FACT_UNKNOWN', 'USER', '사실 확인')]), async () => { called = true; return {}; });

@@ -381,11 +381,46 @@ export function createManualLearningService({ store = getLearningStore(), histor
       material.evidence = inquiryEvidence();
       prompt = JSON.stringify(redactLearningValue(material, terms).value);
     }
-    fitLocalInput(ABSTRACT_SYSTEM, prompt, 'analysis', '질의 자료가 로컬 AI 입력 한도를 넘었습니다. 추가 쟁점을 줄이십시오.');
-    const abstraction = await local(ABSTRACT_SYSTEM, prompt, { task: 'analysis' });
-    const facts = list(abstraction?.abstractFacts, '추상 사실');
-    const logic = list(abstraction?.preservedLogic, '핵심 조건');
-    const missing = list(abstraction?.missingFacts ?? [], '누락 사실');
+    // 쟁점별 판단 설명이 길면 질문을 버리는 대신 질문별 사실 추상화로 나눈다.
+    // 각 호출에는 연결된 쟁점과 사실만 싣고, 최종 질의서의 질문 번호와 순서는 유지한다.
+    let abstractionInputs = [prompt];
+    if (learningInputRoom(ABSTRACT_SYSTEM, prompt, 'analysis').overTokens > 0) {
+      const scopedInputs = questions.map((question, index) => {
+        const linked = index < candidates.length ? candidateIssueIds(candidates[index]) : focusIssueIds;
+        const scopedIssues = linked.length ? issues.filter(issue => linked.includes(issue.id)) : [];
+        const scopedFacts = new Set(scopedIssues.flatMap(issue => issue.factIds || []));
+        const scoped = { ...material, questions: [question],
+          issueSummaries: scopedIssues.map(issue => issueSummaries[issues.indexOf(issue)]),
+          facts: linked.length ? (reasoning.facts || []).filter(f => scopedFacts.has(f.id))
+            .map(f => `${f.text}${f.status === 'INFERRED' ? ' (원문 미확인)' : ''}`) : material.facts,
+          // 공식 근거 발췌는 아래 질의서에서 별도로 구성한다. 추상화 모델은 사건 사실·판단 조건만 다룬다.
+          evidence: [] };
+        const input = JSON.stringify(redactLearningValue(scoped, terms).value);
+        fitLocalInput(ABSTRACT_SYSTEM, input, 'analysis', `질문 ${index + 1}의 판단 자료가 로컬 AI 입력 한도를 넘었습니다.`);
+        return scoped;
+      });
+      const groups = [];
+      let current = null;
+      for (const scoped of scopedInputs) {
+        const merged = current ? { ...current,
+          questions: [...current.questions, ...scoped.questions],
+          issueSummaries: [...new Set([...current.issueSummaries, ...scoped.issueSummaries])],
+          facts: [...new Set([...current.facts, ...scoped.facts])] } : scoped;
+        const mergedInput = JSON.stringify(redactLearningValue(merged, terms).value);
+        if (current && learningInputRoom(ABSTRACT_SYSTEM, mergedInput, 'analysis').overTokens > 0) {
+          groups.push(current);
+          current = scoped;
+        } else current = merged;
+      }
+      if (current) groups.push(current);
+      abstractionInputs = groups.map(group => JSON.stringify(redactLearningValue(group, terms).value));
+    }
+    const abstractions = [];
+    for (const input of abstractionInputs) abstractions.push(await local(ABSTRACT_SYSTEM, input, { task: 'analysis' }));
+    const unique = values => [...new Set(values)];
+    const facts = unique(abstractions.flatMap(value => list(value?.abstractFacts, '추상 사실')));
+    const logic = unique(abstractions.flatMap(value => list(value?.preservedLogic, '핵심 조건')));
+    const missing = unique(abstractions.flatMap(value => list(value?.missingFacts ?? [], '누락 사실')));
     if (!facts.length || !logic.length) throw learningError('질문에 필요한 사실·조건을 추상화하지 못했습니다.', 502);
     const redacted = redactLearningText(inquiryText({ facts, logic, questions, missing, evidence: inquiryEvidence(), issueSummaries }), terms);
     const parsed = parseInquiryQuestions(redacted.text);
@@ -403,7 +438,7 @@ export function createManualLearningService({ store = getLearningStore(), histor
     }).filter(a => parsed.some(q => q.no === a.no));
     return { needsHelp: true, item: store.create('inquiry', historyId, { text: redacted.text, redactions: redacted.counts,
       questions: parsed, anchors, questionSource: 'ALL_REVIEW_ISSUES', answerFormat: 'STRICT_ANSWERS',
-      proposedTerms: proposedPersonalTerms(abstraction.sensitiveTerms || [], redacted.text),
+      proposedTerms: proposedPersonalTerms(unique(abstractions.flatMap(value => list(value?.sensitiveTerms ?? [], '개인정보 후보'))), redacted.text),
       scope: learningScope(context), analysisSource: 'LOCAL_OLLAMA', privacyStatus: 'HUMAN_REVIEW_REQUIRED' }) };
   }
 
