@@ -365,7 +365,7 @@ function initReviewForm() {
       }
     } else {
       formData.append('llmProvider', state.settings.provider);
-      formData.append('llmModel', state.settings.modelName);
+      if (state.settings.modelName) formData.append('llmModel', state.settings.modelName);
     }
 
     // 같은 사건의 재검토라면 그 이력을 알려, 그 사건에서 승인한 지식을 검토에 싣는다.
@@ -648,7 +648,7 @@ function initSettingsModal() {
         modelHint.style.color = 'var(--text-muted, #64748b)';
       }
 
-      const targetModel = currentModel || state.settings.modelName || 'gemma4:e4b';
+      const targetModel = currentModel || state.settings.modelName || state.config?.models?.[provider] || '';
       const matchingOpt = Array.from(modelSelect.options).find(o => o.value === targetModel && !o.disabled);
       if (matchingOpt) {
         modelSelect.value = targetModel;
@@ -669,7 +669,7 @@ function initSettingsModal() {
         modelHint.textContent = `※ 모델 목록 조회 실패: ${err.message}`;
         modelHint.style.color = '#ef4444';
       }
-      const targetModel = currentModel || state.settings.modelName || 'gemma4:e4b';
+      const targetModel = currentModel || state.settings.modelName || state.config?.models?.[provider] || '';
       const matchingOpt = Array.from(modelSelect.options).find(o => o.value === targetModel);
       if (matchingOpt) {
         modelSelect.value = targetModel;
@@ -758,7 +758,8 @@ function updateLlmDisplay() {
   const display = document.getElementById('current-llm-display');
   if (display) {
     const isManual = document.getElementById('manual-learning-mode')?.checked;
-    const model = state.settings.modelName || (isManual ? (state.config?.models?.ollama || 'gemma4:e2b') : '');
+    const model = state.settings.modelName
+      || state.config?.models?.[isManual ? 'ollama' : state.settings.provider] || (isManual ? 'gemma4:e2b' : '');
     display.textContent = isManual
       ? `로컬 Ollama (${model}) · 외부 AI 직접 질의`
       : `AI 엔진: ${state.settings.provider.toUpperCase()} (${model})`;

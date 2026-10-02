@@ -10,7 +10,8 @@ export const state = {
   config: null,
   settings: {
     provider: localStorage.getItem('lr_provider') || 'ollama',
-    modelName: localStorage.getItem('lr_modelName') || 'gemma4:e4b'
+    // 비어 있으면 서버 .env의 모델을 쓴다. 여기에 모델명을 적어 두면 .env 설정을 덮어쓴다.
+    modelName: localStorage.getItem('lr_modelName') || ''
   }
 };
 

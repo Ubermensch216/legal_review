@@ -102,6 +102,16 @@ test('긴 첨부문서의 쟁점 추출은 문서 조각별 호출로 이어가�
   assert.equal(result.issues.length, 1);
 });
 
+test('조각별 추출이 모두 실패하면 분할 전환 사유가 아니라 조각 호출의 실패 원인을 알린다', async () => {
+  const reg = registry();
+  const prefix = buildCommonPrefix({ registry: reg, query: '취업규칙 검토', preset: 'labor_hr', budgets: { document: 4000, index: 2000 } }).text;
+  scriptedOllama(Array(8).fill('JSON 아님'));
+  await assert.rejects(planCaseAndIssues({ registry: reg, query: '취업규칙 검토', preset: 'labor_hr', prefix, provider: 'ollama',
+    config: { budget, model: ENV.OLLAMA_MODEL }, session: createLlmSession(), forceSplit: true }),
+  err => err instanceof StageError && err.budgetExceeded === false && /조각별 쟁점 추출 2건/.test(err.message)
+    && /출력 형식 오류/.test(err.message) && !/조각별 추출로 전환/.test(err.message));
+});
+
 test('긴 질의는 뒷부분을 버리지 않고 구간별로 쟁점을 추출한다', async () => {
   const reg = registry();
   const query = '가'.repeat(2200) + 'SECOND_MARKER' + '나'.repeat(2200) + 'THIRD_MARKER' + '다'.repeat(2200);

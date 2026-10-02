@@ -200,6 +200,7 @@ export async function planCaseAndIssues({ registry, query, preset, prefix, provi
     const collected = { facts: [], issues: [], unknownFacts: [] };
     const skippedDocumentIds = [];
     const skippedQueryRanges = [];
+    const partFailures = [];
     let indexOmitted = 0;
     let splitCalls = 0;
     const firstQuery = query.slice(0, 2000);
@@ -245,12 +246,19 @@ export async function planCaseAndIssues({ registry, query, preset, prefix, provi
             return;
           }
         }
+        partFailures.push(partError);
         skippedDocumentIds.push(...task.ids);
         if (task.queryRange) skippedQueryRanges.push(task.queryRange);
       }
     };
     for (const task of tasks) await processTask(task);
-    if (!collected.issues.length) throw err;
+    if (!collected.issues.length) {
+      // 처음 오류(err)는 분할로 넘어온 계기일 뿐이다. 그대로 올리면 조각 호출이 실제로 왜 실패했는지 가려진다.
+      const reasons = [...new Set(partFailures.map(e => e.message.replace(/^s1(:part:\d+)?: /, '')))];
+      const overBudget = partFailures.every(e => e.budgetExceeded || e.cause?.truncated);
+      throw new StageError('s1', `조각별 쟁점 추출 ${partFailures.length}건이 모두 실패했습니다: ${reasons.slice(0, 3).join(' / ')}`,
+        { budgetExceeded: overBudget, cause: partFailures.find(e => e.cause)?.cause, partFailures: reasons });
+    }
     const result = normalizeCaseIssues(collected, { registry, query, maxIssues, preserveIssues });
     result.diagnostics.splitCalls = splitCalls;
     result.diagnostics.skippedDocumentIds = [...new Set(skippedDocumentIds)];
