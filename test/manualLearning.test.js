@@ -577,6 +577,25 @@ test('T4 승인된 지식은 같은 근거 스냅샷·기간·검증된 인용�
   assert.deepEqual([noArticles.used.length, noArticles.excluded.length], [0, 0]);
 });
 
+test('T4 첨부문서에 제명만 나온 규정의 인용은 본문 미확인 표시를 달고 실으며, 수집한 법령의 없는 조문은 여전히 제외한다', async () => {
+  const internal = { lawName: '가나구 비공무원 공정채용에 관한 규정', articleNo: '제6조' };
+  await approvedKnowledge({ card: { ...card(), citations: [{ lawName: law.lawName, articleNo: '제20조' }, internal] } });
+  const named = { ...context(), impactAndRevisions: { documentChunks: [{ content: '「가나구 비공무원 공정채용에 관한 규정」 등에 따라 채용한다.' }] } };
+
+  // 문서에 이름이 없으면 종전과 같이 제외한다.
+  assert.deepEqual(reasons(find()), ['CITATION_UNVERIFIED']);
+  assert.deepEqual(checkLearningCitations({ citations: [internal] }, named).map(c => c.status), ['DOCUMENT_NAMED']);
+  const found = find(named);
+  assert.deepEqual(found.used.map(k => k.unverifiedCitations), [['가나구 비공무원 공정채용에 관한 규정 제6조']]);
+
+  // 공식 자료를 확보한 법령은 문서에 이름이 나와도 없는 조문을 통과시키지 않는다.
+  const collected = { ...context(), impactAndRevisions: { documentChunks: [{ content: `${law.lawName} 제999조에 따른다.` }] } };
+  assert.deepEqual(checkLearningCitations({ citations: [{ lawName: law.lawName, articleNo: '제999조' }] }, collected).map(c => c.status), ['UNVERIFIED']);
+
+  const registry = buildEvidenceRegistry({ ...named, learningKnowledge: found.used }, {});
+  assert.match(registry.list(e => e.kind === 'KNOWLEDGE')[0].text, /공식 본문을 확인하지 못한 규정/);
+});
+
 test('T4 만료·미검증 인용·질의서 변경은 지식을 제외하고 그 사유를 남긴다', async () => {
   await approvedKnowledge({ approvedAt: new Date(Date.now() - 91 * 86400000).toISOString() });
   assert.deepEqual(reasons(find()), ['EXPIRED'], '90일이 지난 지식은 쓰지 않는다');

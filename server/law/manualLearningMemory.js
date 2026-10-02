@@ -28,6 +28,7 @@ export async function resolveLearningCitations(context, approvedItems, lookup = 
     if (checkLearningCitations({ citations: [citation] }, { ...context, officialEvidence: {
       ...context.officialEvidence, supplementalArticles: [...(context.officialEvidence?.supplementalArticles || []), ...supplements]
     } })[0]?.status === 'VERIFIED_EXISTENCE') continue;
+    // DOCUMENT_NAMED도 조회는 시도한다. 공식 본문이 있으면 그쪽이 우선이다.
     if (/[~,]|및|부터/.test(citation.articleNo)) continue;
     try {
       const found = await lookup(citation.lawName, citation.articleNo);
@@ -57,6 +58,23 @@ export function learningScope(context) {
     hasOfficialArticles: officialLearningArticles(context).length > 0 };
 }
 
+/**
+ * 인용한 규정이 첨부문서·질의에 제명으로 나오지만 공식 자료로는 한 조문도 확보하지 못한 경우인지 본다.
+ * 기관 내부 규정처럼 공개 DB에 없는 근거가 여기에 해당한다. 본문을 확인한 것이 아니므로 공식 근거가 아니다.
+ */
+function namedOnlyInDocument(lawName, context, collected) {
+  const name = String(lawName || '').replace(/\s/g, '');
+  if (name.length < 5) return false;
+  const known = [...collected.map(a => a.lawName), context.officialEvidence?.lawDetail?.lawName];
+  if (known.some(n => normalizedLawName(n) === normalizedLawName(lawName))) return false;
+  const text = [context.meta?.query, ...(context.impactAndRevisions?.documentChunks || []).map(c => c.content || c.excerpt)]
+    .join('\n').replace(/\s/g, '');
+  return text.includes(name);
+}
+
+/** 인용 검증을 통과한 것으로 보는 상태. DOCUMENT_NAMED는 '비공식 참고'로만 싣고 미확인 표시를 남긴다. */
+export const usableCitation = c => c.status === 'VERIFIED_EXISTENCE' || c.status === 'DOCUMENT_NAMED';
+
 export function checkLearningCitations(card, context) {
   const articles = officialLearningArticles(context);
   const matches = (list, c) => list.some(a =>
@@ -68,7 +86,8 @@ export function checkLearningCitations(card, context) {
   return (card.citations || []).map(c => {
     if (/[~,]|및|부터/.test(c.articleNo)) return { ...c, status: 'UNVERIFIED' };
     if (matches(articles, c)) return { ...c, status: 'VERIFIED_EXISTENCE' };
-    return { ...c, status: matches(allArticles, c) ? 'OUT_OF_FORCE' : 'UNVERIFIED' };
+    if (matches(allArticles, c)) return { ...c, status: 'OUT_OF_FORCE' };
+    return { ...c, status: namedOnlyInDocument(c.lawName, context, allArticles) ? 'DOCUMENT_NAMED' : 'UNVERIFIED' };
   });
 }
 
@@ -119,6 +138,7 @@ const excluded = (item, reason, detail = '') => ({ id: item.id, title: item.card
  * `historyId`를 주면 그 검토에서 파생된 지식은 쟁점어 일치를 요구하지 않는다. 방금 그 사건을 위해
  * 만든 지식이 키워드 게이트에 걸려 조용히 빠지는 것을 막기 위함이다.
  * 승인 상태·질의서 연결·근거 스냅샷·기간·인용 검증 네 조건은 어느 경우에도 완화하지 않는다.
+ * 단, 첨부문서에 제명이 나오고 공식 자료가 전혀 없는 규정의 인용(DOCUMENT_NAMED)은 '본문 미확인'으로 표시해 싣는다.
  */
 export function findLearningKnowledge(context, query, store = getLearningStore(), { historyId = null, onlyInCase = false, limit = 2 } = {}) {
   const scope = learningScope(context);
@@ -140,11 +160,13 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
       drops.push(excluded(tagged, 'EXPIRED')); continue;
     }
     const citations = checkLearningCitations(item.card, context);
-    if (!citations.length || !citations.every(c => c.status === 'VERIFIED_EXISTENCE')) {
-      const invalid = citations.filter(c => c.status !== 'VERIFIED_EXISTENCE')
+    if (!citations.length || !citations.every(usableCitation)) {
+      const invalid = citations.filter(c => !usableCitation(c))
         .map(c => `${c.lawName} ${c.articleNo}`).join(', ');
       drops.push(excluded(tagged, 'CITATION_UNVERIFIED', invalid)); continue;
     }
+    // 첨부문서에 제명만 나온 규정의 인용은 싣되, 본문 미확인 사실을 검토 끝까지 들고 간다.
+    tagged.unverifiedCitations = citations.filter(c => c.status === 'DOCUMENT_NAMED').map(c => `${c.lawName} ${c.articleNo}`);
     // 산문에 끼워 넣은 사건번호도 확인되지 않으면 쓰지 않는다. 조문만 맞고 판례가 지어낸 것이면
     // 그 지식은 근거 없는 법리를 검토에 실어 나른다.
     if (checkLearningCases(item.card, context).some(c => c.status !== 'VERIFIED_EXISTENCE')) {
@@ -163,7 +185,7 @@ export function findLearningKnowledge(context, query, store = getLearningStore()
     used: kept.slice(0, limit).map(item => ({ id: item.id, title: item.card.title, card: item.card,
       answers: item.answersByQuestion || [],
       source: item.sourceType === 'HUMAN_EXPERT' ? 'USER_APPROVED_HUMAN_EXPERT' : 'USER_APPROVED_EXTERNAL_AI',
-      approvedAt: item.approvedAt, inCase: item.inCase })),
+      approvedAt: item.approvedAt, inCase: item.inCase, unverifiedCitations: item.unverifiedCitations })),
     excluded: drops
   };
 }

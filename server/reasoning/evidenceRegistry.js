@@ -16,7 +16,7 @@
 //   D4        첨부문서 조항     D4.2   긴 조항의 둘째 조각
 //   K1        승인된 외부 참고 지식(비공식)
 import { createHash } from 'node:crypto';
-import { articleText, inForceAt, isOfficial, normalizedLawName, sameLaw, today, unitNumber } from '../law/evidence.js';
+import { articleText, inForceAt, isOfficial, normalizedLawName, sameLaw, today, unitNumber, unverifiedCitationNotice } from '../law/evidence.js';
 import { extractArticleReferences, isCitationReference, normalizeArticleNo } from '../law/lawArticleRef.js';
 import { chunkLegalDocument } from '../parsers/legalDocChunker.js';
 
@@ -224,7 +224,7 @@ export function buildEvidenceRegistry(context = {}, { documentText = '' } = {}) 
   let knowledgeIndex = 0;
   for (const item of context.learningKnowledge || []) {
     // 질문별 답변이 있으면 카드와 함께 싣는다. 공백을 메우는 답은 카드 요약보다 답변 쪽에 있다.
-    const body = item.answers?.length ? { ...(item.card || {}), answers: item.answers } : (item.card || {});
+    const body = { ...(item.card || {}), ...(item.answers?.length ? { answers: item.answers } : {}), ...unverifiedCitationNotice(item) };
     add({ id: `K${++knowledgeIndex}`, kind: 'KNOWLEDGE', label: item.title, title: item.card?.issue || '',
       text: JSON.stringify(body), official: false, knowledgeId: item.id, source: item.source });
   }

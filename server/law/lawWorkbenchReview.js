@@ -77,6 +77,9 @@ const DEFAULT_REVIEW_SCHEMA = {
   disclaimer: '본 검토의견서는 AI 법령검토 엔진에 의해 작성된 사전 분석 참고자료이며, 구체적인 행정처분, 소송 또는 계약 체결 시에는 법률전문가(변호사)의 최종 감수를 거치시기 바랍니다.'
 };
 
+/** 본문을 확인하지 못한 규정을 인용한 외부 지식이 실렸는가. 실렸으면 검토를 완결(COMPLETE)로 내보내지 않는다. */
+const usesUnverifiedCitation = input => input.learningReferences.some(r => r.unverifiedCitations?.length);
+
 // 기존 호출부 호환을 위해 게이트웨이의 설명 함수를 그대로 내보낸다.
 export { describeProviderMisconfiguration };
 
@@ -372,7 +375,7 @@ ${resolvedProvisionsText}` : ''}
         progress.start('verify', '인용 조문 실존성 검증', `인용 ${countLabel(staged.legalBasis.length, '개')} 대조`, '검증');
         const { verifiedReview } = await verifyAndCorrectReviewCitations({ review: staged, workbenchContext });
         progress.done('verify', describeVerification(verifiedReview));
-        if (incompleteApprovedKnowledge) verifiedReview.reviewStatus = 'PARTIAL';
+        if (incompleteApprovedKnowledge || usesUnverifiedCitation(input)) verifiedReview.reviewStatus = 'PARTIAL';
         return withContractFindings(verifiedReview);
       } catch (err) {
         // 후속 검토를 단일 호출로 바꾸면 저장된 논리 구조가 사라진다.
@@ -548,6 +551,7 @@ ${resolvedProvisionsText}` : ''}
     }
     normalized.learningReferences = input.learningReferences;
     normalized.learningExcluded = input.learningExcluded;
+    if (usesUnverifiedCitation(input)) normalized.reviewStatus = 'PARTIAL';
     // 수집·입력 범위의 진단은 결론의 논리적 완성 여부와 별개다.
     // 공식 인용 존재 확인
     progress.start('verify', '인용 조문 실존성 검증', `인용 ${countLabel((normalized.legalBasis || []).length, '개')} 대조`, '검증');

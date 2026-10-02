@@ -84,3 +84,13 @@ export function containsCitation(article, citation) {
 export function unavailableList(status, reason) {
   return Object.assign([], { fetchStatus: status, unavailableReason: reason });
 }
+
+/**
+ * 승인된 외부 지식이 본문을 확인하지 못한 규정(첨부문서에 제명만 나온 내부 규정)을 인용했을 때
+ * 모델 입력에 함께 싣는 주의 문구. 없으면 빈 객체다.
+ */
+export function unverifiedCitationNotice(item) {
+  return item?.unverifiedCitations?.length
+    ? { citationNotice: `${item.unverifiedCitations.join(', ')}은(는) 공식 본문을 확인하지 못한 규정이다. 그 조문 내용을 확인된 사실로 단정하지 말고 원문 확인이 필요하다고 표시한다.` }
+    : {};
+}

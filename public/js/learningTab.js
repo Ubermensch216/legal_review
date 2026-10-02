@@ -370,7 +370,10 @@ const chip = (label, value) => `<span class="learning-chip">${esc(label)} <stron
 const box = (id, label) => `<label class="learning-check"><input type="checkbox" id="${id}"><span>${esc(label)}</span></label>`;
 
 const STATE_LABEL = { UNANSWERED: '미답변', ANSWERED: '답변됨', APPROVED: '승인됨' };
-const CITATION_LABEL = { VERIFIED_EXISTENCE: '공식 조문에서 확인', OUT_OF_FORCE: '수집했으나 검토 기준일에 시행 중이 아님', UNVERIFIED: '확인 불가' };
+const CITATION_LABEL = { VERIFIED_EXISTENCE: '공식 조문에서 확인', OUT_OF_FORCE: '수집했으나 검토 기준일에 시행 중이 아님', UNVERIFIED: '확인 불가',
+  DOCUMENT_NAMED: '첨부문서에 제명만 나온 규정 — 공식 본문 미확인 (비공식 참고)' };
+// DOCUMENT_NAMED는 재검토에 실리지만 본문 미확인 경고가 붙고 검토 상태가 '부분'으로 남는다.
+const citationUsable = c => c.status === 'VERIFIED_EXISTENCE' || c.status === 'DOCUMENT_NAMED';
 const SOURCE_LABEL = { EXTERNAL_AI: '외부 AI', HUMAN_EXPERT: '외부 전문가' };
 const sourceOf = item => item.sourceType === 'HUMAN_EXPERT' ? 'HUMAN_EXPERT' : 'EXTERNAL_AI';
 const DISTILLATION_LABEL = { LOCAL_SINGLE: '로컬 AI 정리', LOCAL_CHUNKED: '로컬 AI 조각 정리',
@@ -573,7 +576,8 @@ function renderCard(item) {
       ${list('예외', item.card.exceptions)}
       ${list('검토 원리', item.card.principles)}
       ${list('점검 순서', item.card.checklist)}
-      ${checks.some(c => c.status !== 'VERIFIED_EXISTENCE') ? `<div class="learning-message warn">확인되지 않은 인용이 있어 이 카드는 최종 재검토에 사용되지 않습니다. 원 검토에 저장된 공식 근거를 확인하십시오.</div>` : ''}
+      ${checks.some(c => !citationUsable(c)) ? `<div class="learning-message warn">확인되지 않은 인용이 있어 이 카드는 최종 재검토에 사용되지 않습니다. 원 검토에 저장된 공식 근거를 확인하십시오.</div>`
+        : checks.some(c => c.status === 'DOCUMENT_NAMED') ? `<div class="learning-message warn">공식 본문을 확인하지 못한 규정을 인용했습니다. 최종 재검토에는 비공식 참고로만 반영되며, 결과에 미확인 경고가 붙고 검토 상태는 '부분'으로 남습니다. 규정 원문과 대조하십시오.</div>` : ''}
       ${checks.length ? `<div class="learning-field"><span>인용</span><ul>${checks.map(c =>
         `<li class="${c.status === 'VERIFIED_EXISTENCE' ? 'ok' : 'warn'}">${esc(c.lawName)} ${esc(c.articleNo)}
           — ${esc(CITATION_LABEL[c.status] || '확인 불가')}</li>`).join('')}</ul></div>` : ''}

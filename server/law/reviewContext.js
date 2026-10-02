@@ -1,5 +1,5 @@
 import { optimizeDocumentContext } from '../parsers/contextOptimizer.js';
-import { articleText, isOfficial, today, sameLaw, normalizedLawName, inForceAt, historicalReviewNotice } from './evidence.js';
+import { articleText, isOfficial, today, sameLaw, normalizedLawName, inForceAt, historicalReviewNotice, unverifiedCitationNotice } from './evidence.js';
 
 // 섹션별 입력 예산(문자 수). 토큰 예산(num_ctx)과는 별개로, 어떤 근거를 몇 자까지
 // 프롬프트에 실을지 정한다. 여기서 넘친 항목은 수집 진단에만 집계한다.
@@ -63,14 +63,20 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   for (const item of context.learningKnowledge || []) {
     // 사람 전문가 답변인지 외부 AI 답변인지 모델도 알 수 있게 한다. 어느 쪽도 공식 근거는 아니다.
     const text = JSON.stringify({ title: item.title, answerSource: LEARNING_SOURCE_LABEL[item.source] || '외부 AI',
-      ...item.card, ...(item.answers?.length ? { answers: item.answers } : {}) });
+      ...item.card, ...(item.answers?.length ? { answers: item.answers } : {}), ...unverifiedCitationNotice(item) });
     if (learningKnowledgeText.length + text.length + 2 > (budgets.learningKnowledge ?? limits.learningKnowledge)) {
       learningExcluded.push({ id: item.id, title: item.title, reason: 'BUDGET',
         message: '입력 예산이 부족해 이번 검토에는 싣지 못했습니다.', inCase: Boolean(item.inCase) });
       continue;
     }
     learningKnowledgeText += `${text}\n\n`;
-    learningReferences.push({ id: item.id, title: item.title, source: item.source, inCase: Boolean(item.inCase) });
+    learningReferences.push({ id: item.id, title: item.title, source: item.source, inCase: Boolean(item.inCase),
+      ...(item.unverifiedCitations?.length ? { unverifiedCitations: item.unverifiedCitations } : {}) });
+  }
+  const unverifiedCitations = [...new Set(learningReferences.flatMap(r => r.unverifiedCitations || []))];
+  if (unverifiedCitations.length) {
+    warnings.push(`외부 참고 지식이 인용한 ${unverifiedCitations.join(', ')}은(는) 첨부문서에 제명만 나온 규정으로 공식 본문을 확인하지 못했습니다. `
+      + '해당 조문 내용은 비공식 참고이며 규정 원문과 대조해야 합니다.');
   }
   if (learningReferences.length) {
     const human = learningReferences.filter(r => r.source === 'USER_APPROVED_HUMAN_EXPERT').length;

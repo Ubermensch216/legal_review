@@ -272,6 +272,11 @@ export function createManualLearningService({ store = getLearningStore(), histor
     if (!item?.data?.review) throw learningError('서버에 저장된 검토 이력이 필요합니다. 검토를 실행한 뒤 다시 시도하십시오.', 404);
     return item.data;
   };
+  // 저장된 판정은 승인 당시 규칙의 결과다. 화면에는 재검토가 실제로 적용할 현재 판정을 보여 준다.
+  const withCurrentCitationChecks = item => {
+    try { return { ...item, citationChecks: checkLearningCitations(item.card, source(item.historyId)) }; }
+    catch { return item; }
+  };
   const revision = (item, input) => {
     if (input.revision !== item.revision) throw learningError('내용이 변경되었습니다. 다시 불러온 뒤 확인하십시오.', 409);
   };
@@ -446,7 +451,7 @@ export function createManualLearningService({ store = getLearningStore(), histor
     list() {
       const knowledge = store.list('knowledge');
       return { inquiries: store.list('inquiry').map(item => ({ ...safeProposals(item), coverage: inquiryCoverage(item, knowledge) })),
-        knowledge: knowledge.map(safeProposals) };
+        knowledge: knowledge.map(item => safeProposals(withCurrentCitationChecks(item))) };
     },
     async createInquiry(input) {
       const context = source(input.historyId);
