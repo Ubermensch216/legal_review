@@ -418,7 +418,8 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     }).map(item => item.id);
     const screened = await screenEvidenceCandidates({ candidates, kind,
       query: `검토 질의: ${query}\n적용 법령: ${primaryLawName}\n관련 조문: ${targetArticleList.join(', ')}\n쟁점어: ${kbResult.matchedKeywords.join(', ')}`,
-      provider: llmConfig.provider, model: llmConfig.model, apiKey: llmConfig.apiKey, session, protectedIds });
+      provider: llmConfig.provider, model: llmConfig.model, apiKey: llmConfig.apiKey, session, protectedIds,
+      boundary: llmConfig.screenBoundary || 'LLM' });
     screening.decisions.push(...screened.decisions);
     screening.warnings.push(...screened.warnings);
     const hydrated = await hydrateSelectedCandidates({ candidates: screened.selected, kind, loadDetail });

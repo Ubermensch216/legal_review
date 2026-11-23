@@ -6,7 +6,7 @@
 // 프롬프트: [쟁점 관련 사실][최대 4개 요건·근거 원문][과제].
 import { runStage, StageError } from '../stageRunner.js';
 import { REASONING_SYSTEM } from '../prompts.js';
-import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from '../verify/conclusion.js';
+import { applyFactProvenance, computeIssueConclusion, demoteConclusion, narrativeConflicts, resolveDocumentVerdict } from '../verify/conclusion.js';
 import { stripFalseDocumentAbsence } from '../contractReview.js';
 
 export const ELEMENT_STATUS = ['SATISFIED', 'NOT_SATISFIED', 'PARTIALLY_SATISFIED', 'DISPUTED', 'UNKNOWN'];
@@ -17,6 +17,15 @@ const FRAGMENT_CHARS = 900;
 // 서술은 쟁점당 한 번이면 충분하다(요건별 판단은 표로 따로 나온다). 출력 토큰이 곧 시간이므로 길이를 줄이고,
 // 같은 쟁점의 두 번째 이후 호출에서는 서술·반대 논리를 다시 쓰지 않는다.
 const NARRATIVE_CHARS = 260;
+const COMPACT_ANALYSIS_CHARS = 70;
+export const DOCUMENT_VERDICT = ['COMPLIES', 'VIOLATES', 'NOT_ADDRESSED', 'UNCLEAR'];
+const QUOTE_CHARS = 60;
+// 요건의 내용을 되풀이하지 않고 "문서가 이 규정을 지키는가"를 묻는다. 예시는 어떤 표본과도 겹치지 않게 둔다.
+const VERDICT_RULES = `verdict: 첨부문서(또는 정리된 사실)가 이 법 규정을 지키는지 판단한다. 규정의 내용을 다시 설명하지 않는다.
+     COMPLIES: 문서가 규정을 지킨다 / VIOLATES: 문서가 규정과 어긋나거나, 규정이 금지·제한한 것을 허용한다 /
+     NOT_ADDRESSED: 문서가 이 요건을 다루지 않는다 / UNCLEAR: 다루지만 사실이 더 있어야 판단할 수 있다.
+   - quote: 판단의 바탕이 된 첨부문서 문장을 40자 이내로 글자 그대로 옮긴다. 법령 문구를 옮기면 판단이 무효가 된다. NOT_ADDRESSED면 빈 문자열.
+     예) 규정 "임금은 매월 1회 이상 지급한다", 문서 "임금은 분기마다 지급한다" → VIOLATES, quote "임금은 분기마다 지급한다"`;
 const fragmentToken = (id, start, end) => `${id}@fragment:${start}:${end}`;
 const parseFragment = value => String(value).match(/^([A-Z][A-Za-z0-9._]*)@fragment:(\d+):(\d+)$/);
 // 길이 상한은 곧 출력 토큰 상한이다. 실측(사례 01): 쟁점당 출력 958~1,835토큰, 이 단계가 전체 모델 시간의 약 60%.
@@ -45,12 +54,12 @@ function issueBlock({ issue, elements, evidenceText, omittedEvidence, adverseIds
   ].filter(Boolean).join('\n\n');
 }
 
-const TASK = (withReasoning, contractMode = false, { counter = true, narrative = true } = {}) => `[과제: 요건별 포섭]
+const TASK = (withReasoning, contractMode = false, { counter = true, narrative = true, verdict = false } = {}) => `[과제: 요건별 포섭]
 ${withReasoning ? '먼저 reasoning에 판단 과정을 200자 이내로 적는다.\n' : ''}1. assessments: [판단할 요건] 각각에 대해
-   - status: SATISFIED / NOT_SATISFIED / PARTIALLY_SATISFIED / DISPUTED / UNKNOWN. 자료로 판단할 수 없으면 UNKNOWN이다.
+${verdict ? `   - ${VERDICT_RULES}\n` : `   - status: SATISFIED / NOT_SATISFIED / PARTIALLY_SATISFIED / DISPUTED / UNKNOWN. 자료로 판단할 수 없으면 UNKNOWN이다.
    - proof: 그 판단을 뒷받침하는 사실이 원문으로 입증되는지 — SUFFICIENT / INSUFFICIENT / CONFLICTING / NO_EVIDENCE.
      법리상 충족 여부(status)와 입증 여부(proof)는 따로 판단한다.
-   - factIds / contraryFactIds: 요건을 뒷받침하는 사실과 반대되는 사실의 ID.
+`}   - factIds / contraryFactIds: 요건을 뒷받침하는 사실과 반대되는 사실의 ID.
    - evidenceIds: 판단의 법적 근거 ID. 외부 참고 지식(K…)만으로 판단하지 않는다.
 ${contractMode ? '   - documentSupportIds: 계약서 문언을 뒷받침하는 D ID. 법적 근거인 evidenceIds와 구별한다. 계약에 권한이 적혀 있다는 사실과 실제 행사 사실을 구별한다.\n' : ''}
    - analysis: 120자 이내. openQuestion: 자료로는 답할 수 없어 판단을 막는 법리 질문이 있으면 한 문장(120자 이내), 없으면 빈 문자열.
@@ -58,17 +67,53 @@ ${contractMode ? '   - documentSupportIds: 계약서 문언을 뒷받침하는 D
    그리고 이 쟁점에서 어느 쪽을 지지하는지(SUPPORTS: 요건 충족 쪽 / OPPOSES / NEUTRAL)와 결정적 차이·공통점을 적는다.
 ${counter ? '3. counter: 가장 강한 반대 논리(반대 근거 후보를 먼저 검토)와 그 근거 ID, 그에 대한 응답. 응답할 수 없으면 response를 빈 문자열로 둔다.\n' : ''}${narrative ? `${counter ? '4' : '3'}. narrative: 쟁점 판단을 ${NARRATIVE_CHARS}자 이내로 쓴다. 법적 주장마다 [ID]를 붙인다. 판단할 수 없는 부분은 유보한다고 쓴다.` : ''}`;
 
+/** 기본분석의 과제. 요건별 상태만 묻는다. 출력 토큰이 곧 시간이므로 서술·판례 대비·반대 논리를 빼고 이유를 짧게 받는다. */
+const COMPACT_TASK = (contractMode, verdict = false) => `[과제: 요건별 판단]
+[판단할 요건] 각각에 대해 assessments에 한 항목씩 쓴다.
+${verdict ? `   - ${VERDICT_RULES}
+- evidenceIds: 그 규정의 법적 근거 ID.
+- analysis: 문서 내용과 규정의 차이를 ${COMPACT_ANALYSIS_CHARS}자 이내로 쓴다.` : `- status: SATISFIED / NOT_SATISFIED / PARTIALLY_SATISFIED / DISPUTED / UNKNOWN. 자료로 판단할 수 없으면 UNKNOWN이다.
+- proof: SUFFICIENT / INSUFFICIENT / CONFLICTING / NO_EVIDENCE.
+- factIds: 뒷받침하는 사실 ID. evidenceIds: 판단의 법적 근거 ID. 외부 참고 지식(K…)만으로 판단하지 않는다.
+${contractMode ? '- documentSupportIds: 계약서 문언을 뒷받침하는 D ID.\n' : ''}- analysis: 판단 이유 ${COMPACT_ANALYSIS_CHARS}자 이내.`}`;
+
+/** 결론을 좌우할 수 있는 요건. 원문을 분해하지 못한 골격은 결론에 영향이 없으므로 기본분석에서 판단하지 않는다. */
+export function selectJudgedElements(elements, perCall = 8) {
+  const verified = elements.filter(e => !e.fallback || e.blocksConclusion === true);
+  return verified.length ? verified : elements.slice(0, perCall);
+}
+
+export function compactApplicationSchema({ elementIds, evidenceIds, documentIds = [], factIds, verdict = false }) {
+  const idList = (values, max) => values.length
+    ? { type: 'array', maxItems: max, items: { type: 'string', enum: values } }
+    : { type: 'array', maxItems: 0, items: { type: 'string' } };
+  if (verdict) return { type: 'object', additionalProperties: false, required: ['assessments'], properties: {
+    assessments: { type: 'array', maxItems: elementIds.length, items: { type: 'object', additionalProperties: false,
+      required: ['elementId', 'verdict', 'quote', 'evidenceIds', 'analysis'],
+      properties: { elementId: { type: 'string', enum: elementIds }, verdict: { type: 'string', enum: DOCUMENT_VERDICT },
+        quote: { type: 'string', maxLength: QUOTE_CHARS }, evidenceIds: idList(evidenceIds, 4),
+        analysis: { type: 'string', maxLength: COMPACT_ANALYSIS_CHARS } } } } } };
+  return { type: 'object', additionalProperties: false, required: ['assessments'], properties: {
+    assessments: { type: 'array', maxItems: elementIds.length, items: { type: 'object', additionalProperties: false,
+      required: ['elementId', 'status', 'proof', 'factIds', 'evidenceIds', 'analysis'],
+      properties: { elementId: { type: 'string', enum: elementIds }, status: { type: 'string', enum: ELEMENT_STATUS },
+        proof: { type: 'string', enum: PROOF }, factIds: idList(factIds, 4), evidenceIds: idList(evidenceIds, 4),
+        documentSupportIds: idList(documentIds, 4), analysis: { type: 'string', maxLength: COMPACT_ANALYSIS_CHARS } } } } } };
+}
+
 export function applicationSchema({ elementIds, evidenceIds, documentIds = [], factIds, authorityIds, withReasoning,
-  includeCounter = true, includeNarrative = true }) {
+  includeCounter = true, includeNarrative = true, verdict = false }) {
   const idList = (values, max) => values.length
     ? { type: 'array', maxItems: max, items: { type: 'string', enum: values } }
     : { type: 'array', maxItems: 0, items: { type: 'string' } };
   const properties = {
     ...(withReasoning ? { reasoning: { type: 'string', maxLength: 200 } } : {}),
     assessments: { type: 'array', maxItems: elementIds.length, items: { type: 'object', additionalProperties: false,
-      required: ['elementId', 'status', 'proof', 'factIds', 'contraryFactIds', 'evidenceIds', 'analysis', 'openQuestion'],
-      properties: { elementId: { type: 'string', enum: elementIds }, status: { type: 'string', enum: ELEMENT_STATUS },
-        proof: { type: 'string', enum: PROOF }, factIds: idList(factIds, 6), contraryFactIds: idList(factIds, 4),
+      required: [...(verdict ? ['elementId', 'verdict', 'quote'] : ['elementId', 'status', 'proof']), 'factIds', 'contraryFactIds', 'evidenceIds', 'analysis', 'openQuestion'],
+      properties: { elementId: { type: 'string', enum: elementIds },
+        ...(verdict ? { verdict: { type: 'string', enum: DOCUMENT_VERDICT }, quote: { type: 'string', maxLength: QUOTE_CHARS } }
+          : { status: { type: 'string', enum: ELEMENT_STATUS }, proof: { type: 'string', enum: PROOF } }),
+        factIds: idList(factIds, 6), contraryFactIds: idList(factIds, 4),
         evidenceIds: idList(evidenceIds, 6), documentSupportIds: idList(documentIds, 6),
         analysis: { type: 'string', maxLength: 120 }, openQuestion: { type: 'string', maxLength: 120 } } } },
     precedents: { type: 'array', maxItems: authorityIds.length, items: { type: 'object', additionalProperties: false,
@@ -111,7 +156,8 @@ function mergeApplications(values, elements) {
     const statuses = unique(material.map(a => a.status));
     const first = material[0] || rows[0];
     if (!first) return null;
-    return { ...first, status: statuses.length > 1 ? 'DISPUTED' : statuses[0] || 'UNKNOWN',
+    return { ...first, ...(first.verdict && statuses.length > 1 ? { verdict: 'UNCLEAR', quote: '', quoteVerified: false } : {}),
+      status: statuses.length > 1 ? 'DISPUTED' : statuses[0] || 'UNKNOWN',
       proof: statuses.length > 1 ? 'CONFLICTING' : material.some(a => a.proof === 'CONFLICTING') ? 'CONFLICTING' : first.proof,
       factIds: unique(rows.flatMap(a => a.factIds || [])), contraryFactIds: unique(rows.flatMap(a => a.contraryFactIds || [])),
       evidenceIds: unique(rows.flatMap(a => a.evidenceIds || [])),
@@ -139,11 +185,19 @@ function validateContractCounter(counter, registry) {
  * 한 쟁점의 포섭을 실행한다. 실패해도 예외를 올리지 않고 쟁점을 FAILED로 표시해 돌려준다.
  * 한 쟁점의 실패가 다른 쟁점 결과를 버리게 하지 않기 위함이다.
  */
-export async function applyIssue({ issue, elements, research, registry, facts, runPrefix, predecessors = [], provider, config, session,
-  contractMode = false }) {
+export async function applyIssue({ issue, elements: requestedElements, research, registry, facts, runPrefix, predecessors = [], provider, config, session,
+  contractMode = false, depth = null }) {
+  const compact = depth?.application?.compact ? depth.application : null;
+  const elements = compact ? selectJudgedElements(requestedElements, compact.elementsPerCall) : requestedElements;
+  const evidenceLimit = compact?.evidenceChars || ISSUE_EVIDENCE_CHARS;
   const factsById = new Map(facts.map(f => [f.id, f]));
   const evidenceIds = [...new Set([...research.evidenceIds, ...research.adverseCandidateIds])];
-  const withReasoning = config.think !== true;
+  const withReasoning = !compact && config.think !== true;
+  const deferredEvidence = [];
+  // 문서 검토: 모델에게 "문서가 규정을 지키는가"를 묻고, 답은 문서 원문 인용으로 검증한다. 계약 검토는 별도 경로를 쓴다.
+  const verdictMode = Boolean(depth) && !contractMode && (research.documentIds.length > 0 || facts.some(f => f.quoteVerified));
+  const groundTexts = verdictMode ? [...research.documentIds.flatMap(id => [registry.get(id)?.text, ...registry.children(id).map(c => c.text)]),
+    ...facts.filter(f => f.quoteVerified).flatMap(f => [f.quote, f.text])].filter(Boolean) : [];
   const base = { issueId: issue.id, elements, evidenceIds: [], omittedEvidence: [], documentIds: research.documentIds };
   if (!elements.length) {
     return { ...base, stageStatus: 'SKIPPED', assessments: [], precedents: [], counter: null, narrative: '', openQuestions: [],
@@ -158,10 +212,23 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   let attempts = 0;
   let lastError = null;
   const elementGroups = [];
-  for (let i = 0; i < elements.length; i += ELEMENT_BATCH) elementGroups.push(elements.slice(i, i + ELEMENT_BATCH));
+  const elementBatch = compact?.elementsPerCall || ELEMENT_BATCH;
+  for (let i = 0; i < elements.length; i += elementBatch) elementGroups.push(elements.slice(i, i + elementBatch));
   for (const [groupIndex, groupElements] of elementGroups.entries()) {
-  let pending = [...evidenceIds, ...research.documentIds];
-  let maxChars = ISSUE_EVIDENCE_CHARS;
+  // 기본분석: 이 요건들의 출처 조문과 첨부문서 조항을 먼저 싣고, 남는 분량에 판례·해석례를 싣는다.
+  // 출처 조문은 반드시 처리하고, 분량을 넘는 판례·해석례는 심화분석으로 미룬다(요건 묶음마다 반복하지 않는다).
+  const required = new Set(groupElements.flatMap(e => e.sourceIds || []).map(id => registry.get(id)?.parentId || id).filter(id => registry.get(id)));
+  const isRequired = id => { const base = String(id).split('@')[0]; return required.has(base) || required.has(registry.get(base)?.parentId); };
+  const afterBatch = omitted => {
+    if (!compact) return omitted;
+    deferredEvidence.push(...omitted.filter(id => !isRequired(id)));
+    return omitted.filter(isRequired);
+  };
+  // 문서 판단은 문서와 규정을 한 입력에서 봐야 하므로 첨부문서 조항을 맨 앞에 싣는다.
+  const ordered = compact ? [...new Set([...research.documentIds, ...required, ...evidenceIds])]
+    : verdictMode ? [...research.documentIds, ...evidenceIds] : [...evidenceIds, ...research.documentIds];
+  let pending = compact ? ordered.filter(id => !ordered.includes(registry.get(id)?.parentId)) : ordered;
+  let maxChars = evidenceLimit;
   for (let batch = 0; pending.length || batch === 0; batch++) {
     const fragment = pending.length ? parseFragment(pending[0]) : null;
     const rendered = fragment ? (() => {
@@ -178,7 +245,7 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
       const canSplit = ['DOCUMENT', 'PRECEDENT', 'INTERPRETATION', 'ADMIN_RULE'].includes(kind)
         || (['ARTICLE', 'ORDINANCE_ARTICLE'].includes(kind) && allChildren.some(e => e.kind === 'ARTICLE_UNIT'));
       const children = canSplit ? allChildren : [];
-      if (children.length && maxChars <= 2500) { pending = [...children.map(e => e.id), ...pending.slice(1)]; maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue; }
+      if (children.length && maxChars <= 2500) { pending = [...children.map(e => e.id), ...pending.slice(1)]; maxChars = evidenceLimit; batch--; continue; }
       if (maxChars > 1200) { maxChars = Math.floor(maxChars / 2); batch--; continue; }
       const entry = registry.get(first);
       if (entry?.text.length > 180 && !children.length) {
@@ -186,7 +253,7 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
         const step = entry.text.length > FRAGMENT_CHARS ? FRAGMENT_CHARS : Math.ceil(entry.text.length / 2);
         for (let start = 0; start < entry.text.length; start += step)
           tokens.push(fragmentToken(first, start, Math.min(entry.text.length, start + step)));
-        pending = [...tokens, ...pending.slice(1)]; maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue;
+        pending = [...tokens, ...pending.slice(1)]; maxChars = evidenceLimit; batch--; continue;
       }
       warnings.push(`근거 ${first}는 한 호출의 입력 예산을 초과해 제외했습니다.`);
       failedIds.push(first);
@@ -199,20 +266,22 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
       .map(e => e.parentId || e.id))];
     const adverseInBatch = research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId));
     const output = { counter: !values.some(v => v.counter?.position) || adverseInBatch.length > 0, narrative: !values.some(v => v.narrative) };
-    const schema = applicationSchema({ elementIds: groupElements.map(e => e.id), evidenceIds: batchEvidence,
+    const schemaArgs = { elementIds: groupElements.map(e => e.id), evidenceIds: batchEvidence,
       documentIds: rendered.included.filter(id => registry.get(id)?.kind.startsWith('DOCUMENT')),
-      factIds: facts.map(f => f.id), authorityIds, withReasoning, includeCounter: output.counter, includeNarrative: output.narrative });
+      factIds: facts.map(f => f.id), authorityIds, withReasoning, includeCounter: output.counter, includeNarrative: output.narrative, verdict: verdictMode };
+    const schema = compact ? compactApplicationSchema(schemaArgs) : applicationSchema(schemaArgs);
     try {
       const result = await runStage({ stage: groupIndex || batch ? `s4:${issue.id}:part:${groupIndex + 1}:${batch + 1}` : `s4:${issue.id}`,
         provider, system: REASONING_SYSTEM,
         prefix: `${runPrefix}\n\n${issueBlock({ issue, elements: groupElements, evidenceText: rendered.text, omittedEvidence: rendered.omitted,
           adverseIds: research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId)), predecessors })}`,
-        task: TASK(withReasoning, contractMode, output), schema, config, session });
-      values.push(result.value); attempts += result.attempts;
+        task: compact ? COMPACT_TASK(contractMode, verdictMode) : TASK(withReasoning, contractMode, { ...output, verdict: verdictMode }), schema, config, session });
+      values.push(verdictMode ? { ...result.value, assessments: (result.value.assessments || []).map(a => resolveDocumentVerdict(a, groundTexts)) } : result.value);
+      attempts += result.attempts;
       included.push(...rendered.included);
       batchEvidence.forEach(id => allowedEvidence.add(id));
-      pending = rendered.omitted;
-      maxChars = ISSUE_EVIDENCE_CHARS;
+      pending = afterBatch(rendered.omitted);
+      maxChars = evidenceLimit;
     } catch (err) {
       if (!(err instanceof StageError)) throw err;
       lastError = err;
@@ -220,14 +289,14 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
         const [, id, rawStart, rawEnd] = fragment;
         const start = Number(rawStart); const end = Number(rawEnd); const middle = Math.floor((start + end) / 2);
         pending = [fragmentToken(id, start, middle), fragmentToken(id, middle, end), ...rendered.omitted];
-        maxChars = ISSUE_EVIDENCE_CHARS; batch--; continue;
+        maxChars = evidenceLimit; batch--; continue;
       }
       if ((err.budgetExceeded || err.cause?.truncated) && maxChars > 1200) {
         maxChars = Math.floor(maxChars / 2); batch--; continue;
       }
       warnings.push(`근거 묶음 ${rendered.included.join(', ')} 판단 실패: ${err.message}`);
       failedIds.push(...rendered.included);
-      pending = rendered.omitted;
+      pending = afterBatch(rendered.omitted);
     }
   }
   base.omittedEvidence.push(...pending);
@@ -256,7 +325,7 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
       return !contractMode || !/^(ARTICLE|ORDINANCE_ARTICLE)/.test(entry?.kind || '')
         || !sourceArticles.size || sourceArticles.has(entry.parentId || id);
     })])];
-    const adjusted = applyFactProvenance({ ...raw, evidenceIds, documentSupportIds,
+    const adjusted = applyFactProvenance({ ...raw, contraryFactIds: raw.contraryFactIds || [], evidenceIds, documentSupportIds,
       authorityEvidenceIds: evidenceIds.filter(id => registry.get(id)?.official && registry.get(id)?.inForce),
       openQuestion: String(raw.openQuestion || '').trim() }, factsById);
     if (contractMode) {
@@ -287,7 +356,7 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
     || (e.sourceIds || []).some(id => base.omittedEvidence.includes(id))
     || !assessments.some(a => a.elementId === e.id && a.analysis !== '판단 누락'));
   if (decisiveIncomplete && conclusion.legal !== 'CONDITIONAL') {
-    conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
+    conclusion = demoteConclusion(conclusion, '일부 요건 또는 근거를 검토하지 못함');
   }
   const allowed = new Set([...allowedEvidence, ...facts.map(f => f.id), ...elements.map(e => e.id), ...research.documentIds]);
   const narrative = cleanNarrative(value.narrative, allowed);
@@ -315,7 +384,9 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
   const hasWarnings = warnings.some(w => w.includes('판단 실패')) || base.omittedEvidence.length || elements.some(e => e.fallback);
   return { ...base, stageStatus: decisiveIncomplete ? 'PARTIAL' : hasWarnings ? 'OK_WITH_WARNINGS' : 'OK',
     attempts, reasoning: value.reasoning || null, assessments,
-    precedents: value.precedents, counter: validCounter, narrative: narrative.text,
+    precedents: value.precedents || [], counter: validCounter ?? null, narrative: narrative.text,
     openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),
-    conclusion, gateReasons, warnings };
+    conclusion, gateReasons, warnings,
+    ...(compact ? { depthCoverage: { judgedElements: elements.length, skippedSkeletons: requestedElements.length - elements.length,
+      deferredEvidence: [...new Set(deferredEvidence)].filter(id => !included.includes(id)) } } : {}) };
 }

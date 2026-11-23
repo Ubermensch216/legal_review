@@ -120,7 +120,7 @@ export async function checkLlmReadiness(llmConfig = {}) {
  * @returns {Promise<object>}
  */
 export async function generateLegalReview({ query, preset, documentText, workbenchContext, llmConfig = {}, llmSession = null,
-  sourceHistoryId = null, progress = NOOP_PROGRESS }) {
+  sourceHistoryId = null, progress = NOOP_PROGRESS, resumeContext = null }) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
   const primaryLaw = workbenchContext.meta?.primaryLawName || '관련 법령';
   const withContractFindings = review => includeContractDocumentFindings(review,
@@ -367,7 +367,7 @@ ${resolvedProvisionsText}` : ''}
           rerunIssueIds: anchors.rerunIssueIds, knowledgeIssues: anchors.knowledgeIssues,
           knowledgeTargets: anchors.knowledgeTargets } : null;
         const staged = await runReasoningPipeline({ query, preset, documentText, workbenchContext: stagedContext, provider, model,
-          apiKey: llmConfig.apiKey, session, progress, previous });
+          apiKey: llmConfig.apiKey, session, progress, previous, analysisDepth: llmConfig.analysisDepth, resume: resumeContext });
         staged.warnings = [...input.contextWarnings, ...staged.warnings];
         staged.learningReferences = input.learningReferences;
         staged.learningExcluded = input.learningExcluded;

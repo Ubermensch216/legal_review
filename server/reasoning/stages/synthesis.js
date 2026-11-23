@@ -8,9 +8,13 @@ import { REASONING_SYSTEM } from '../prompts.js';
 import { formatArticleNo } from '../evidenceRegistry.js';
 import { stripFalseDocumentAbsence } from '../contractReview.js';
 import { createTokenCounter } from '../../law/llmBudget.js';
+import { COMPLIANCE_LABEL } from '../verify/conclusion.js';
 import { CONTRACT_LEGAL_EXPLANATION, CONTRACT_RISK_LABEL, explainConclusionReasons, explainContractRisk, explainExternalFacts } from '../../../public/js/conclusionLanguage.js';
 
 export const LEGAL_LABEL = { APPLIES: '요건 충족', NOT_APPLICABLE: '요건 불충족', EXCEPTION_APPLIES: '예외 적용', CONDITIONAL: '판단 유보' };
+/** 문서 검토 결론은 "위반 소지"처럼 문서 기준으로 말한다. */
+const conclusionLabel = c => COMPLIANCE_LABEL[c?.compliance] || LEGAL_LABEL[c?.legal] || '판단 유보';
+const VERDICT_LABEL = { COMPLIES: '문서가 규정을 지킴', VIOLATES: '문서가 규정과 어긋남', NOT_ADDRESSED: '문서에 내용 없음', UNCLEAR: '사실 추가 확인 필요' };
 const PROOF_LABEL = { SUFFICIENT: '입증 충분', INSUFFICIENT: '입증 부족', CONFLICTING: '자료 상충', NO_EVIDENCE: '입증 자료 없음' };
 const STATUS_LABEL = { SATISFIED: '충족', NOT_SATISFIED: '불충족', PARTIALLY_SATISFIED: '일부 충족', DISPUTED: '다툼', UNKNOWN: '미확정' };
 export const DISCLAIMER = '본 검토의견서는 AI 법령검토 엔진에 의해 작성된 사전 분석 참고자료이며, 구체적인 행정처분, 소송 또는 계약 체결 시에는 법률전문가(변호사)의 최종 감수를 거치시기 바랍니다.';
@@ -37,7 +41,7 @@ export function conclusionDigest(issues, issueResults) {
   return issues.map(issue => {
     const r = issueResults.find(x => x.issueId === issue.id);
     const c = r?.conclusion || {};
-    const head = `- 쟁점 ${issue.id.slice(1)} ${String(issue.question).replace(/\s+/g, ' ').slice(0, 80)} → ${LEGAL_LABEL[c.legal] || '판단 유보'}`;
+    const head = `- 쟁점 ${issue.id.slice(1)} ${String(issue.question).replace(/\s+/g, ' ').slice(0, 80)} → ${conclusionLabel(c)}`;
     const conditional = conditionalConclusionText(c, r?.elements);
     const pre = c.ifResolved ? ` (선결 쟁점이 풀리면 ${LEGAL_LABEL[c.ifResolved]})` : '';
     return `${head}${pre}${conditional ? `\n  · ${conditional}` : ''}`;
@@ -51,7 +55,7 @@ export function conclusionTable(issues, issueResults) {
     const c = r?.conclusion || {};
     const deciding = (c.decidingElementIds || []).map(id => r.elements.find(e => e.id === id)?.text).filter(Boolean);
     const conditional = conditionalConclusionText(c, r?.elements);
-    return `[${issue.id}] ${issue.question}\n  결론: ${LEGAL_LABEL[c.legal] || '판단 유보'}${c.ifResolved ? ` (선결 쟁점이 풀리면 ${LEGAL_LABEL[c.ifResolved]})` : ''} · ${PROOF_LABEL[c.proof] || ''}`
+    return `[${issue.id}] ${issue.question}\n  결론: ${conclusionLabel(c)}${c.ifResolved ? ` (선결 쟁점이 풀리면 ${LEGAL_LABEL[c.ifResolved]})` : ''} · ${PROOF_LABEL[c.proof] || ''}`
       + `${deciding.length ? `\n  결정 요건: ${deciding.join(' / ')}` : ''}${conditional ? `\n  조건부 결론: ${conditional}` : ''}${r?.counter?.position ? `\n  반대 논리: ${r.counter.position}` : ''}`;
   }).join('\n');
 }
@@ -100,7 +104,7 @@ export function compactSynthesisIssues(issues, results, findings = [], maxChars 
     return { issueId: issue.id, title: issue.question.slice(0, 110),
       documentFinding: linked.map(f => f.label).join(' / ').slice(0, 110),
       facialRisk: linked[0]?.facialRisk || null,
-      legalConclusion: LEGAL_LABEL[result?.conclusion?.legal] || '판단 유보',
+      legalConclusion: conclusionLabel(result?.conclusion),
       topAuthorityIds: (result?.appliedAuthorities || []).slice(0, 5),
       decidingElementIds: (result?.conclusion?.decidingElementIds || []).slice(0, 3),
       decidingElements: deciding.slice(0, 3).map(x => x.slice(0, 110)),
@@ -280,7 +284,7 @@ export async function draftRedlines({ issues, issueResults, synthesis, registry,
   const warnings = [];
   for (const { entry, issues: linked, level } of ordered) {
     const citable = citableFrom(linked.map(l => l.result), registry);
-    const issueLines = linked.map(({ issue, result }) => `- [${issue.id}] ${issue.question} → ${LEGAL_LABEL[result.conclusion?.legal] || '판단 유보'}`
+    const issueLines = linked.map(({ issue, result }) => `- [${issue.id}] ${issue.question} → ${conclusionLabel(result.conclusion)}`
       + `${result.appliedAuthorities?.length ? ` (근거 ${result.appliedAuthorities.slice(0, 5).join(', ')})` : ''}`).join('\n');
     try {
       const { value } = await runStage({ stage: `s5r:${entry.id}`, provider, system: REASONING_SYSTEM,
@@ -337,8 +341,10 @@ function toLegalBasis(entry, registry, relevance) {
  * 필드 이름과 형태를 유지한다.
  */
 export function renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines = [],
-  contractFindings = [], missingClauseAdditions = [], missingClauseAudit = [], contractRegime = null }) {
+  contractFindings = [], missingClauseAdditions = [], missingClauseAudit = [], contractRegime = null, analysisNote = '' }) {
   const { issues, facts } = caseIssues;
+  const titleSuffix = analysisNote ? ' (기본분석)' : '';
+  const depthLines = analysisNote ? [`[분석 수준] ${analysisNote}`] : [];
   const byIssue = id => issueResults.find(r => r.issueId === id);
   const clean = value => preset === 'contract_risk' ? stripFalseDocumentAbsence(value, registry).text : value;
   const summary = clean(synthesis.summary);
@@ -403,8 +409,10 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
       const element = r.elements.find(e => e.id === a.elementId);
       const appliedFacts = (a.factIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);
       const contraryFacts = (a.contraryFactIds || []).map(id => facts.find(f => f.id === id)?.text).filter(Boolean);
-      return `- ${element?.text || a.elementId}: ${STATUS_LABEL[a.status] || a.status} · ${PROOF_LABEL[a.proof] || a.proof}`
-        + ` | 적용 사실: ${appliedFacts.join(' / ') || '연결된 사실 없음'}`
+      const judged = a.verdict ? `${VERDICT_LABEL[a.verdict] || a.verdict}${a.quote ? ` (문서: "${a.quote}")` : ''}`
+        : `${STATUS_LABEL[a.status] || a.status} · ${PROOF_LABEL[a.proof] || a.proof}`;
+      return `- ${element?.text || a.elementId}: ${judged}`
+        + ` | 적용 사실: ${appliedFacts.join(' / ') || (a.quote ? '문서 원문 인용' : '연결된 사실 없음')}`
         + `${contraryFacts.length ? ` | 반대 사실: ${contraryFacts.join(' / ')}` : ''}`
         + ` | 포섭: ${a.analysis ? expandMarkers(a.analysis, registry) : '판단 내용 없음'}`;
     });
@@ -412,7 +420,7 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
       `I · 쟁점: ${issue.question}\n관련 사실: ${issueFacts.join(' / ') || '연결된 사실 없음'}`,
       `R · 적용 규범:\n${rules.join('\n') || '- 확정된 적용 요건 없음 · 공식 법령 근거 확인 필요'}`,
       `A · 사실에 적용:\n${rows.join('\n') || '- 요건별 적용 판단 없음'}${r?.narrative ? `\n판단 보충: ${expandMarkers(r.narrative, registry)}` : ''}`,
-      `C · 쟁점별 결론:\n결론: ${LEGAL_LABEL[c.legal] || '판단 유보'} (${PROOF_LABEL[c.proof] || '입증 미평가'})${c.reasons?.length ? ` — ${c.reasons.join('; ')}` : ''}`,
+      `C · 쟁점별 결론:\n결론: ${conclusionLabel(c)} (${PROOF_LABEL[c.proof] || '입증 미평가'})${c.reasons?.length ? ` — ${c.reasons.join('; ')}` : ''}`,
       c.ifResolved ? `선결 쟁점 해결 시: ${LEGAL_LABEL[c.ifResolved] || '판단 유보'}` : '',
       conditionalConclusionText(c, r?.elements) ? `조건부 결론: ${conditionalConclusionText(c, r?.elements)}` : '',
       r?.counter?.position ? `반대 논리: ${expandMarkers(r.counter.position, registry)}${r.counter.response ? `\n응답: ${expandMarkers(r.counter.response, registry)}` : '\n응답: (반박하지 못함 — 검토 필요)'}` : '',
@@ -450,7 +458,7 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
     `약관성: ${contractRegime.termsRegulation.needsFacts.join(' / ')} 확인 필요`,
     `발주기관 유형: ${contractRegime.publicProcurement.institutionType} · ${contractRegime.publicProcurement.needsFacts.join(' / ')}`] : [];
   const digest = clean(conclusionDigest(issues, issueResults));
-  const draftOpinion = ['# 법률 검토의견서', '## 1. 검토 요지', summary, ...(digest ? [`쟁점별 결론\n${digest}`] : []),
+  const draftOpinion = [`# 법률 검토의견서${titleSuffix}`, ...depthLines, '## 1. 검토 요지', summary, ...(digest ? [`쟁점별 결론\n${digest}`] : []),
     '## 2. 사실관계', facts.map(f => `- ${f.text}${f.status === 'INFERRED' ? ' (원문 미확인)' : ''}`).join('\n') || '- (정리된 사실 없음)',
     ...regimeSection,
     '## 3. 쟁점별 검토', legalOpinion,
@@ -460,7 +468,7 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
     ...missingSection,
     '---', DISCLAIMER].join('\n\n');
   const contractDraft = preset === 'contract_risk' ? [
-    '# 계약서 법률검토의견서', '## 1. 검토 요약', summary,
+    `# 계약서 법률검토의견서${titleSuffix}`, ...depthLines, '## 1. 검토 요약', summary,
     '## 2. 핵심 위험', ...(synthesis.risks || []).slice(0, 5).map(r => `- ${r.title}: ${r.description}`),
     '## 3. 전체 쟁점', clean(synthesis.table),
     '## 4. 조항별 검토', legalOpinion,

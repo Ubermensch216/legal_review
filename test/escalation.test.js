@@ -73,7 +73,7 @@ test('승인한 해시로만 전송하고, 외부 답변은 원래 값으로 복
   const { digest, text } = previewEscalation(ctx, 'I1', { provider: 'exaone' });
   const token = text.match(/\[비공개_\d+\]/)?.[0] || '[비공개_1]';
   const sent = [];
-  const answer = { assessments: [{ elementId: element.id, status: 'SATISFIED', proof: 'SUFFICIENT', factIds: ['F1'], contraryFactIds: [],
+  const answer = { assessments: [{ elementId: element.id, verdict: 'VIOLATES', quote: '동의 없이 개인정보를 수집하였다', factIds: ['F1'], contraryFactIds: [],
     evidenceIds: [unitId], analysis: `${token} 과장의 수집에는 동의가 없었다`, openQuestion: '' }], precedents: [],
   counter: { position: '', evidenceIds: [], response: '' }, narrative: '' };
   globalThis.fetch = async (url, options) => { sent.push(JSON.parse(options.body)); return sse(answer); };
@@ -86,13 +86,13 @@ test('승인한 해시로만 전송하고, 외부 답변은 원래 값으로 복
   const outgoing = JSON.stringify(sent);
   assert.ok(!outgoing.includes('홍길동') && !outgoing.includes('010-1234-5678'), '전송문에 식별정보가 없다');
   assert.equal(result.before.legal, 'CONDITIONAL');
-  assert.equal(result.after.legal, 'APPLIES');
+  assert.deepEqual([result.after.legal, result.after.compliance], ['NOT_APPLICABLE', 'VIOLATION_RISK']);
   const record = result.reasoningPatch.issues.find(i => i.id === 'I1');
   assert.match(record.assessments[0].analysis, /^홍길동 과장의 수집/, '답변의 대체 표기를 복원한다');
   assert.equal(record.assessments[0].origin, 'EXTERNAL');
   assert.equal(record.source, 'EXTERNAL');
   assert.equal(result.reasoningPatch.issues.find(i => i.id === 'I2').conclusion.legal, 'APPLIES', '선결 쟁점이 풀리면 후속 쟁점 결론도 갱신된다');
-  assert.match(result.reviewPatch.summary, /\[외부 LLM 재검토 반영\] 쟁점 1: 판단 유보 → 요건 충족/);
+  assert.match(result.reviewPatch.summary, /\[외부 LLM 재검토 반영\] 쟁점 1: 판단 유보 → 위반 소지/);
   assert.ok(record.gateReasons.some(r => /외부 LLM 답변이 반영됨/.test(r)));
   assert.ok(fs.existsSync(auditLogPath()));
   const audit = readExternalAudit();

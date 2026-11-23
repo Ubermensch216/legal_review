@@ -11,11 +11,70 @@ export const LEGAL = Object.freeze({
 });
 const OPEN = new Set(['UNKNOWN', 'DISPUTED', 'PARTIALLY_SATISFIED']);
 
+// 문서 검토의 결론. "이 문서가 규정을 지키는가"에 답한다. 위반 '소지'이며 위법 확정이 아니다.
+export const COMPLIANCE = Object.freeze({ VIOLATION_RISK: 'VIOLATION_RISK', NO_VIOLATION_FOUND: 'NO_VIOLATION_FOUND', NEEDS_FACTS: 'NEEDS_FACTS' });
+export const COMPLIANCE_LABEL = Object.freeze({ VIOLATION_RISK: '위반 소지', NO_VIOLATION_FOUND: '위반 사항 미발견', NEEDS_FACTS: '추가 확인 필요' });
+
+const compactText = value => String(value || '').replace(/\s+/g, '');
+
+/**
+ * 모델의 문서 판단을 원문으로 검증한다. 지킨다·어긋난다는 판단은 첨부문서 문장을 글자 그대로 인용했을 때만 인정한다.
+ * 소형 모델은 법 조문을 되풀이하며 "충족"이라고 답하는 일이 잦은데, 법령 문구는 문서에 없으므로 여기서 걸러진다.
+ */
+export function resolveDocumentVerdict(raw, groundTexts = []) {
+  if (!raw?.verdict) return raw;
+  const quote = String(raw.quote || '').trim();
+  const needle = compactText(quote);
+  const grounded = needle.length >= 4 && groundTexts.some(text => compactText(text).includes(needle));
+  const claimed = raw.verdict === 'COMPLIES' || raw.verdict === 'VIOLATES';
+  const verdict = claimed && !grounded ? 'UNCLEAR' : raw.verdict;
+  return { ...raw, verdict, quote: grounded ? quote : '', quoteVerified: grounded,
+    status: verdict === 'COMPLIES' ? 'SATISFIED' : verdict === 'VIOLATES' ? 'NOT_SATISFIED' : 'UNKNOWN',
+    proof: claimed && grounded ? 'SUFFICIENT' : 'NO_EVIDENCE',
+    factIds: raw.factIds || [], contraryFactIds: raw.contraryFactIds || [],
+    ...(claimed && !grounded ? { verdictDowngraded: raw.verdict } : {}) };
+}
+
+/** 결론을 판단 유보로 낮춘다. 문서 검토 결론이면 표시 상태도 함께 낮춘다. */
+export const demoteConclusion = (conclusion, reason) => ({ ...conclusion, legal: LEGAL.CONDITIONAL,
+  ...(conclusion.compliance ? { compliance: COMPLIANCE.NEEDS_FACTS } : {}),
+  reasons: [...(conclusion.reasons || []), ...(reason ? [reason] : [])] });
+
+/**
+ * 문서 판단(verdict)에서 쟁점 결론을 계산한다. 원문 인용이 확인된 어긋남이 하나라도 있으면 위반 소지이고,
+ * 모든 요건을 지킨다고 확인될 때만 위반 사항 미발견이다. 문서가 다루지 않은 요건이 있으면 지켰다고 보지 않는다.
+ */
+function complianceConclusion(elements, assessments, predecessors) {
+  const byId = new Map(assessments.map(a => [a.elementId, a]));
+  const applicable = elements.filter(e => !e.fallback || e.blocksConclusion === true);
+  const verdictOf = e => byId.get(e.id)?.verdict;
+  const violating = applicable.filter(e => verdictOf(e) === 'VIOLATES');
+  const complying = applicable.filter(e => verdictOf(e) === 'COMPLIES');
+  const open = applicable.filter(e => !['VIOLATES', 'COMPLIES'].includes(verdictOf(e)));
+  const [legal, compliance, deciding] = violating.length ? [LEGAL.NOT_APPLICABLE, COMPLIANCE.VIOLATION_RISK, violating]
+    : complying.length && !open.length ? [LEGAL.APPLIES, COMPLIANCE.NO_VIOLATION_FOUND, complying]
+      : [LEGAL.CONDITIONAL, COMPLIANCE.NEEDS_FACTS, open];
+  const reasons = [];
+  if (!applicable.length) reasons.push('검증된 판단 요건이 없음');
+  const blocked = predecessors.filter(p => p.legal === LEGAL.CONDITIONAL || p.stageStatus === 'FAILED');
+  const base = { proof: proofOf(deciding, byId), decidingElementIds: deciding.map(e => e.id), derivedBy: 'RULES' };
+  if (blocked.length && legal !== LEGAL.CONDITIONAL) {
+    reasons.push(`선결 쟁점 미해결: ${blocked.map(p => p.issueId).join(', ')}`);
+    return { ...base, legal: LEGAL.CONDITIONAL, compliance: COMPLIANCE.NEEDS_FACTS, ifResolved: legal, reasons };
+  }
+  if (legal === LEGAL.CONDITIONAL && deciding.length) reasons.push(`판단 미확정 요건: ${deciding.map(e => e.id).join(', ')}`);
+  return { ...base, legal, compliance, reasons,
+    ...(legal === LEGAL.CONDITIONAL && open.length
+      ? { scenarios: { pendingElementIds: open.map(e => e.id), ifSatisfied: LEGAL.APPLIES, ifUnsatisfied: LEGAL.NOT_APPLICABLE } } : {}) };
+}
+
 /**
  * 모델 판단을 사실 출처 규칙으로 보정한다. 원문으로 확인되지 않은 사실(INFERRED·UNKNOWN)만으로는
  * 입증이 충분하다고 볼 수 없다.
  */
 export function applyFactProvenance(assessment, factsById) {
+  // 첨부문서 원문 인용으로 이미 확인된 판단이다.
+  if (assessment.quoteVerified) return assessment;
   const facts = assessment.factIds.map(id => factsById.get(id)).filter(Boolean);
   const backed = facts.some(f => f.quoteVerified && !['INFERRED', 'UNKNOWN'].includes(f.status));
   if (assessment.proof === 'SUFFICIENT' && !backed) {
@@ -31,6 +90,7 @@ export function applyFactProvenance(assessment, factsById) {
  * @param {object[]} [predecessors] 선결 쟁점의 결론 ({ issueId, legal, stageStatus })
  */
 export function computeIssueConclusion(elements, assessments, predecessors = [], options = {}) {
+  if (assessments.some(a => a.verdict)) return complianceConclusion(elements, assessments, predecessors);
   const byId = new Map(assessments.map(a => [a.elementId, a]));
   const statusOf = e => byId.get(e.id)?.status || 'UNKNOWN';
   // 원문을 분해하지 못해 만든 골격은 적용 요건으로 검증되기 전까지 결론을 좌우하지 않는다.

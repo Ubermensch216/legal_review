@@ -236,9 +236,20 @@
           <!-- [STEP 3] 실행 액션 바 -->
           <div class="form-actions-bar">
             <input type="checkbox" id="manual-learning-mode" checked hidden>
+            <fieldset class="depth-selector">
+              <legend class="sr-only">분석 수준</legend>
+              <label class="depth-option">
+                <input type="radio" name="analysis-depth" value="BASIC">
+                <span><strong>기본분석</strong><small>빠름 · 대표 근거 대조</small></span>
+              </label>
+              <label class="depth-option">
+                <input type="radio" name="analysis-depth" value="DEEP">
+                <span><strong>심화분석</strong><small>정밀 · 전체 근거 대조</small></span>
+              </label>
+            </fieldset>
             <button type="submit" class="btn btn-primary btn-lg" id="btn-run-review">
               <span class="material-symbols-outlined icon-md">search_insights</span>
-              <span class="btn-text">종합 법령검토 실행</span>
+              <span class="btn-text">기본분석 실행</span>
               <span class="spinner hidden" id="review-spinner"></span>
             </button>
           </div>
@@ -286,6 +297,7 @@
 
       <!-- 2. 워크벤치 결과 4단계 탭 섹션 -->
       <section class="workbench-section card hidden" id="workbench-section">
+        <div class="depth-banner hidden" id="analysis-depth-banner"></div>
         <div class="escalation-panel hidden" id="escalation-panel" aria-live="polite"></div>
         <!-- 탭 네비게이션 (4대 탭) -->
         <div class="workbench-tabs">
@@ -444,7 +456,7 @@
       <div class="result-empty">
         <span class="material-symbols-outlined" aria-hidden="true">balance</span>
         <strong>검토 결과가 여기에 표시됩니다</strong>
-        <p>왼쪽에서 문서를 첨부하거나 질의를 작성한 뒤 종합 법령검토를 실행하세요.</p>
+        <p>왼쪽에서 문서를 첨부하거나 질의를 작성한 뒤 분석을 실행하세요.</p>
       </div>
       </div>
 

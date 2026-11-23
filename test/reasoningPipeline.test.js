@@ -66,6 +66,9 @@ const fakeOllama = ({ failS1 = false, failS6 = false, allSatisfied = false } = {
     if (failS6 && marker.includes('근거-주장 대응')) return { ok: false, status: 500 };
     const value = STAGE_REPLIES[marker](prompt);
     if (allSatisfied && marker.includes('요건별 포섭')) value.assessments = value.assessments.map(a => ({ ...a, status: 'SATISFIED', proof: 'SUFFICIENT', factIds: ['F1'], openQuestion: '' }));
+    // 첨부문서가 있는 쟁점은 "문서가 규정을 지키는가"로 답하고 문서 원문을 인용한다.
+    if (marker.includes('요건별 포섭') && prompt.includes('verdict:')) value.assessments = value.assessments.map(({ status, proof, ...a }) => ({ ...a,
+      verdict: status === 'SATISFIED' ? 'COMPLIES' : 'UNCLEAR', quote: status === 'SATISFIED' ? '근로자 동의 없이 이 규칙을 변경할 수 있다' : '' }));
     return reply(JSON.stringify(value));
   };
   return calls;
@@ -113,7 +116,7 @@ test('단계형 파이프라인은 캐시를 살리는 순서로 호출하고 �
   assert.deepEqual(review.coreIssues, ['불리한 변경에 근로자 동의가 필요한가?', '제41조는 효력이 있는가?']);
   assert.deepEqual(review.legalBasis.map(b => [b.lawName, b.articleNo, b.evidenceIds, b.includesProviso]), [[law, '제94조 제1항', ['A1.1', 'A1.1x'], true]],
     '원칙(A1.1)과 단서(A1.1x)는 같은 조·항 인용 하나로 합친다');
-  assert.match(review.legalOpinion, /\[쟁점 1\][\s\S]*결론: 판단 유보/);
+  assert.match(review.legalOpinion, /\[쟁점 1\][\s\S]*결론: 추가 확인 필요/);
   assert.match(review.legalOpinion, /\(근로기준법 제94조 제1항 단서\)/, '[ID] 표기를 읽을 수 있는 인용으로 바꾼다');
   assert.ok(review.furtherChecks.some(x => x.startsWith('[외부 전문가 질의 필요]')));
   assert.match(review.draftOpinion, /## 4\. 결론 표/);
@@ -240,8 +243,8 @@ test('재검토: 공식 근거가 같으면 기존 쟁점·조사·요건을 재
     if (prompt.includes('[과제: 요건별 포섭]')) {
       const answered = prompt.includes('[K1]');
       return reply(JSON.stringify({ reasoning: '', narrative: '답변을 반영했다 [A1.1x].', precedents: [], counter: { position: '', evidenceIds: [], response: '' },
-        assessments: [{ elementId: 'A1.E1', status: 'SATISFIED', proof: 'SUFFICIENT', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1'], analysis: '', openQuestion: '' },
-          { elementId: 'A1.E2', status: answered ? 'SATISFIED' : 'UNKNOWN', proof: 'SUFFICIENT', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1x'], analysis: '', openQuestion: '' }]
+        assessments: [{ elementId: 'A1.E1', verdict: 'COMPLIES', quote: '이 규칙을 변경할 수 있다', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1'], analysis: '', openQuestion: '' },
+          { elementId: 'A1.E2', verdict: answered ? 'COMPLIES' : 'UNCLEAR', quote: answered ? '이 규칙을 변경할 수 있다' : '', factIds: ['F1'], contraryFactIds: [], evidenceIds: ['A1.1x'], analysis: '', openQuestion: '' }]
           .filter(a => prompt.includes(`[${a.elementId}]`)) }));
     }
     if (prompt.includes('[과제: 근거-주장 대응 확인]')) return reply(JSON.stringify(STAGE_REPLIES['[과제: 근거-주장 대응 확인]']()));

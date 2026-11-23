@@ -39,6 +39,33 @@ const touches = (text, term) => {
   return term.length === 4 && !GENERIC_STEM.has(stem) && text.includes(stem);
 };
 
+/**
+ * 쟁점에 첨부문서의 해당 조항을 연결한다. S1이 사실을 적게 뽑으면 쟁점이 문서 서두에만 연결되어,
+ * 포섭 단계의 모델이 정작 "제18조(포괄임금제)" 본문을 보지 못하고 판단을 유보한다(사례 01: 5개 쟁점 모두 서두만 연결).
+ * 쟁점 문장이 가리킨 조 번호를 먼저, 그다음 쟁점어가 2개 이상 닿는 조항을 붙인다.
+ * 법령명 뒤의 조 번호("근로기준법 제56조")는 문서 조항이 아니므로 세지 않는다.
+ */
+export function linkDocumentClauses({ issues, registry, maxClauses = 3 }) {
+  const clauses = registry.list(e => e.kind === 'DOCUMENT' && String(e.text || '').trim().length > 20);
+  let linkedIssues = 0;
+  let addedClauses = 0;
+  for (const issue of issues) {
+    const question = String(issue.question || '');
+    const cited = [...question.matchAll(/(?<![가-힣]법\s?|시행령\s?|시행규칙\s?)제\s*(\d+)\s*조(?:의\s*(\d+))?/g)]
+      .map(m => `제${m[1]}조${m[2] ? `의${m[2]}` : ''}`);
+    const direct = clauses.filter(c => cited.some(no => new RegExp(`(^|\\s)${no}(?![의\\d])`).test(String(c.label || ''))));
+    const terms = extractTerms(question, ...(issue.searchTerms || []));
+    const scored = clauses.filter(c => !direct.includes(c))
+      .map(c => { const text = `${c.title || ''} ${c.text}`; return { c, hits: terms.filter(t => touches(text, t)).length }; })
+      .filter(x => x.hits >= 2).sort((a, b) => b.hits - a.hits).map(x => x.c);
+    const chosen = [...direct, ...scored].slice(0, maxClauses).map(c => c.id);
+    const before = issue.documentIds || [];
+    const added = chosen.filter(id => !before.includes(id));
+    if (added.length) { issue.documentIds = [...before, ...added]; linkedIssues++; addedClauses += added.length; }
+  }
+  return { linkedIssues, addedClauses };
+}
+
 const isArticle = entry => entry && !entry.parentId && (entry.kind === 'ARTICLE' || entry.kind === 'ORDINANCE_ARTICLE')
   && entry.official && entry.inForce;
 

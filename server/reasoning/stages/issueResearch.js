@@ -48,7 +48,7 @@ export function planResearchQueries(issues, registry, limits = RESEARCH_LIMITS) 
  * 기존 자료 뒤에 붙이므로 등록부를 다시 만들어도 기존 P·Q 번호는 바뀌지 않는다.
  */
 export async function runResearchQueries(context, plan, { clients = {}, limits = RESEARCH_LIMITS, issues = [], provider, model, apiKey,
-  session, classify = null } = {}) {
+  session, classify = null, screenBoundary = 'LLM' } = {}) {
   const api = { searchPrecedents: searchPrecedentCandidates, searchInterpretations: searchInterpretationCandidates,
     getPrecedentDetail, getInterpretationDetail, ...clients };
   const evidence = context.officialEvidence || {};
@@ -88,7 +88,7 @@ export async function runResearchQueries(context, plan, { clients = {}, limits =
       return number && issueText.includes(number);
     }).map(item => item.id);
     const screened = await screenEvidenceCandidates({ candidates, kind, query: plan.queries.join(' / '), issue: issueText,
-      provider, model, apiKey, session, protectedIds, classify });
+      provider, model, apiKey, session, protectedIds, classify, boundary: screenBoundary });
     screening.push(...screened.decisions.map(d => ({ ...d, queries: [...(pool.get(d.id)?.queries || [])] })));
     warnings.push(...screened.warnings);
     const hydrated = await hydrateSelectedCandidates({ candidates: screened.selected, kind,

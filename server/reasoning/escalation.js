@@ -5,7 +5,8 @@
 // 코드가 결론을 다시 계산해 의견서에 반영한다. 외부 모델이 결론을 직접 정하지 않는다.
 import { createHash } from 'node:crypto';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
-import { computeIssueConclusion } from './verify/conclusion.js';
+import { COMPLIANCE_LABEL, computeIssueConclusion, demoteConclusion } from './verify/conclusion.js';
+import { depthProfile } from './analysisDepth.js';
 import { verifyWarrants } from './verify/warrant.js';
 import { mapRegistryText } from './evidenceRegistry.js';
 import { conclusionTable, LEGAL_LABEL, renderReview } from './stages/synthesis.js';
@@ -36,7 +37,7 @@ export function selectEscalationCandidates({ issues, issueResults, ledger = [], 
     if (r.stageStatus === 'PARTIAL') reasons.push('일부 요건 또는 근거를 검토하지 못함');
     const open = (r.assessments || []).filter(a => decisive.has(a.elementId) && ['UNKNOWN', 'DISPUTED', 'PARTIALLY_SATISFIED'].includes(a.status));
     if (r.conclusion?.legal === 'CONDITIONAL' && open.length) reasons.push(`결론 요건 ${open.length}개를 판단하지 못함`);
-    if (ledger.some(w => w.issueId === issue.id && decisive.has(w.elementId) && w.overall !== 'SUPPORTED')) reasons.push('결론 요건의 근거 대응 확인이 끝나지 않음');
+    if (ledger.some(w => w.issueId === issue.id && decisive.has(w.elementId) && !['SUPPORTED', 'NOT_CHECKED'].includes(w.overall))) reasons.push('결론 요건의 근거 대응 확인이 끝나지 않음');
     if (r.elements.some(e => e.fallback && e.blocksConclusion === true)) reasons.push('조문을 요건으로 분해하지 못해 골격으로 대체됨');
     if (!reasons.length) continue;
     candidates.push({ issueId: issue.id, question: issue.question, priority: issue.priority, reasons,
@@ -115,7 +116,7 @@ export async function runEscalation({ ctx, issueId, provider, model, apiKey, dig
   if (request.remaining.length) throw new EscalationError(`비식별 후 ${request.remaining.join(', ')}이(가) 남아 있어 전송하지 않았습니다. 가릴 단어를 추가해 다시 확인하십시오.`, 422, 'IDENTIFIERS_REMAIN');
   const result = ctx.issueResults.find(r => r.issueId === issueId);
   const issue = ctx.caseIssues.issues.find(i => i.id === issueId);
-  const before = { legal: result.conclusion.legal, stageStatus: result.stageStatus };
+  const before = { legal: result.conclusion.legal, compliance: result.conclusion.compliance, stageStatus: result.stageStatus };
   const session = createLlmSession();
   session.externalApproval = { scope: { provider, inputDigest: digest, label: `escalation:${issueId}` } };
   recordExternalTransmission({ provider, model, purpose: 'ISSUE_ESCALATION', issueId, digest, counts: request.counts, replacements: request.replacements });
@@ -124,7 +125,7 @@ export async function runEscalation({ ctx, issueId, provider, model, apiKey, dig
   const config = { model, apiKey, think: true, budget: resolveBudget(provider, { model, outputTokens: 8192 }) };
   const ext = await applyIssue({ issue: request.issue, elements: request.elements, research: ctx.research[issueId], registry: request.registry,
     facts: request.facts, runPrefix: buildIssuePrefix(request.registry, request.issue, request.facts), predecessors, provider, config, session,
-    contractMode: ctx.preset === 'contract_risk' });
+    contractMode: ctx.preset === 'contract_risk', depth: depthProfile('DEEP') });
   if (ext.stageStatus === 'FAILED') {
     throw new EscalationError(`외부 LLM 판단이 실패했습니다: ${ext.error || '원인 미상'}. 기존 로컬 판단은 그대로 둡니다.`, 502, 'EXTERNAL_FAILED');
   }
@@ -154,8 +155,7 @@ export async function runEscalation({ ctx, issueId, provider, model, apiKey, dig
     if (blocking.length) {
       merged.gateReasons.push(`외부 답변의 결론 요건 근거 확인 미완료 ${blocking.length}건`);
       if (merged.conclusion.legal !== 'CONDITIONAL') {
-        merged.conclusion = { ...merged.conclusion, legal: 'CONDITIONAL',
-          reasons: [...(merged.conclusion.reasons || []), '외부 답변이 인용한 근거가 주장을 충분히 뒷받침하는지 확인되지 않음'] };
+        merged.conclusion = demoteConclusion(merged.conclusion, '외부 답변이 인용한 근거가 주장을 충분히 뒷받침하는지 확인되지 않음');
       }
     }
   } else merged.gateReasons.push('외부 답변의 근거 확인을 거치지 않음');
@@ -163,16 +163,17 @@ export async function runEscalation({ ctx, issueId, provider, model, apiKey, dig
 
   ctx.issueResults = ctx.issueResults.map(r => r.issueId === issueId ? merged : r);
   recomputeDependents(ctx, [issueId]);
-  const after = { legal: merged.conclusion.legal, stageStatus: merged.stageStatus };
+  const after = { legal: merged.conclusion.legal, compliance: merged.conclusion.compliance, stageStatus: merged.stageStatus };
+  const labelOf = c => COMPLIANCE_LABEL[c.compliance] || LEGAL_LABEL[c.legal] || '판단 유보';
   const prefix = `[외부 LLM 재검토 반영] 쟁점 ${issueId.slice(1)}:`;
-  const note = `${prefix} ${LEGAL_LABEL[before.legal] || '판단 유보'} → ${LEGAL_LABEL[after.legal] || '판단 유보'}`
+  const note = `${prefix} ${labelOf(before)} → ${labelOf(after)}`
     + ` (${provider} ${model}, 비식별 입력 · 결론은 코드가 요건 판단으로 다시 계산)`;
   ctx.escalationNotes = [...(ctx.escalationNotes || []).filter(n => !n.startsWith(prefix)), note];
   const synthesis = { ...ctx.synthesis, table: conclusionTable(ctx.caseIssues.issues, ctx.issueResults),
     summary: `${ctx.synthesis.summary || ''}\n\n${ctx.escalationNotes.join('\n')}`.trim() };
   const review = renderReview({ caseIssues: ctx.caseIssues, issueResults: ctx.issueResults, synthesis, gaps: ctx.gaps, registry: ctx.registry,
     preset: ctx.preset, redlines: ctx.redlines, contractFindings: ctx.contractFindings, missingClauseAdditions: ctx.missingClauseAdditions,
-    missingClauseAudit: ctx.missingClauseAudit, contractRegime: ctx.contractRegime });
+    missingClauseAudit: ctx.missingClauseAudit, contractRegime: ctx.contractRegime, analysisNote: ctx.analysisNote || '' });
   const reasoningPatch = { issues: ctx.caseIssues.issues.map(i => issueRecord(ctx, i)), warrants: ctx.ledger };
   return { issueId, before, after, reviewPatch: review, reasoningPatch, warnings, externalNote: note };
 }

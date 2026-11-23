@@ -29,7 +29,7 @@ const metadata = (item, kind) => ({
  * 결론, 인용 가능성, 사실관계의 유사성은 공식 본문을 확보한 뒤 판단한다.
  */
 export async function screenEvidenceCandidates({ candidates, kind, query, issue = '', provider, model, apiKey, session,
-  classify = null, protectedIds = [], batchSize = BATCH_SIZE, embed = embedTexts, thresholds = SCREEN_SIMILARITY }) {
+  classify = null, protectedIds = [], batchSize = BATCH_SIZE, embed = embedTexts, thresholds = SCREEN_SIMILARITY, boundary = 'LLM' }) {
   const unique = [...new Map((Array.isArray(candidates) ? candidates : []).filter(x => x?.id)
     .map(x => [String(x.id), x])).values()];
   const decisions = [];
@@ -63,7 +63,8 @@ export async function screenEvidenceCandidates({ candidates, kind, query, issue 
         pre.set(String(item.id), { label: 'IRRELEVANT', reason: `의미 유사도 ${shown} · 쟁점 용어 없음`, method: 'EMBEDDING' });
     });
   }
-  const toAsk = unique.filter(x => !pre.has(String(x.id)));
+  // boundary='KEEP'(기본분석): 경계 후보를 모델에 묻지 않고 본문 확인 대상으로 남긴다. 버리는 쪽으로 판단하지 않는다.
+  const toAsk = boundary === 'KEEP' ? [] : unique.filter(x => !pre.has(String(x.id)));
   const llmLabels = new Map();
   for (let start = 0; start < toAsk.length; start += batchSize) {
     const batch = toAsk.slice(start, start + batchSize);

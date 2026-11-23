@@ -45,32 +45,38 @@ set "OLLAMA_ENDPOINT=http://localhost:11434"
 if exist ".env" (
     for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
         set "K=%%a"
-        if /i "!K!"=="PORT" if not "%%b"=="" set "APP_PORT=%%b"
-        if /i "!K!"=="LLM_PROVIDER" if not "%%b"=="" set "LLM_PROV=%%b"
-        if /i "!K!"=="OLLAMA_URL" if not "%%b"=="" set "OLLAMA_ENDPOINT=%%b"
+        if not "!K:~0,1!"=="#" (
+            if /i "!K!"=="PORT" if not "%%b"=="" set "APP_PORT=%%b"
+            if /i "!K!"=="LLM_PROVIDER" if not "%%b"=="" set "LLM_PROV=%%b"
+            if /i "!K!"=="OLLAMA_URL" if not "%%b"=="" set "OLLAMA_ENDPOINT=%%b"
+        )
     )
 )
 
 REM 3. 로컬 Ollama 엔진 확인 및 필요 시 자동 기동
 if /i "%LLM_PROV%"=="ollama" (
     if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
-    powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri '%OLLAMA_ENDPOINT%/api/tags' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" > nul 2>&1
+    call :probe_ollama
     if !ERRORLEVEL! NEQ 0 (
         where ollama > nul 2>&1
         if !ERRORLEVEL! EQU 0 (
             echo [INFO] Ollama 서비스가 꺼져 있어 백그라운드에서 시작합니다...
-            start "" /B ollama serve > nul 2>&1
+            if exist "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" (
+                start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
+            ) else (
+                start "" /B ollama serve > nul 2>&1
+            )
             for /L %%i in (1,1,15) do (
-                powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri '%OLLAMA_ENDPOINT%/api/tags' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" > nul 2>&1
+                call :probe_ollama
                 if !ERRORLEVEL! EQU 0 goto :ollama_ready
-                timeout /t 1 /nobreak > nul
+                ping -n 2 127.0.0.1 > nul
             )
             echo [WARN] Ollama 응답 확인이 지연되고 있습니다. 서버는 계속 시작합니다.
         ) else (
             echo [WARN] Ollama가 설치되어 있지 않습니다. 로컬 모델 사용 시 setup.bat 을 실행하세요.
         )
     ) else (
-        echo [OK] Ollama 로컬 LLM 서비스 연결 확인 (%OLLAMA_ENDPOINT%)
+        echo [OK] Ollama 로컬 LLM 서비스 연결 확인: %OLLAMA_ENDPOINT%
     )
 )
 :ollama_ready
@@ -86,7 +92,7 @@ start "" /B powershell -NoProfile -WindowStyle Hidden -Command ^
     "for ($try = 0; $try -lt 40; $try++) {" ^
     "  foreach ($p in @($basePort, $basePort+1, $basePort+2, $basePort+3, $basePort+4)) {" ^
     "    try {" ^
-    "      $res = Invoke-WebRequest -UseBasicParsing -Uri ('http://localhost:' + $p + '/health') -TimeoutSec 1;" ^
+    "      $res = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $p + '/health') -TimeoutSec 2;" ^
     "      if ($res.StatusCode -eq 200) { Start-Process ('http://localhost:' + $p); exit 0 }" ^
     "    } catch {}" ^
     "  }" ^
@@ -97,3 +103,12 @@ node server/index.js
 echo.
 echo [INFO] 서버가 종료되었습니다.
 pause
+exit /b 0
+
+:probe_ollama
+set "OLLAMA_PROBE_URL=%OLLAMA_ENDPOINT:localhost=127.0.0.1%"
+curl.exe -s -f --max-time 2 "%OLLAMA_PROBE_URL%/api/tags" > nul 2>&1
+if %ERRORLEVEL% EQU 0 exit /b 0
+set "OLLAMA_HOST=%OLLAMA_ENDPOINT%"
+ollama list > nul 2>&1
+exit /b %ERRORLEVEL%

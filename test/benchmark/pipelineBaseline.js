@@ -64,10 +64,11 @@ async function runCase(item, run) {
   catch (err) { return { ...row, stage: 'PARSE', error: err.message, wallMs: Date.now() - started }; }
 
   const ctx = await buildWorkbenchContext({ query: item.query, preset: item.preset, documentText,
-    targetLaw: item.targetLaw, targetDate: item.targetDate || '' });
+    targetLaw: item.targetLaw, targetDate: item.targetDate || '',
+    llmConfig: process.env.BASELINE_DEPTH === 'BASIC' ? { provider, screenBoundary: 'KEEP' } : {} });
   const collectedMs = Date.now() - started;
   const review = await generateLegalReview({ query: item.query, preset: item.preset, documentText,
-    workbenchContext: ctx, llmConfig: { provider, pipeline } });
+    workbenchContext: ctx, llmConfig: { provider, pipeline, ...(process.env.BASELINE_DEPTH ? { analysisDepth: process.env.BASELINE_DEPTH } : {}) } });
   const verification = review.factualityVerification || {};
   if (process.env.BASELINE_SAVE_DIR) {
     fs.mkdirSync(process.env.BASELINE_SAVE_DIR, { recursive: true });
@@ -75,6 +76,7 @@ async function runCase(item, run) {
   }
   return { ...row, stage: 'DONE', wallMs: Date.now() - started, collectMs: collectedMs,
     primaryLaw: ctx.meta?.primaryLawName || null,
+    analysisDepth: review.analysisDepth || null, analysisCoverage: review.analysisCoverage || null,
     reviewEngine: review.reviewEngine, reviewStatus: review.reviewStatus, isFallback: Boolean(review.isFallback),
     fallbackReason: review.fallbackReason || null,
     counts: { issues: (review.coreIssues || []).length, legalBasis: (review.legalBasis || []).length,

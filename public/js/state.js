@@ -37,7 +37,9 @@ export const state = {
     externalProvider: read('lr_extProvider', 'exaone') || 'exaone',
     externalModel: read('lr_extModel'),
     // 외부로 보낼 때 추가로 가릴 단어(기관명 등). 이 브라우저에만 저장된다.
-    privateTerms: read('lr_privateTerms')
+    privateTerms: read('lr_privateTerms'),
+    // 기본은 빠른 기본분석이다. 필요할 때 결과 화면에서 심화분석으로 이어 간다.
+    analysisDepth: read('lr_depth') === 'DEEP' ? 'DEEP' : 'BASIC'
   })
 };
 
@@ -48,6 +50,7 @@ export function saveSettings(newSettings) {
   write('lr_extProvider', state.settings.externalProvider);
   write('lr_extModel', state.settings.externalModel);
   write('lr_privateTerms', state.settings.privateTerms);
+  write('lr_depth', state.settings.analysisDepth);
   // 이전 버전과의 호환: 주 제공자·모델도 함께 남긴다.
   write('lr_provider', state.settings.provider);
   write('lr_modelName', state.settings.modelName);

@@ -50,7 +50,7 @@ if !NODE_OK! EQU 0 (
         echo   [ERROR] Node.js 22 이상 설치 확인에 실패했습니다.
         echo           https://nodejs.org 에서 Node.js 22 LTS 이상을 직접 설치한 뒤
         echo           새 터미널 창에서 setup.bat 을 다시 실행해 주세요.
-        pause
+        if "!NON_INTERACTIVE!"=="0" pause
         exit /b 1
     )
 )
@@ -70,7 +70,7 @@ if exist "node_modules" (
 )
 if !ERRORLEVEL! NEQ 0 (
     echo   [ERROR] npm 패키지 설치 중 오류가 발생했습니다. 네트워크 상태를 확인해 주세요.
-    pause
+    if "!NON_INTERACTIVE!"=="0" pause
     exit /b 1
 )
 echo   [OK] npm 패키지 설치 완료
@@ -104,7 +104,7 @@ if !OLLAMA_FOUND! EQU 0 (
         echo.
         echo   [ERROR] Ollama 자동 설치를 완료하지 못했습니다.
         echo           https://ollama.com/download 에서 직접 설치 후 setup.bat 을 다시 실행해 주세요.
-        pause
+        if "!NON_INTERACTIVE!"=="0" pause
         exit /b 1
     )
 )
@@ -118,7 +118,7 @@ echo [4/5] Ollama 서비스 상태 확인 및 AI 모델 설치 중...
 call :ensure_ollama_running
 if !ERRORLEVEL! NEQ 0 (
     echo   [ERROR] Ollama 서버를 시작하지 못했습니다. Ollama 앱을 실행한 뒤 다시 시도해 주세요.
-    pause
+    if "!NON_INTERACTIVE!"=="0" pause
     exit /b 1
 )
 
@@ -126,7 +126,7 @@ echo   [INFO] 기본 법령 추론 모델(gemma4:e2b)을 확인/다운로드합�
 ollama pull gemma4:e2b
 if !ERRORLEVEL! NEQ 0 (
     echo   [ERROR] gemma4:e2b 모델 다운로드에 실패했습니다. 인터넷 연결을 확인해 주세요.
-    pause
+    if "!NON_INTERACTIVE!"=="0" pause
     exit /b 1
 )
 echo   [OK] gemma4:e2b 준비 완료
@@ -135,7 +135,7 @@ echo   [INFO] 판례·해석례 의미 검색용 임베딩 모델(bge-m3)을 확
 ollama pull bge-m3
 if !ERRORLEVEL! NEQ 0 (
     echo   [ERROR] bge-m3 모델 다운로드에 실패했습니다. 인터넷 연결을 확인해 주세요.
-    pause
+    if "!NON_INTERACTIVE!"=="0" pause
     exit /b 1
 )
 echo   [OK] bge-m3 준비 완료
@@ -194,7 +194,7 @@ if not exist ".env" (
 
 echo.
 echo ============================================================================
-echo   모든 환경 세팅이 완료되었습니다!
+echo   모든 환경 세팅이 완료되었습니다.
 echo   이제 start.bat 을 실행하면 서버와 웹 화면이 자동으로 시작됩니다.
 echo ============================================================================
 echo.
@@ -239,20 +239,30 @@ exit /b 0
 for /f "delims=" %%p in ('powershell -NoProfile -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"') do set "PATH=%%p"
 exit /b 0
 
+:probe_ollama
+curl.exe -s -f --max-time 2 http://127.0.0.1:11434/api/tags > nul 2>&1
+if %ERRORLEVEL% EQU 0 exit /b 0
+ollama list > nul 2>&1
+exit /b %ERRORLEVEL%
+
 :ensure_ollama_running
-powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:11434/api/tags' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" > nul 2>&1
+call :probe_ollama
 if %ERRORLEVEL% EQU 0 (
     echo   [OK] Ollama 서버가 이미 실행 중입니다.
     exit /b 0
 )
 echo   [INFO] Ollama 백그라운드 서비스를 시작하는 중...
-start "" /B ollama serve > nul 2>&1
+if exist "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" (
+    start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
+) else (
+    start "" /B ollama serve > nul 2>&1
+)
 for /L %%i in (1,1,20) do (
-    powershell -NoProfile -Command "try { $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://localhost:11434/api/tags' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }" > nul 2>&1
+    call :probe_ollama
     if !ERRORLEVEL! EQU 0 (
         echo   [OK] Ollama 서버가 준비되었습니다.
         exit /b 0
     )
-    timeout /t 1 /nobreak > nul
+    ping -n 2 127.0.0.1 > nul
 )
 exit /b 1

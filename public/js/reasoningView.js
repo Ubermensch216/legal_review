@@ -3,9 +3,13 @@ import { createReferenceFormatter, explainDiagnostic } from './learningIssues.js
 import { stripReportMarkup } from './reportFormat.js';
 import { CONTRACT_LEGAL_EXPLANATION, explainConclusionReasons, explainContractRisk, explainExternalFacts, isSourcePlaceholder } from './conclusionLanguage.js';
 const LEGAL = { APPLIES: ['요건 충족', 'ok'], NOT_APPLICABLE: ['요건 불충족', 'no'], EXCEPTION_APPLIES: ['예외 적용', 'warn'], CONDITIONAL: ['판단 유보', 'hold'] };
+// 문서 검토의 결론과 요건별 판단. 위반 '소지'이며 위법 확정이 아니다.
+const COMPLIANCE = { VIOLATION_RISK: ['위반 소지', 'no'], NO_VIOLATION_FOUND: ['위반 사항 미발견', 'ok'], NEEDS_FACTS: ['추가 확인 필요', 'hold'] };
+const VERDICT = { COMPLIES: '문서가 규정을 지킴', VIOLATES: '문서가 규정과 어긋남', NOT_ADDRESSED: '문서에 내용 없음', UNCLEAR: '사실 추가 확인 필요' };
+const verdictOf = c => COMPLIANCE[c?.compliance] || LEGAL[c?.legal] || LEGAL.CONDITIONAL;
 const STATUS = { SATISFIED: '충족', NOT_SATISFIED: '불충족', PARTIALLY_SATISFIED: '일부 충족', DISPUTED: '다툼', UNKNOWN: '미확정' };
 const PROOF = { SUFFICIENT: '입증 충분', INSUFFICIENT: '입증 부족', CONFLICTING: '자료 상충', NO_EVIDENCE: '입증 자료 없음' };
-const RULE_STATUS = { VERIFIED: '규범 원문 확인', UNVERIFIED: '규범 근거 확인 필요', CONFLICTING: '규범 해석 다툼' };
+const RULE_STATUS = { VERIFIED: '규범 원문 확인', UNVERIFIED: '규범 근거 확인 필요', SOURCE_ONLY: '공식 출처 확인 · 내용 대조 전', CONFLICTING: '규범 해석 다툼' };
 const FACT_STATUS = { DOCUMENT_CONFIRMED: '계약 문언 확인', EXTERNALLY_CONFIRMED: '외부 사실 확인', DISPUTED: '사실관계 다툼', UNKNOWN: '사실 추가 확인' };
 const APPLICATION_STATUS = { SATISFIED: '적용 요건 충족', NOT_SATISFIED: '적용 요건 불충족', PARTIAL: '일부 적용', DEPENDS_ON_FACTS: '사실 확인 후 판단', DISPUTED: '적용 다툼' };
 const RISK = { HIGH: '높음', MEDIUM: '보통', LOW: '낮음', NONE: '없음',
@@ -16,7 +20,7 @@ const list = (items, empty) => items.length ? `<ul class="rv-list">${items.map(x
 function issueConclusion(issue, finding, readable) {
   const c = issue.conclusion || {};
   const reasons = explainConclusionReasons(c, issue.elements || [], readable);
-  if (!finding) return { summary: (LEGAL[c.legal] || LEGAL.CONDITIONAL)[0], reasons };
+  if (!finding) return { summary: verdictOf(c)[0], reasons };
   const status = finding.legalValidityConclusion?.status || finding.legalValidity;
   return {
     summary: explainContractRisk(finding),
@@ -76,7 +80,7 @@ function conclusionBody(issue, contract, label, tone, readable) {
 function issueCard(issue, index, facts, evidence, gaps, contractFindings = [], readable, readableSource) {
   const c = issue.conclusion || {};
   const contract = contractFindings.filter(f => f.issueId === issue.id);
-  const [label, tone] = contract.length ? ['문언상 위험 확인', 'warn'] : (LEGAL[c.legal] || LEGAL.CONDITIONAL);
+  const [label, tone] = contract.length ? ['문언상 위험 확인', 'warn'] : verdictOf(c);
   const elements = issue.elements || [];
   const assessments = issue.assessments || [];
   const assessmentByElement = new Map(assessments.map(a => [a.elementId, a]));
@@ -92,10 +96,12 @@ function issueCard(issue, index, facts, evidence, gaps, contractFindings = [], r
     const elementDescription = isSourcePlaceholder(e?.text || '') ? '출처를 확인한 뒤 적용할 법률 기준을 정해야 합니다.' : readable(e?.text || '판단 요건');
     const supporting = (a.factIds || []).map(id => facts.get(id)).filter(Boolean);
     const contrary = (a.contraryFactIds || []).map(id => facts.get(id)).filter(Boolean);
-    const statuses = a.ruleStatus ? `${RULE_STATUS[a.ruleStatus] || '규범 확인 필요'} · ${FACT_STATUS[a.factStatus] || '사실 추가 확인'} · ${APPLICATION_STATUS[a.applicationStatus] || '적용 판단 필요'}`
+    const statuses = a.verdict ? `${VERDICT[a.verdict] || '판단 필요'} · ${RULE_STATUS[a.ruleStatus] || '규범 확인 필요'}`
+      : a.ruleStatus ? `${RULE_STATUS[a.ruleStatus] || '규범 확인 필요'} · ${FACT_STATUS[a.factStatus] || '사실 추가 확인'} · ${APPLICATION_STATUS[a.applicationStatus] || '적용 판단 필요'}`
       : `${STATUS[a.status] || a.status || '미확정'} · ${PROOF[a.proof] || a.proof || '입증 미평가'}`;
     return `<div class="rv-application ${(c.decidingElementIds || []).includes(a.elementId) ? 'rv-deciding' : ''}"><div class="rv-application-head"><strong>${esc(elementDescription)}</strong>${a.origin === 'EXTERNAL' ? ' <span class="rv-tag rv-tag-external">외부 LLM 판단</span>' : ''}<span class="rv-status">${esc(statuses)}</span></div>
-      ${supporting.length ? `<p><b>적용 사실</b> ${supporting.map(f => esc(readable(f.text))).join(' / ')}</p>` : contract.length ? '<p class="rv-note">요건별 추가 사실 연결 필요</p>' : '<p class="rv-note">연결된 뒷받침 사실 없음</p>'}
+      ${a.quote ? `<p><b>문서 원문</b> “${esc(a.quote)}”</p>` : ''}
+      ${supporting.length ? `<p><b>적용 사실</b> ${supporting.map(f => esc(readable(f.text))).join(' / ')}</p>` : a.quote ? '' : contract.length ? '<p class="rv-note">요건별 추가 사실 연결 필요</p>' : '<p class="rv-note">연결된 뒷받침 사실 없음</p>'}
       ${contrary.length ? `<p><b>반대 사실</b> ${contrary.map(f => esc(readable(f.text))).join(' / ')}</p>` : ''}
       <p><b>사실에 대입한 판단</b> ${esc(readable(a.analysis || '판단 내용 없음'))}</p>
       ${a.knowledgeOnly ? '<p class="rv-note">외부 지식만 사용 · 공식 근거 확인 필요</p>' : ''}
@@ -120,7 +126,7 @@ function synthesis(reasoning, review, readable) {
   const regime = review.contractRegime || reasoning.contractRegime;
   const rows = (reasoning.issues || []).map((issue, index) => {
     const finding = (review.contractFindings || reasoning.contractFindings || []).find(f => f.issueId === issue.id);
-    const [label, tone] = finding ? [`문언 위험 ${RISK[finding.facialRisk] || '확인 필요'}`, 'warn'] : (LEGAL[issue.conclusion?.legal] || LEGAL.CONDITIONAL);
+    const [label, tone] = finding ? [`문언 위험 ${RISK[finding.facialRisk] || '확인 필요'}`, 'warn'] : verdictOf(issue.conclusion);
     const result = issueConclusion(issue, finding, readable);
     const explanation = finding ? result.legal : result.summary;
     const reason = result.reasons.join(' / ') || (finding ? explanation : '판단 이유가 기록되지 않았습니다.');

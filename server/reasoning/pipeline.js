@@ -23,14 +23,15 @@ import { isExternalProvider } from './externalGate.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
-import { computeIssueConclusion } from './verify/conclusion.js';
+import { computeIssueConclusion, demoteConclusion } from './verify/conclusion.js';
 import { verifyWarrants, verifyDocumentFindings } from './verify/warrant.js';
 import { attachVerifiedRules, exactAuthorityMatch } from './verifiedRules.js';
 import { deriveGaps } from './stages/gaps.js';
 import { draftRedlines, hasJudgedIssue, noJudgmentFields, renderReview, synthesize } from './stages/synthesis.js';
 import { attachContractInventory, buildContractInventory, contractAssessments, scoreContractRisk } from './contractReview.js';
 import { assessPrivacyRowCoverage } from './privacyCoverage.js';
-import { applyStatuteLinks, linkStatutes } from './stages/statuteLinking.js';
+import { applyStatuteLinks, linkDocumentClauses, linkStatutes } from './stages/statuteLinking.js';
+import { ANALYSIS_DEPTH, depthProfile } from './analysisDepth.js';
 
 export class PipelineError extends Error {
   constructor(message, cause) { super(message); this.name = 'PipelineError'; this.cause = cause; }
@@ -110,7 +111,7 @@ function patchIssue(prior, fresh, predecessors, registry) {
   const omittedEvidence = [...new Set([...(prior.omittedEvidence || []), ...(fresh.omittedEvidence || [])])];
   const decisive = new Set(conclusion.decidingElementIds || []);
   if (fresh.stageStatus === 'FAILED' || prior.elements.some(e => decisive.has(e.id) && e.fallback && e.blocksConclusion === true)) {
-    conclusion = { ...conclusion, legal: 'CONDITIONAL', reasons: [...(conclusion.reasons || []), '일부 요건 또는 근거를 검토하지 못함'] };
+    conclusion = demoteConclusion(conclusion, '일부 요건 또는 근거를 검토하지 못함');
   }
   const counter = fresh.counter?.position ? fresh.counter : prior.counter;
   const gateReasons = [];
@@ -137,9 +138,13 @@ function patchIssue(prior, fresh, predecessors, registry) {
  * @param {object} [args.clients] 판례·해석례 검색 함수 주입(시험용)
  * @param {Function} [args.embed] 임베딩 함수 주입(시험용)
  * @param {object} [args.cache] 요건 분해 캐시 주입(시험용)
+ * @param {string} [args.analysisDepth] 'BASIC' | 'DEEP'. 지정하지 않으면 심화분석이다.
+ * @param {object} [args.resume] 기본분석의 보관된 산출물. 주면 사실·쟁점·조사(S1·S2)를 재사용하고 판단부터 심화분석으로 다시 한다.
  */
 export async function runReasoningPipeline({ query, preset, documentText = '', workbenchContext, provider, model, apiKey,
-  session, progress = NOOP_PROGRESS, previous = null, clients, embed, cache }) {
+  session, progress = NOOP_PROGRESS, previous = null, clients, embed, cache, analysisDepth = null, resume = null }) {
+  const depth = depthProfile(analysisDepth);
+  const basic = depth.depth === ANALYSIS_DEPTH.BASIC;
   const base = resolveBudget(provider, { model });
   const budgetFor = outputTokens => resolveBudget(provider, { model, contextTokens: base.contextTokens, outputTokens: Math.min(outputTokens, base.outputTokens) });
   const stageTokens = stage => preset === 'privacy_security' && stage === 's1' ? 4096
@@ -204,6 +209,15 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.mark('s1', '사건 사실·쟁점 정리', `이전 검토 재사용 — 쟁점 ${countLabel(caseIssues.issues.length, '개')}`,
       '분석', 'DONE', { totalIssues: caseIssues.issues.length });
     progress.mark('s2', '쟁점별 판례·해석례 조사', '이전 검토 재사용 (공식 근거 동일)', '수집');
+  } else if (resume) {
+    // 기본분석에 이어 심화분석: 같은 사실·쟁점·수집 근거 위에서 판단과 검증만 전체 범위로 다시 한다.
+    ({ caseIssues, plan } = resume);
+    research = resume.researchRun;
+    registry = resume.registry;
+    for (const [id, selected] of resume.perIssue) perIssue.set(id, selected);
+    progress.mark('s1', '사건 사실·쟁점 정리', `기본분석 재사용 — 쟁점 ${countLabel(caseIssues.issues.length, '개')}`,
+      '분석', 'DONE', { totalIssues: caseIssues.issues.length });
+    progress.mark('s2', '쟁점별 판례·해석례 조사', '기본분석에서 수집한 근거 재사용', '수집');
   } else {
     // ── S1 사건·쟁점 ──
     progress.start('s1', '사건 사실·쟁점 정리', '쟁점을 먼저 확정하고 근거 후보를 ID로 지정', '분석');
@@ -216,7 +230,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       throw new PipelineError(`쟁점 정리(S1) 실패: ${err.message}`, err);
     }
     caseIssues.diagnostics.documentProfile = profileDocument({ query, documentText });
-    if (preset !== 'contract_risk' && preset !== 'privacy_security' && documentText) {
+    if (depth.factTopUp && preset !== 'contract_risk' && preset !== 'privacy_security' && documentText) {
       caseIssues = await topUpFacts({ caseIssues, registry: registry0, query, documentChars: documentText.length, provider,
         config: configFor('s1'), session });
     }
@@ -229,6 +243,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       const links = linkStatutes({ issues: caseIssues.issues, facts: caseIssues.facts, registry: registry0, citedKeys,
         keyOf: e => `${normalizedLawName(e.lawName)}|${normalizeArticleNo(e.articleNo)}` });
       caseIssues.diagnostics.statuteLinking = applyStatuteLinks(caseIssues.issues, links);
+      // 쟁점이 문서의 해당 조항을 보도록 연결한다. 이 연결이 없으면 포섭 단계가 본문을 못 보고 판단을 유보한다.
+      if (documentText) caseIssues.diagnostics.documentLinking = linkDocumentClauses({ issues: caseIssues.issues, registry: registry0 });
     }
     if (!caseIssues.issues.length) {
       progress.fail('s1', '쟁점을 세우지 못했습니다');
@@ -250,7 +266,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       : undefined);
     if (plan.skipped.length) warnings.push(`검색어 상한으로 추가 조사를 수행하지 못한 검색어 ${plan.skipped.length}개가 있습니다.`);
     research = await runResearchQueries(workbenchContext, plan, { ...(clients ? { clients } : {}), issues: caseIssues.issues,
-      provider, model, apiKey, session });
+      provider, model, apiKey, session, screenBoundary: depth.screenBoundary });
     warnings.push(...research.warnings);
     registry = buildEvidenceRegistry(research.context, { documentText });
     for (const issue of caseIssues.issues) {
@@ -327,7 +343,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     const issueFacts = caseIssues.facts.filter(f => issue.factIds.includes(f.id));
     const freshResult = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
       runPrefix: buildIssuePrefix(registry, issue, issueFacts), predecessors,
-      provider, config: configFor('s4', think), session, contractMode: preset === 'contract_risk' });
+      provider, config: configFor('s4', think), session, contractMode: preset === 'contract_risk', depth });
     const result = narrow ? patchIssue(prior, freshResult, predecessors, registry) : freshResult;
     directlyUpdated.add(issue.id);
     issueResults.push(result);
@@ -342,17 +358,17 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const documentWarrants = verifyDocumentFindings(findings, registry);
 
   // ── S6 근거 검증 (다시 판단한 쟁점만; 나머지는 이전 원장을 쓴다) ──
-  progress.start('s6', '근거-주장 대응 검증', '존재·공식성·시점 확인 후 모든 주장·근거 쌍의 함의 확인', '검증');
+  progress.start('s6', '근거-주장 대응 검증', basic ? '판단을 내린 요건의 대표 근거를 원문과 대조' : '존재·공식성·시점 확인 후 모든 주장·근거 쌍의 함의 확인', '검증');
   const fresh = await verifyWarrants({ issueResults: issueResults.filter(r => !r.reused), registry, provider,
     config: configFor('s6'), session, ...embedOption, entailment: process.env.REVIEW_ENTAILMENT !== 'off',
-    contractMode: preset === 'contract_risk' });
+    contractMode: preset === 'contract_risk', policy: depth.verification });
   warnings.push(...fresh.warnings);
   for (const warning of fresh.warnings) progress.warn('s6', warning);
   const ledger = [...(previous?.reasoning?.warrants || []).filter(w => reuse && !directlyUpdated.has(w.issueId)), ...fresh.ledger];
   attachVerifiedRules(issueResults, ledger, registry, caseIssues.facts);
   for (const result of issueResults) {
     const decisiveIds = new Set(result.conclusion?.decidingElementIds || []);
-    const unresolved = ledger.filter(w => w.issueId === result.issueId && w.overall !== 'SUPPORTED');
+    const unresolved = ledger.filter(w => w.issueId === result.issueId && !['SUPPORTED', 'NOT_CHECKED'].includes(w.overall));
     if (!unresolved.length) continue;
     const blockingUnresolved = unresolved.filter(w => decisiveIds.has(w.elementId));
     result.warnings = [...(result.warnings || []), `근거-주장 검증 미완료 ${unresolved.length}건`];
@@ -362,8 +378,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     }
     result.stageStatus = result.stageStatus === 'FAILED' ? 'FAILED' : 'PARTIAL';
     result.gateReasons = [...(result.gateReasons || []), `결론 요건 근거-주장 검증 미완료 ${blockingUnresolved.length}건`];
-    if (result.conclusion.legal !== 'CONDITIONAL') result.conclusion = { ...result.conclusion, legal: 'CONDITIONAL',
-      reasons: [...(result.conclusion.reasons || []), '인용 근거가 주장을 충분히 뒷받침하는지 확인되지 않음'] };
+    if (result.conclusion.legal !== 'CONDITIONAL') result.conclusion = demoteConclusion(result.conclusion, '인용 근거가 주장을 충분히 뒷받침하는지 확인되지 않음');
   }
   for (const finding of findings) {
     const linked = issueResults.find(r => r.issueId === finding.issueId);
@@ -408,7 +423,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const privacyRowCoverage = preset === 'privacy_security'
     ? assessPrivacyRowCoverage(registry, caseIssues.issues, issueResults) : [];
   const tally = status => ledger.filter(w => w.overall === status).length;
-  progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 공식 근거 없음 ${tally('NO_OFFICIAL_SUPPORT')} · 불일치 ${tally('NOT_SUPPORTED')}`);
+  progress.done('s6', `주장 ${countLabel(ledger.length, '개')} · 뒷받침 ${tally('SUPPORTED')} · 미확인 ${tally('UNCONFIRMED')} · 공식 근거 없음 ${tally('NO_OFFICIAL_SUPPORT')} · 불일치 ${tally('NOT_SUPPORTED')}${basic ? ` · 대조 생략 ${tally('NOT_CHECKED')}` : ''}`);
 
   // ── S7 공백 ──
   const gaps = deriveGaps({ issues: caseIssues.issues, issueResults, warrants: ledger, unknownFacts: caseIssues.unknownFacts,
@@ -451,14 +466,15 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       config: configFor('s5'), session, finalReviewData, contractFindings: findings });
   if (synthesis.warning) warnings.push(synthesis.warning);
   // 수정 조문은 첨부문서가 있고, 견해 비교가 산출물인 사전 컨설팅감사가 아닐 때만 만든다.
-  const redline = documentText && preset !== 'pre_consulting_audit' && !noJudgment
+  const redline = depth.redlines && documentText && preset !== 'pre_consulting_audit' && !noJudgment
     ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, provider, config: configFor('s5'), session,
       contractFindings: findings })
     : { redlines: [], warnings: [] };
   warnings.push(...redline.warnings);
   const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines,
     contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
-    missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null });
+    missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null,
+    analysisNote: depth.note });
   if (noJudgment) Object.assign(review, noJudgmentFields({ issues: caseIssues.issues, issueResults, gaps }));
   progress.done('s5', noJudgment ? '판단이 실행된 쟁점이 없어 의견서 대신 실패 원인을 안내'
     : synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
@@ -485,6 +501,12 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   if (tally('UNCONFIRMED')) gateReasons.push(`근거와 주장의 관계가 미확인된 주장 ${tally('UNCONFIRMED')}개`);
   if (tally('NO_OFFICIAL_SUPPORT')) gateReasons.push(`공식 근거가 없는 주장 ${tally('NO_OFFICIAL_SUPPORT')}개`);
   if (documentWarrants.some(w => w.overall !== 'SUPPORTED')) gateReasons.push('계약 문언과 출처 연결 검증 실패');
+  const analysisCoverage = { depth: depth.depth, label: depth.label, ...fresh.coverage,
+    judgedElements: issueResults.reduce((n, r) => n + (r.assessments || []).length, 0),
+    skippedSkeletons: issueResults.reduce((n, r) => n + (r.depthCoverage?.skippedSkeletons || 0), 0),
+    deferredEvidence: issueResults.reduce((n, r) => n + (r.depthCoverage?.deferredEvidence?.length || 0), 0) };
+  // 기본분석은 일부만 대조했으므로 다른 조건이 모두 맞아도 '검토 완료'로 표시하지 않는다.
+  if (basic) gateReasons.push(`기본분석: 근거-주장 ${analysisCoverage.pairs}쌍 중 ${analysisCoverage.checkedPairs}쌍만 원문과 대조함 — 결재 전 심화분석 필요`);
   const complete = issueResults.every(r => ['OK', 'OK_WITH_WARNINGS'].includes(r.stageStatus))
     && !gateReasons.length && !inquiry.length;
   review.reviewStatus = complete ? 'COMPLETE' : 'PARTIAL';
@@ -495,8 +517,10 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     review.draftOpinion += '\n\n## 개인정보 처리표 행별 검토 범위\n'
       + privacyRowCoverage.map(row => `- ${row.label}: ${row.status === 'REVIEWED' ? `쟁점 ${row.issueIds.join(', ')}에서 검토` : row.status === 'INCOMPLETE' ? `쟁점 ${row.issueIds.join(', ')}의 판단 미완료` : '검토 쟁점에 연결되지 않음'}`).join('\n');
   }
+  review.analysisDepth = depth.depth;
+  review.analysisCoverage = analysisCoverage;
   review.reasoning = {
-    version: 2, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf,
+    version: 2, promptVersion: PROMPT_VERSION, asOfDate: registry.asOf, analysisDepth: depth.depth,
     contractRegime: contractInventory?.regime || null, contractFindings: findings,
     privacyRowCoverage,
     missingClauseAudit: contractInventory?.missingClauseAudit || [],
@@ -572,10 +596,12 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     additionalChecks: review.furtherChecks
   };
   // 내부+외부 병용 모드: 로컬 모델이 풀지 못한 쟁점을 외부 LLM에 다시 물을 수 있도록 제안한다. 여기서는 아무것도 보내지 않는다.
-  if (!isExternalProvider(provider) && !noJudgment) {
-    const candidates = selectEscalationCandidates({ issues: caseIssues.issues, issueResults, ledger });
-    if (candidates.length) {
-      const reviewId = rememberReview({ caseIssues, issueResults, registry, preset, gaps, synthesis, redlines: redline.redlines, ledger,
+  // 기본분석의 산출물도 함께 보관해, 사실·쟁점·수집을 다시 하지 않고 심화분석으로 이어갈 수 있게 한다.
+  if (!isExternalProvider(provider)) {
+    const candidates = noJudgment ? [] : selectEscalationCandidates({ issues: caseIssues.issues, issueResults, ledger });
+    if (candidates.length || basic) {
+      const reviewId = rememberReview({ query, documentText, workbenchContext, plan, researchRun: research, perIssue: new Map(perIssue),
+        analysisNote: depth.note, caseIssues, issueResults, registry, preset, gaps, synthesis, redlines: redline.redlines, ledger,
         contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
         missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null,
         research: Object.fromEntries(caseIssues.issues.map(issue => {
@@ -583,7 +609,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
           return [issue.id, { queries: plan.byIssue[issue.id] || [], evidenceIds: s.evidenceIds || [], adverseCandidateIds: s.adverseCandidateIds || [],
             documentIds: s.documentIds || [], candidates: s.candidates || [] }];
         })) });
-      review.escalation = { reviewId, candidates };
+      if (candidates.length) review.escalation = { reviewId, candidates };
+      if (basic) review.analysisSession = { reviewId };
     }
   }
   review.warnings = warnings;

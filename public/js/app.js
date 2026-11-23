@@ -1,6 +1,7 @@
 // public/js/app.js - 메인 프론트엔드 엔트리포인트 및 이벤트 바인딩
 import { state, saveSettings, LLM_MODES } from './state.js';
 import { confirmReviewTransmission } from './externalLlm.js';
+import './analysisDepthView.js';
 import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs, resetWorkbench } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio, resetStudio } from './documentStudio.js';
@@ -329,6 +330,26 @@ function initReviewForm() {
   const newReviewButton = document.getElementById('btn-new-review');
   const btnText = btnRun.querySelector('.btn-text');
   document.getElementById('manual-learning-mode')?.addEventListener('change', updateLlmDisplay);
+
+  // 분석 수준: 실행 버튼 이름이 지금 고른 수준을 그대로 말하게 한다.
+  const depthRadios = [...form.querySelectorAll('input[name="analysis-depth"]')];
+  const depthName = value => (value === 'DEEP' ? '심화분석' : '기본분석');
+  const idleLabel = () => `${depthName(state.settings.analysisDepth)} 실행`;
+  const selectDepth = value => {
+    saveSettings({ analysisDepth: value });
+    depthRadios.forEach(radio => { radio.checked = radio.value === value; });
+    if (!state.isReviewing) btnText.textContent = idleLabel();
+  };
+  depthRadios.forEach(radio => radio.addEventListener('change', () => { if (radio.checked) selectDepth(radio.value); }));
+  depthRadios.forEach(radio => { radio.checked = radio.value === state.settings.analysisDepth; });
+  btnText.textContent = idleLabel();
+  // 기본분석 결과의 '심화분석 실행': 산출물이 남아 있으면 이어서, 없으면 입력으로 처음부터 실행한다.
+  document.addEventListener('analysis:deepen', event => {
+    if (state.isReviewing) return;
+    state.deepenRun = { reviewId: event.detail?.reviewId || null };
+    form.requestSubmit();
+  });
+
   targetLawInput?.addEventListener('input', updateQueryOptionsSummary);
   targetDateInput?.addEventListener('input', updateQueryOptionsSummary);
   updateQueryOptionsSummary();
@@ -336,13 +357,17 @@ function initReviewForm() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (state.isReviewing) return;
+    const deepenRun = state.deepenRun;
+    state.deepenRun = null;
+    const runDepth = deepenRun ? 'DEEP' : state.settings.analysisDepth;
+    const resumeId = deepenRun?.reviewId || null;
     const manualLearning = state.manualLearningRerun || usesLocalReviewPath();
     const query = queryInput.value.trim();
     const targetLaw = targetLawInput.value.trim();
     // <input type="date">는 YYYY-MM-DD로 준다. 서버가 두 형식을 모두 받는다.
     const targetDate = targetDateInput ? targetDateInput.value.trim() : '';
 
-    if (!query && !state.selectedFile) {
+    if (!query && !state.selectedFile && !resumeId) {
       state.sourceHistoryId = null;
       state.manualLearningRerun = false;
       alert('검토 질의를 입력하거나 검토 대상 문서(HWPX, PDF 등)를 첨부해주세요.');
@@ -368,9 +393,9 @@ function initReviewForm() {
     btnRun.classList.add('ai-processing');
     btnRun.setAttribute('aria-busy', 'true');
     spinner.classList.remove('hidden');
-    btnText.textContent = manualLearning
+    btnText.textContent = state.manualLearningRerun
       ? '승인된 외부 지식 반영·최종 재검토 중...'
-      : '법령 및 판례 수집 / AI 검토 중...';
+      : `${depthName(runDepth)} 중...`;
 
     const formData = new FormData();
     formData.append('query', query);
@@ -398,8 +423,11 @@ function initReviewForm() {
 
     // 같은 사건의 재검토라면 그 이력을 알려, 그 사건에서 승인한 지식을 검토에 싣는다.
     if (state.sourceHistoryId) formData.append('sourceHistoryId', state.sourceHistoryId);
+    // 외부 답변을 반영하는 최종 재검토는 항상 전체 검증으로 실행한다(서버 기본값).
+    else formData.append('analysisDepth', runDepth);
+    if (resumeId) formData.append('deepenReviewId', resumeId);
 
-    if (state.selectedFile) {
+    if (state.selectedFile && !resumeId) {
       formData.append('file', state.selectedFile);
     }
 
@@ -443,6 +471,8 @@ function initReviewForm() {
       document.getElementById('workbench-section').scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
       finishReviewTrace({ summary: err.message, failed: true });
+      // 기본분석 산출물이 사라졌다면 다음 실행이 심화분석으로 처음부터 돌도록 선택을 맞춰 둔다.
+      if (resumeId) selectDepth('DEEP');
       alert(`검토 실행 중 오류가 발생했습니다: ${err.message}`);
     } finally {
       // 한 번의 실행에만 적용한다. 남겨두면 이후 일반 검토에 엉뚱한 사건의 지식이 실린다.
@@ -454,7 +484,7 @@ function initReviewForm() {
       btnRun.classList.remove('ai-processing');
       btnRun.removeAttribute('aria-busy');
       spinner.classList.add('hidden');
-      btnText.textContent = '종합 법령검토 실행';
+      btnText.textContent = idleLabel();
     }
   });
 }

@@ -12,6 +12,7 @@ import { createDeidentifier, reidentifyDeep, remainingIdentifiers } from '../pri
 import { readExternalAudit, recordExternalTransmission } from '../privacy/auditLog.js';
 import { recallReview } from '../reasoning/reviewSessionStore.js';
 import { EscalationError, previewEscalation, runEscalation } from '../reasoning/escalation.js';
+import { depthProfile } from '../reasoning/analysisDepth.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
 import { validDate } from './evidence.js';
@@ -365,10 +366,17 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         return fail(409, { ok: false, error: '원 검토에 재사용할 쟁점·요건 구조가 없습니다. 단계형 최초 검토를 완료한 뒤 외부 답변을 연결하십시오.' });
       }
     }
+    // 기본분석에 이어 심화분석: 보관된 사실·쟁점·수집 근거를 재사용한다. 파일을 다시 받지 않는다.
+    const deepenReviewId = String(req.body.deepenReviewId || '').trim().slice(0, 100);
+    const deepen = deepenReviewId ? recallReview(deepenReviewId) : null;
+    if (deepenReviewId && !deepen) {
+      return fail(410, { ok: false, code: 'SESSION_EXPIRED',
+        error: '기본분석 세션이 만료되었거나 서버가 다시 시작되었습니다. 심화분석을 처음부터 실행하십시오.' });
+    }
     const manualLearning = req.body.learningMode === 'manual' || Boolean(sourceHistoryId);
     if (manualLearning) localLearningEndpoint();
-    let query = req.body.query || '';
-    const preset = req.body.preset || 'compliance';
+    let query = deepen ? deepen.query : (req.body.query || '');
+    const preset = deepen?.preset || req.body.preset || 'compliance';
     const targetLaw = req.body.targetLaw || '';
     // 검토 기준 시점(선택). 형식이 틀렸을 때 조용히 오늘로 떨어뜨리면
     // 사용자는 과거 시점을 검토했다고 믿게 되므로 여기서 거절한다.
@@ -383,11 +391,11 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         return fail(409, { ok: false, error: '원 검토의 질의·검토 유형·기준일이 달라졌습니다. 저장된 구조에 답변을 끼워 넣으려면 원래 조건을 유지하십시오.' });
       }
     }
-    let documentText = req.body.documentText || '';
-    let documentName = '';
+    let documentText = deepen ? deepen.documentText : (req.body.documentText || '');
+    let documentName = deepen?.documentName || '';
 
     // 파일이 직접 업로드된 경우 파싱
-    if (req.file) {
+    if (req.file && !deepen) {
       documentName = req.file.originalname;
       progress.start('parse', '첨부문서 파싱', `${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`, '준비');
       const parsedDoc = await parseDocument(req.file.buffer, req.file.originalname);
@@ -427,13 +435,20 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     }
 
     const resolvedProvider = manualLearning ? 'ollama' : (req.body.llmProvider || ENV.LLM_PROVIDER || 'ollama');
+    if (deepen && isExternalProvider(resolvedProvider)) {
+      return fail(400, { ok: false, error: '외부 LLM 검토는 전송 내용을 다시 승인해야 하므로 심화분석을 처음부터 실행하십시오.' });
+    }
+    // 분석 수준을 지정하지 않은 호출은 종전과 같은 전체 검증(심화분석)이다.
+    const requestedDepth = deepen ? 'DEEP' : req.body.analysisDepth;
+    const depth = requestedDepth ? depthProfile(requestedDepth) : null;
     const llmConfig = {
       provider: resolvedProvider,
       model: chosenModel,
       apiKey: manualLearning ? undefined : req.body.llmApiKey,
       // 외부 질의 루프의 최초 검토에는 재사용할 쟁점·요건·공백 구조가 필요하다.
       // EXAONE 검토도 같은 구조를 남겨야 외부 전문가 질의 탭을 그대로 쓸 수 있다.
-      ...(manualLearning || resolvedProvider === 'exaone' ? { pipeline: 'staged' } : {})
+      ...(manualLearning || resolvedProvider === 'exaone' || depth ? { pipeline: 'staged' } : {}),
+      ...(depth ? { analysisDepth: depth.depth, screenBoundary: depth.screenBoundary } : {})
     };
     // 외부 LLM만 쓰는 모드: 검토 입력 전체를 비식별화하고, 사용자가 미리보기에서 승인한 해시와 같을 때만 시작한다.
     // 승인 없이는 문서가 이 PC 밖으로 나가지 않게, 호출이 시작되기 전에 거절한다(호출 직전에도 다시 막는다).
@@ -474,7 +489,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     // 최초 검토에서만 공식 자료를 수집한다. 후속 검토는 저장된 스냅샷을 사용한다.
     const llmSession = createLlmSession();
     if (externalApproval) llmSession.externalApproval = externalApproval;
-    const workbenchContext = sourceHistoryId
+    const workbenchContext = deepen ? deepen.workbenchContext : sourceHistoryId
       ? { meta: structuredClone(sourceHistory.data.meta),
         officialEvidence: structuredClone(sourceHistory.data.officialEvidence),
         impactAndRevisions: structuredClone(sourceHistory.data.impactAndRevisions || {}) }
@@ -511,8 +526,14 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       llmConfig,
       llmSession,
       sourceHistoryId,
-      progress
+      progress,
+      resumeContext: deepen
     });
+    // 심화분석으로 이어갈 때 문서 이름을 이력에 다시 쓸 수 있게 보관한다.
+    if (reviewResult?.analysisSession?.reviewId) {
+      const session = recallReview(reviewResult.analysisSession.reviewId);
+      if (session) session.documentName = documentName;
+    }
     if (unmet.length && reviewResult.reviewStatus === 'COMPLETE') reviewResult.reviewStatus = 'PARTIAL';
 
     // 데이터 출처(목업 여부)와 검토 엔진(LLM/룰베이스)을 응답 최상단에 노출한다.
@@ -534,6 +555,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         isFallback: Boolean(dataIntegrity.isFallback) || reviewIsFallback || reviewResult?.reviewStatus !== 'COMPLETE',
         reviewStatus: reviewResult?.reviewStatus || 'FAILED',
         reviewEngine: reviewResult?.reviewEngine || 'UNKNOWN',
+        analysisDepth: reviewResult?.analysisDepth || null,
         dataSources: dataIntegrity.sources || {},
         citationConfidence: reviewResult?.factualityVerification?.citationConfidence ?? null,
         isCitationMeasurable: Boolean(reviewResult?.factualityVerification?.isMeasurable),

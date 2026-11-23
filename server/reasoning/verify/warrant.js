@@ -10,6 +10,8 @@ const MIN_FRAGMENT_CHARS = 180;
 // 한 (주장, 근거) 쌍에서 함의를 확인하는 조각 수의 상한. 긴 판례·해석례는 조각이 수십 개라 호출이 폭증한다.
 // 조각이 이보다 많으면 주장과 의미가 가까운 조각부터 확인한다(짧은 조문은 영향 없음).
 export const MAX_FRAGMENTS_PER_PAIR = 4;
+// 모델이 충족·불충족을 판단한 요건. 미확정 요건은 아무것도 주장하지 않으므로 대조할 내용이 없다.
+const DETERMINATE = new Set(['SATISFIED', 'NOT_SATISFIED', 'PARTIALLY_SATISFIED']);
 
 export function collectClaims(issueResults, { contractMode = false } = {}) {
   const claims = [];
@@ -17,7 +19,8 @@ export function collectClaims(issueResults, { contractMode = false } = {}) {
     for (const a of result.assessments || []) {
       const element = result.elements.find(e => e.id === a.elementId);
       claims.push({ claimId: `${result.issueId}:${a.elementId}`, issueId: result.issueId, elementId: a.elementId,
-        text: contractMode ? String(element?.text || a.analysis || '') : [element?.text, a.analysis].filter(Boolean).join(' — '),
+        // 문서 판단의 '문서가 어긋난다'는 부분은 원문 인용으로 이미 확인했다. 여기서는 규정이 근거에 있는지를 대조한다.
+        text: contractMode || a.verdict ? String(element?.text || a.analysis || '') : [element?.text, a.analysis].filter(Boolean).join(' — '),
         evidenceIds: a.authorityEvidenceIds || a.evidenceIds || [], status: a.status });
     }
   }
@@ -92,7 +95,10 @@ function combineLabels(segments) {
 
 /** 모든 공식·현행 근거 쌍을 검증한다. 토큰 초과는 근거 조각을 더 나눈다. */
 export async function verifyWarrants({ issueResults, registry, embed = embedTexts, entailment = true, prefix, provider, config, session,
-  contractMode = false, maxFragments = MAX_FRAGMENTS_PER_PAIR }) {
+  contractMode = false, maxFragments = MAX_FRAGMENTS_PER_PAIR, policy = null }) {
+  // policy.scope='DETERMINATE'(기본분석): 판단을 내린 요건만, 의미가 가장 가까운 근거부터 소수만 대조한다.
+  const limited = policy?.scope === 'DETERMINATE';
+  const asserted = claim => !limited || DETERMINATE.has(claim.status);
   const claims = collectClaims(issueResults, { contractMode });
   const pairs = claims.flatMap(claim => claim.evidenceIds.map(evidenceId => ({ claim, evidenceId, entry: registry.get(evidenceId) })));
   const warnings = [];
@@ -117,7 +123,7 @@ export async function verifyWarrants({ issueResults, registry, embed = embedText
       check.alignmentScore = score === null ? null : Number(score.toFixed(3));
       check.alignment = score === null ? 'UNMEASURED' : score >= ALIGNMENT_THRESHOLD ? 'ALIGNED' : 'LOW';
     }
-    if (!entailment || check.existence !== 'PASS' || check.official !== 'PASS' || check.temporal !== 'PASS') continue;
+    if (limited || !entailment || check.existence !== 'PASS' || check.official !== 'PASS' || check.temporal !== 'PASS') continue;
     const all = evidenceFragments(p.entry.text);
     const fragments = await pickFragments(all, p.claim.text, embed, maxFragments);
     check.skippedFragments = all.length - fragments.length;
@@ -131,18 +137,44 @@ export async function verifyWarrants({ issueResults, registry, embed = embedText
     if (check.skippedFragments && check.entailment === 'NOT_SUPPORTED') check.entailment = 'PARTIAL';
   }
 
+  const isUsable = c => c.existence === 'PASS' && c.official === 'PASS' && c.temporal === 'PASS';
+  if (limited) {
+    for (const claim of claims.filter(c => entailment && asserted(c))) {
+      const own = pairs.map((p, i) => ({ p, check: checks[i] })).filter(x => x.p.claim === claim && isUsable(x.check))
+        .sort((a, b) => (b.check.alignmentScore ?? -1) - (a.check.alignmentScore ?? -1));
+      for (const { p, check } of own.slice(0, policy.pairsPerClaim)) {
+        const all = evidenceFragments(p.entry.text);
+        const fragments = (await pickFragments(all, p.claim.text, embed, policy.fragmentsPerPair)).slice(0, policy.fragmentsPerPair);
+        check.skippedFragments = all.length - fragments.length;
+        for (const fragment of fragments) {
+          const result = await verifyFragment({ claim: p.claim.text, evidenceId: p.evidenceId, fragment, registry, provider,
+            config, session, calls, warnings });
+          check.segments.push(...(Array.isArray(result) ? result : [result]));
+        }
+        check.entailment = combineLabels(check.segments);
+        if (check.skippedFragments && check.entailment === 'NOT_SUPPORTED') check.entailment = 'PARTIAL';
+        if (check.entailment === 'SUPPORTS') break;
+      }
+    }
+    for (const check of checks) if (isUsable(check) && !check.segments.length) check.skippedByDepth = true;
+  }
+
   const ledger = claims.map(claim => {
     const own = checks.filter(c => c.claimId === claim.claimId);
-    const usable = own.filter(c => c.existence === 'PASS' && c.official === 'PASS' && c.temporal === 'PASS');
+    const usable = own.filter(isUsable);
     const supported = usable.some(c => c.entailment === 'SUPPORTS');
     const contradicted = usable.length > 0 && usable.every(c => c.entailment === 'NOT_SUPPORTED');
-    const overall = !usable.length ? 'NO_OFFICIAL_SUPPORT' : contradicted ? 'NOT_SUPPORTED'
-      : supported ? 'SUPPORTED' : 'UNCONFIRMED';
+    // NOT_CHECKED: 기본분석이 일부러 대조하지 않은 주장. '확인했는데 안 맞음'과 구별한다.
+    const overall = !asserted(claim) ? 'NOT_CHECKED' : !usable.length ? 'NO_OFFICIAL_SUPPORT' : contradicted ? 'NOT_SUPPORTED'
+      : supported ? 'SUPPORTED' : usable.every(c => c.skippedByDepth) ? 'NOT_CHECKED' : 'UNCONFIRMED';
     return { claimId: claim.claimId, issueId: claim.issueId, elementId: claim.elementId, text: claim.text, checks: own, overall };
   });
   return { ledger, warnings, entailmentCalls: calls.count,
-    unreviewedPairs: checks.filter(c => c.existence === 'PASS' && c.official === 'PASS' && c.temporal === 'PASS' && !c.entailment)
-      .map(c => ({ claimId: c.claimId, evidenceId: c.evidenceId })) };
+    unreviewedPairs: checks.filter(c => isUsable(c) && !c.entailment && !c.skippedByDepth)
+      .map(c => ({ claimId: c.claimId, evidenceId: c.evidenceId })),
+    coverage: { claims: claims.length, assertedClaims: claims.filter(asserted).length,
+      supportedClaims: ledger.filter(w => w.overall === 'SUPPORTED').length,
+      pairs: checks.filter(isUsable).length, checkedPairs: checks.filter(c => isUsable(c) && c.segments.length).length } };
 }
 
 /** 원문 자체에서 생성한 계약 finding이 정확히 그 D 조항과 이어지는지 확인한다. */
