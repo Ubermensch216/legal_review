@@ -291,7 +291,19 @@ function initFileDropzone() {
     dropzoneContent.classList.remove('hidden');
   });
 
+  // 서버(parsers/index.js)와 같은 목록이다. 서버가 한 번 더 확인하므로 여기서는 빨리 알려 주는 용도다.
+  const SUPPORTED_EXT = ['hwpx', 'pdf', 'docx', 'xlsx', 'csv', 'txt', 'md', 'json'];
+  const LEGACY_HINT = { hwp: '구형 한글(.hwp)은 읽을 수 없습니다. .hwpx 또는 .pdf로 다시 저장해 첨부해 주세요.',
+    xls: '구형 엑셀(.xls)은 읽을 수 없습니다. .xlsx 또는 .csv로 다시 저장해 첨부해 주세요.',
+    doc: '구형 워드(.doc)는 읽을 수 없습니다. .docx 또는 .pdf로 다시 저장해 첨부해 주세요.' };
+
   function handleFileSelect(file) {
+    const extension = (file.name.split('.').pop() || '').toLowerCase();
+    if (!SUPPORTED_EXT.includes(extension)) {
+      alert(LEGACY_HINT[extension] || `지원하지 않는 파일 형식(.${extension})입니다. ${SUPPORTED_EXT.map(e => `.${e}`).join(', ')} 파일을 첨부해 주세요.`);
+      fileInput.value = '';
+      return;
+    }
     state.selectedFile = file;
     const ext = file.name.split('.').pop().toUpperCase();
     fileBadgeEl.textContent = ext;
@@ -323,7 +335,7 @@ function initReviewForm() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (state.isReviewing) return;
-    const manualLearning = state.manualLearningRerun || document.getElementById('manual-learning-mode')?.checked;
+    const manualLearning = state.manualLearningRerun || usesLocalReviewPath();
     const query = queryInput.value.trim();
     const targetLaw = targetLawInput.value.trim();
     // <input type="date">는 YYYY-MM-DD로 준다. 서버가 두 형식을 모두 받는다.
@@ -363,7 +375,8 @@ function initReviewForm() {
     if (manualLearning) {
       formData.append('learningMode', 'manual');
       formData.append('llmProvider', 'ollama');
-      if (state.settings.modelName) {
+      // 다른 제공자의 모델명을 Ollama에 넘기면 호출이 실패한다. 없으면 서버의 OLLAMA_MODEL을 쓴다.
+      if (state.settings.provider === 'ollama' && state.settings.modelName) {
         formData.append('llmModel', state.settings.modelName);
       }
     } else {
@@ -400,7 +413,8 @@ function initReviewForm() {
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.error || errJson.message || `HTTP ${res.status}`);
+        // error는 오류 종류 이름(예: Error)일 수 있어 사람이 읽을 message를 먼저 쓴다.
+        throw new Error(errJson.message || errJson.error || `HTTP ${res.status}`);
       }
 
       const data = (res.headers.get('content-type') || '').includes('application/x-ndjson')
@@ -568,6 +582,14 @@ function initToolsModal() {
 }
 
 /**
+ * 최초 검토를 로컬 Ollama 경로로 실행하는가.
+ * 설정에서 EXAONE을 고른 경우에만 외부 API로 보낸다. 다른 클라우드 제공자는 기존처럼 로컬로 실행한다.
+ */
+function usesLocalReviewPath() {
+  return Boolean(document.getElementById('manual-learning-mode')?.checked) && state.settings.provider !== 'exaone';
+}
+
+/**
  * 5. 설정 모달
  */
 function initSettingsModal() {
@@ -647,7 +669,9 @@ function initSettingsModal() {
         const count = models.filter(m => !m.isEmbeddingOnly).length;
         modelHint.textContent = provider === 'ollama'
           ? `Ollama 서버에 설치된 법리 추론 가능 모델 ${count}개 확인됨`
-          : '';
+          : provider === 'exaone'
+            ? 'EXAONE_API_KEY 설정됨 · 검토 시 질의와 첨부문서 내용이 LG AI연구원 API로 전송됩니다.'
+            : '';
         modelHint.style.color = 'var(--text-muted, #64748b)';
       }
 
@@ -707,7 +731,11 @@ function initSettingsModal() {
   providerSelect?.addEventListener('change', () => {
     const isOllama = providerSelect.value === 'ollama';
     if (btnRefreshModels) btnRefreshModels.style.display = isOllama ? 'inline-flex' : 'none';
-    loadAvailableModels(providerSelect.value, '');
+    // 이전 제공자의 모델명이 새 제공자의 '직접 입력' 값으로 넘어가지 않게 한다.
+    const provider = providerSelect.value;
+    const model = provider === state.settings.provider && state.settings.modelName
+      ? state.settings.modelName : (state.config?.models?.[provider] || '');
+    loadAvailableModels(provider, model);
   });
 
   btnOpen.addEventListener('click', () => {
@@ -760,7 +788,7 @@ async function loadServerConfig() {
 function updateLlmDisplay() {
   const display = document.getElementById('current-llm-display');
   if (display) {
-    const isManual = document.getElementById('manual-learning-mode')?.checked;
+    const isManual = usesLocalReviewPath();
     const model = state.settings.modelName
       || state.config?.models?.[isManual ? 'ollama' : state.settings.provider] || (isManual ? 'gemma4:e2b' : '');
     display.textContent = isManual

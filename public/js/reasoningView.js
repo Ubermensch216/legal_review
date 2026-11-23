@@ -41,6 +41,17 @@ function step(letter, heading, body) {
   return `<section class="rv-step"><span class="rv-step-mark" aria-hidden="true">${letter}</span><div class="rv-step-content"><h5>${heading}</h5>${body}</div></section>`;
 }
 
+/** 판단 유보를 "어떤 요건이 확인되면 어떤 결론"으로 보여 준다. */
+function scenarioNote(c, elements) {
+  const s = c.scenarios;
+  if (!s) return '';
+  const names = s.pendingElementIds.map(id => elements.find(e => e.id === id)?.text).filter(Boolean);
+  if (!names.length) return '';
+  const label = value => (LEGAL[value] || LEGAL.CONDITIONAL)[0];
+  return `<div class="rv-conclusion-reasons"><b>확인되면 달라지는 결론</b>${list(names.map(n => esc(n)), '')}
+    <p class="rv-note">위 요건이 모두 충족되면 <b>${esc(label(s.ifSatisfied))}</b>, 충족되지 않으면 <b>${esc(label(s.ifUnsatisfied))}</b>로 판단됩니다.</p></div>`;
+}
+
 function conclusionBody(issue, contract, label, tone, readable) {
   const c = issue.conclusion || {};
   const result = issueConclusion(issue, contract[0], readable);
@@ -50,6 +61,7 @@ function conclusionBody(issue, contract, label, tone, readable) {
   if (!contract.length) return `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong><span>${esc(PROOF[c.proof] || '입증 미평가')}</span></div>
     <p class="rv-conclusion-summary">${esc(result.summary)}</p>${reasonList}
     ${c.ifResolved ? `<p class="rv-note">먼저 판단해야 할 쟁점이 해결되면: ${esc((LEGAL[c.ifResolved] || LEGAL.CONDITIONAL)[0])}</p>` : ''}
+    ${scenarioNote(c, issue.elements || [])}
     ${issue.stageStatus === 'FAILED' ? '<p class="rv-note">판단 과정이 완료되지 않아 결론을 확인해야 합니다.</p>' : ''}`;
   const externalFacts = explainExternalFacts(contract.flatMap(f => f.additionalFactDetails || []));
   return `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong></div>

@@ -47,7 +47,7 @@ export function bigramSimilarity(a, b) {
  * 사실의 인용문을 원문과 대조한다.
  * @returns {{ docRef: string, verified: boolean }}
  */
-function locateQuote(fact, registry, query) {
+export function locateQuote(fact, registry, query) {
   const quote = normalize(fact.quote);
   if (quote.length < 4) return { docRef: '', verified: false };
   const inEntry = entry => [entry, ...registry.children(entry.id)].some(e => normalize(e.text).includes(quote));

@@ -30,7 +30,7 @@ export function applyFactProvenance(assessment, factsById) {
  * @param {object[]} assessments 요건별 판단 (elementId, status, proof)
  * @param {object[]} [predecessors] 선결 쟁점의 결론 ({ issueId, legal, stageStatus })
  */
-export function computeIssueConclusion(elements, assessments, predecessors = []) {
+export function computeIssueConclusion(elements, assessments, predecessors = [], options = {}) {
   const byId = new Map(assessments.map(a => [a.elementId, a]));
   const statusOf = e => byId.get(e.id)?.status || 'UNKNOWN';
   // 원문을 분해하지 못해 만든 골격은 적용 요건으로 검증되기 전까지 결론을 좌우하지 않는다.
@@ -78,7 +78,28 @@ export function computeIssueConclusion(elements, assessments, predecessors = [])
       reasons, derivedBy: 'RULES' };
   }
   if (legal === LEGAL.CONDITIONAL && deciding.length) reasons.push(`판단 미확정 요건: ${deciding.map(e => e.id).join(', ')}`);
-  return { legal, proof: proofOf(deciding, byId), decidingElementIds: deciding.map(e => e.id), reasons, derivedBy: 'RULES' };
+  const result = { legal, proof: proofOf(deciding, byId), decidingElementIds: deciding.map(e => e.id), reasons, derivedBy: 'RULES' };
+  if (legal === LEGAL.CONDITIONAL && deciding.length && options.scenarios !== false) {
+    const scenarios = conditionalScenarios(elements, assessments, deciding);
+    if (scenarios) result.scenarios = scenarios;
+  }
+  return result;
+}
+
+/**
+ * 판단이 유보된 이유가 "아직 확정되지 않은 요건"일 때, 그 요건이 어느 쪽으로 확정되는지에 따라
+ * 결론이 어떻게 달라지는지 계산한다. "유보"로 끝내지 않고 확인해야 할 사실과 그 결과를 함께 보여 주기 위한 것이다.
+ * 코드가 요건 규칙을 다시 적용할 뿐이며 새 판단을 만들지 않는다.
+ */
+function conditionalScenarios(elements, assessments, deciding) {
+  const pending = new Set(deciding.map(e => e.id));
+  const withStatus = status => [...assessments.filter(a => !pending.has(a.elementId)),
+    ...deciding.map(e => ({ ...(assessments.find(a => a.elementId === e.id) || {}), elementId: e.id, status, proof: 'SUFFICIENT' }))];
+  const ifSatisfied = computeIssueConclusion(elements, withStatus('SATISFIED'), [], { scenarios: false }).legal;
+  const ifUnsatisfied = computeIssueConclusion(elements, withStatus('NOT_SATISFIED'), [], { scenarios: false }).legal;
+  if (ifSatisfied === LEGAL.CONDITIONAL && ifUnsatisfied === LEGAL.CONDITIONAL) return null;
+  if (ifSatisfied === ifUnsatisfied) return null; // 확인 결과가 결론을 바꾸지 않으면 조건부로 보여 줄 이유가 없다.
+  return { pendingElementIds: [...pending], ifSatisfied, ifUnsatisfied };
 }
 
 /** 결론을 좌우한 요건들의 입증 상태. 하나라도 충분하지 않으면 전체도 충분하지 않다. */

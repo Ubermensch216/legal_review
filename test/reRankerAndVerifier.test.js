@@ -155,3 +155,18 @@ test('공식 API의 원문자 항 번호(①)로 된 조문도 항·호 단위 �
   });
   assert.deepEqual(verificationReport.details.map(d => d.status), ['VERIFIED', 'VERIFIED', 'UNVERIFIED'], '없는 제3항은 여전히 미검증');
 });
+
+test('질의어의 조사를 떼어 비교하고, 일치 개수에 따라 점수가 달라진다', () => {
+  const ranked = reRankPrecedents({
+    precedents: [
+      { caseNo: 'A', courtName: '대법원', holding: '근로기준법상 가산수당은 연장근로에 대해 지급한다.', summary: '' },
+      { caseNo: 'B', courtName: '대법원', holding: '가산수당 산정의 기초가 되는 통상임금의 범위', summary: '연장근로 시간 계산' },
+      { caseNo: 'C', courtName: '대법원', holding: '무관한 손해배상 사건', summary: '' }
+    ],
+    query: '연장근로에 대한 가산수당을 지급해야 하는지 여부와 통상임금'
+  });
+  const score = no => ranked.find(p => p.caseNo === no).relevanceScore;
+  assert.ok(score('B') > score('A'), '쟁점어가 더 많이 닿는 판례가 위로 간다');
+  assert.ok(score('A') > score('C'));
+  assert.equal(new Set(ranked.map(p => p.relevanceScore)).size, 3, '모두 같은 점수가 되지 않는다');
+});

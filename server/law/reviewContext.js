@@ -53,7 +53,8 @@ export function buildReviewInput(context, documentText = '', query = '', budgets
   }
   // 조문 효력은 워크벤치가 확정한 기준일로 판단한다. 지정이 없으면 오늘이다.
   const asOf = context.meta?.asOfDate || today();
-  const warnings = [...(context.meta?.dataIntegrity?.warnings || [])];
+  // 첨부문서 안내(notices)는 제한 결과 판정에서는 빠졌지만, 모델에는 계속 알려야 한다.
+  const warnings = [...(context.meta?.dataIntegrity?.warnings || []), ...(context.meta?.dataIntegrity?.notices || [])];
   if (context.learningWarning) warnings.push(context.learningWarning);
   let learningKnowledgeText = '';
   const learningReferences = [];

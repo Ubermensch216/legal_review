@@ -2,6 +2,7 @@
 // (3) 관측값으로 보정한 문자군 휴리스틱이다. (1)(2)만 정확한 값이며 나머지는 추정이다.
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertTransmissionAllowed } from '../reasoning/externalGate.js';
 
 /**
  * 문자군별 토큰/문자 계수. 측정값이 아니라 예산 편성을 위한 사전값이며,
@@ -157,8 +158,10 @@ export function resolveBudget(provider, config = {}) {
     if (!Number.isSafeInteger(n) || n <= 0) throw new Error('LLM 예산은 양의 정수여야 합니다.');
     return n;
   };
-  const contextTokens = positive(config.contextTokens ?? profile.contextTokens ?? process.env.LLM_CONTEXT_TOKENS, local ? (process.env.OLLAMA_NUM_CTX ?? 16384) : 32768);
-  const outputTokens = positive(config.outputTokens ?? profile.outputTokens ?? process.env.LLM_OUTPUT_TOKENS, local ? (process.env.OLLAMA_NUM_PREDICT ?? 8192) : 3500);
+  // EXAONE은 입력+출력 524,288토큰까지 받는다. 비용과 응답 시간을 고려해 그 일부만 기본 예산으로 쓴다.
+  const cloudDefaults = provider === 'exaone' ? { context: 131072, output: 16384 } : { context: 32768, output: 3500 };
+  const contextTokens = positive(config.contextTokens ?? profile.contextTokens ?? process.env.LLM_CONTEXT_TOKENS, local ? (process.env.OLLAMA_NUM_CTX ?? 16384) : cloudDefaults.context);
+  const outputTokens = positive(config.outputTokens ?? profile.outputTokens ?? process.env.LLM_OUTPUT_TOKENS, local ? (process.env.OLLAMA_NUM_PREDICT ?? 8192) : cloudDefaults.output);
   if (outputTokens + SAFETY_TOKENS >= contextTokens) throw new Error('출력 예약 토큰이 컨텍스트 예산을 초과합니다.');
   // exact:false는 이 예산값이 운영자 설정일 뿐 모델이 보장한 한도가 아니라는 표시다.
   // 실제 입력 토큰을 정확히 셌는지는 호출 시점의 계수 결과(tokenCount.exact)가 가른다.
@@ -181,6 +184,8 @@ async function pluginCount(text, provider, model) {
 
 /** 제공자의 사전 계수 API. 생성 과금 없이 해당 모델의 실제 입력 토큰을 돌려준다. */
 async function providerCount(provider, { model, system, user, apiKey }) {
+  // 토큰 계수 API도 프롬프트 전문을 외부로 보낸다. 생성 호출과 같은 승인 규칙을 따른다.
+  assertTransmissionAllowed(provider, system, user);
   const signal = AbortSignal.timeout(countTimeout());
   if (provider === 'anthropic') {
     const response = await fetch('https://api.anthropic.com/v1/messages/count_tokens', {
@@ -254,12 +259,12 @@ export function createTokenCounter(provider, { model, apiKey } = {}) {
 
 export function readTokenUsage(provider, data) {
   const pair = provider === 'ollama' ? [data.prompt_eval_count, data.eval_count]
-    : provider === 'openai' ? [data.usage?.prompt_tokens, data.usage?.completion_tokens]
+    : provider === 'openai' || provider === 'exaone' ? [data.usage?.prompt_tokens, data.usage?.completion_tokens]
     : provider === 'anthropic' ? [data.usage?.input_tokens, data.usage?.output_tokens]
     : [data.usageMetadata?.promptTokenCount, data.usageMetadata?.candidatesTokenCount];
   const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
   return { source: 'PROVIDER_RESPONSE', inputTokens: count(pair[0]), outputTokens: count(pair[1]),
     totalTokens: count(data.usage?.total_tokens ?? data.usageMetadata?.totalTokenCount),
-    reasoningTokens: count(data.usage?.completion_tokens_details?.reasoning_tokens ?? data.usageMetadata?.thoughtsTokenCount),
+    reasoningTokens: count(data.usage?.completion_tokens_details?.reasoning_tokens ?? data.usage?.reasoning_tokens ?? data.usageMetadata?.thoughtsTokenCount),
     cacheReadTokens: count(data.usage?.cache_read_input_tokens), cacheCreationTokens: count(data.usage?.cache_creation_input_tokens) };
 }

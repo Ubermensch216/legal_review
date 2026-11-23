@@ -4,7 +4,7 @@
 // 이후 단계에는 해당 조문·쟁점·주장에 필요한 자료만 싣는다.
 // 여기 문자열을 바꾸면 promptVersion을 올린다.
 
-export const PROMPT_VERSION = 'r5';
+export const PROMPT_VERSION = 'r6';
 
 export const REASONING_SYSTEM = [
   '당신은 대한민국 법률 검토를 돕는 분석 도구입니다.',
@@ -13,6 +13,8 @@ export const REASONING_SYSTEM = [
   '자료로 확인되지 않는 내용은 추측하지 않고 모른다고 표시합니다.',
   '요청한 JSON만 출력합니다.'
 ].join('\n');
+
+import { profileDocument, profilePromptLines } from './documentProfile.js';
 
 const PRESET_LABEL = {
   compliance: '법령 준수 검토', contract_risk: '계약서 리스크 검토', ordinance_conflict: '조례·상위법 충돌 검토',
@@ -42,9 +44,12 @@ export function buildCommonPrefix({ registry, query, preset, budgets, documentId
   const document = registry.renderFull(documentIds, { maxChars: budgets.document });
   const index = registry.renderIndex({ kinds: ['ARTICLE', 'ORDINANCE_ARTICLE', 'ADMIN_RULE', 'PRECEDENT', 'INTERPRETATION', 'KNOWLEDGE'],
     maxChars: budgets.index });
+  const profile = profileDocument({ query,
+    documentText: registry.list(e => e.kind === 'DOCUMENT').map(e => e.text).join('\n') });
   const text = [
     `[검토 유형] ${PRESET_LABEL[preset] || preset}`,
     PRESET_FOCUS[preset] ? `[쟁점 설정 방향] ${PRESET_FOCUS[preset]}` : '',
+    profilePromptLines(profile),
     `[검토 기준일] ${registry.asOf}`,
     `[질의]\n${query || '(질의 없음 — 첨부문서 검토)'}`,
     `[첨부문서 조항]${document.omitted.length ? ` (분량 제한으로 ${document.omitted.length}개 조항 제외: ${document.omitted.join(', ')})` : ''}\n${document.text || '(첨부문서 없음)'}`,

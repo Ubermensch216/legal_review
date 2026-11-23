@@ -10,6 +10,7 @@ import { Agent } from 'undici';
 import { ENV } from '../env.js';
 import { maskLawSecrets } from '../law/lawErrors.js';
 import { readTokenUsage } from '../law/llmBudget.js';
+import { assertTransmissionAllowed } from './externalGate.js';
 
 // ── 전송 계층 공통 ────────────────────────────────────────────
 // Node의 fetch(undici)는 응답 '헤더'를 300초 안에 받지 못하면 요청을 끊고
@@ -361,8 +362,121 @@ export async function callGemini(systemPrompt, userPrompt, config = {}) {
   return { content: state.content, tokenUsage: usage };
 }
 
+// ── LG EXAONE ────────────────────────────────────────────────
+// OpenAI 호환 API지만 다음이 다르다(https://docs.exaone.ai/ko/docs/k-exaone-2.5).
+// - 추론이 항상 켜져 있고 추론 토큰이 max_tokens에 포함된다. 출력 예산만 넘기면 답을 쓰기 전에 잘린다.
+// - 요청 필드에 response_format이 문서화되어 있지 않아, 출력 형식은 지시문으로 전달하고 호출부가 검증한다.
+// - 오류 본문은 { result_code, description } 형태다.
+const EXAONE_ENDPOINT = 'https://api.exaone.ai/v1/chat/completions';
+const EXAONE_REASONING_RESERVE = { low: 4096, high: 16384, max: 32768 };
+const EXAONE_MAX_ATTEMPTS = 3;
+const EXAONE_MAX_RETRY_WAIT_MS = 30000;
+
+/** 추출·분류(think:false)는 낮은 추론으로, 법리 판단은 높은 추론으로 호출한다. 환경변수가 있으면 그 값을 쓴다. */
+function exaoneEffort(config) {
+  const configured = String(process.env.EXAONE_REASONING_EFFORT || '').trim().toLowerCase();
+  if (Object.hasOwn(EXAONE_REASONING_RESERVE, configured)) return configured;
+  return config.think === false ? 'low' : 'high';
+}
+
+function exaoneMaxTokens(config, effort) {
+  const override = Number(process.env.EXAONE_REASONING_TOKENS);
+  const reserve = Number.isSafeInteger(override) && override >= 0 ? override : EXAONE_REASONING_RESERVE[effort];
+  return config.budget.outputTokens + reserve;
+}
+
+function exaoneSystemPrompt(systemPrompt, schema) {
+  const format = '\n\n[출력 형식] 설명이나 코드 블록 없이 유효한 JSON 객체 하나만 출력하십시오.';
+  return `${systemPrompt}${format}${schema ? `\n다음 JSON Schema를 정확히 따르십시오:\n${JSON.stringify(schema)}` : ''}`;
+}
+
+const EXAONE_STATUS_HINT = {
+  401: 'EXAONE_API_KEY가 없거나 유효하지 않습니다. .env의 키를 확인하고 서버를 재시작하십시오.',
+  404: '요청 경로 또는 모델을 찾을 수 없습니다. EXAONE_MODEL 값을 확인하십시오.',
+  429: '호출 한도를 초과했습니다. 잠시 후 다시 시도하십시오.'
+};
+
+async function exaoneHttpError(response) {
+  let description = '';
+  try { description = String((await response.json())?.description || ''); } catch { /* 본문이 JSON이 아니면 상태 코드로 안내한다 */ }
+  const detail = EXAONE_STATUS_HINT[response.status] || description;
+  return new Error(maskLawSecrets(`EXAONE Error HTTP ${response.status}${detail ? `: ${detail}` : ''}`));
+}
+
+/** retry-after 헤더는 없을 수 있다(문서 명시). 없으면 지수 백오프로 기다린다. */
+function exaoneRetryDelay(response, attempt) {
+  const header = name => { const n = Number(response.headers?.get?.(name)); return Number.isFinite(n) && n >= 0 && response.headers.get(name) !== null ? n : null; };
+  const ms = header('retry-after-ms') ?? (header('retry-after') !== null ? header('retry-after') * 1000 : 1000 * 2 ** (attempt - 1));
+  return Math.min(ms, EXAONE_MAX_RETRY_WAIT_MS);
+}
+
+function waitOrAbort(ms, signal) {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(Object.assign(new Error('aborted'), { name: 'AbortError' })); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(); }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/**
+ * LG EXAONE API 호출 (SSE 스트리밍)
+ * 단계형 검토는 호출이 많아 분당 한도에 걸리기 쉬우므로 429·5xx만 제한적으로 재시도한다.
+ */
+export async function callExaone(systemPrompt, userPrompt, config = {}) {
+  const apiKey = config.apiKey || ENV.EXAONE_API_KEY;
+  const model = config.model || ENV.EXAONE_MODEL;
+  const timeoutMs = parseInt(process.env.LLM_TIMEOUT || '600000', 10);
+  const guard = createCallGuard('EXAONE', EXAONE_ENDPOINT, timeoutMs);
+  const effort = exaoneEffort(config);
+  const body = JSON.stringify({
+    model,
+    messages: [
+      { role: 'system', content: exaoneSystemPrompt(systemPrompt, config.schema) },
+      { role: 'user', content: userPrompt }
+    ],
+    temperature: typeof config.temperature === 'number' ? config.temperature : 0.1,
+    max_tokens: exaoneMaxTokens(config, effort),
+    reasoning_effort: effort,
+    stream: true,
+    stream_options: { include_usage: true }
+  });
+
+  let response;
+  try {
+    for (let attempt = 1; ; attempt++) {
+      response = await fetch(EXAONE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        signal: guard.signal, dispatcher: guard.dispatcher, body
+      });
+      if (response.ok) break;
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt >= EXAONE_MAX_ATTEMPTS) throw await exaoneHttpError(response);
+      const delay = exaoneRetryDelay(response, attempt);
+      await response.body?.cancel?.();
+      await waitOrAbort(delay, guard.signal);
+    }
+  } catch (err) { guard.done(); throw guard.describe(err); }
+
+  let thinkingChars = 0;
+  const state = await collectSseStream({ body: response.body, guard, onChunk: (chunk, s) => {
+    if (chunk.result_code && !chunk.choices) throw new Error(`EXAONE 오류 ${chunk.result_code}: ${chunk.description || '원인 미상'}`);
+    const choice = chunk.choices?.[0];
+    // 추론은 별도 필드로 온다. 본문에 섞으면 JSON 해석이 깨진다.
+    thinkingChars += (choice?.delta?.reasoning_content || '').length;
+    s.content += choice?.delta?.content || '';
+    if (choice?.finish_reason === 'length') s.truncated = true;
+    if (chunk.usage) s.usage = chunk.usage;
+  }, onToken: config.onToken });
+
+  const usage = readTokenUsage('exaone', { usage: state.usage });
+  const timing = { thinkingChars };
+  if (state.truncated) throw Object.assign(new Error('LLM 출력이 토큰 한도로 잘렸습니다.'), { tokenUsage: usage, timing, truncated: true });
+  return { content: state.content.trim(), tokenUsage: usage, timing };
+}
+
 // 제공자별 필요한 환경변수. 설정 누락 시 무엇을 채워야 하는지 그대로 알려준다.
-export const PROVIDER_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY' };
+export const PROVIDER_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPIC_API_KEY', gemini: 'GEMINI_API_KEY', exaone: 'EXAONE_API_KEY' };
 
 /**
  * LLM 호출이 불가능한 이유를 구체적으로 설명한다.
@@ -370,9 +484,9 @@ export const PROVIDER_KEY_ENV = { openai: 'OPENAI_API_KEY', anthropic: 'ANTHROPI
  * 폴백 검토가 나가는데도 원인을 못 찾는 일이 반복됐다.
  */
 export function describeProviderMisconfiguration(provider, llmConfig = {}) {
-  const known = ['openai', 'anthropic', 'gemini', 'ollama', 'rule_based', 'local_rule'];
+  const known = ['openai', 'anthropic', 'gemini', 'exaone', 'ollama', 'rule_based', 'local_rule'];
   if (!known.includes(provider)) {
-    return `알 수 없는 LLM 제공자 '${provider}'입니다. LLM_PROVIDER를 ${known.slice(0, 4).join(', ')} 중 하나로 설정하십시오.`;
+    return `알 수 없는 LLM 제공자 '${provider}'입니다. LLM_PROVIDER를 ${known.slice(0, 5).join(', ')} 중 하나로 설정하십시오.`;
   }
   const envName = PROVIDER_KEY_ENV[provider];
   if (envName && !(llmConfig.apiKey || ENV[envName])) {
@@ -381,15 +495,19 @@ export function describeProviderMisconfiguration(provider, llmConfig = {}) {
   return `${provider} 제공자를 호출할 수 없습니다. 설정을 확인하십시오.`;
 }
 
-const ADAPTERS = { openai: callOpenAi, anthropic: callAnthropic, gemini: callGemini, ollama: callOllama };
+const ADAPTERS = { openai: callOpenAi, anthropic: callAnthropic, gemini: callGemini, exaone: callExaone, ollama: callOllama };
 
-/** 제공자 이름으로 어댑터를 고른다. 키가 없는 클라우드 제공자는 호출하지 않고 이유를 알린다. */
+/**
+ * 제공자 이름으로 어댑터를 고른다. 키가 없는 클라우드 제공자는 호출하지 않고 이유를 알린다.
+ * 외부 제공자는 사용자가 승인한 전송문만 보낸다(externalGate.js). 모든 외부 호출이 이 함수를 지난다.
+ */
 export function callProvider(provider, systemPrompt, userPrompt, config = {}) {
   const envName = PROVIDER_KEY_ENV[provider];
   const adapter = ADAPTERS[provider];
   if (!adapter || (envName && !(config.apiKey || ENV[envName]))) {
     throw new Error(describeProviderMisconfiguration(provider, config));
   }
+  assertTransmissionAllowed(provider, systemPrompt, userPrompt, config.session?.externalApproval);
   return adapter(systemPrompt, userPrompt, config);
 }
 

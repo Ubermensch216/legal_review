@@ -7,6 +7,7 @@ import { createLlmSession } from '../server/reasoning/llmGateway.js';
 import { buildEvidenceRegistry } from '../server/reasoning/evidenceRegistry.js';
 import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from '../server/reasoning/verify/conclusion.js';
 import { applyIssue, buildRunPrefix, cleanNarrative } from '../server/reasoning/stages/application.js';
+import { conditionalConclusionText, conclusionDigest } from '../server/reasoning/stages/synthesis.js';
 
 const noNetwork = globalThis.fetch;
 afterEach(() => { globalThis.fetch = noNetwork; });
@@ -36,6 +37,30 @@ test('원칙 요건이 충족돼도 예외 적용 여부를 모르면 확정하�
   assert.equal(computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'SATISFIED')]).legal, 'EXCEPTION_APPLIES');
   assert.equal(computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'DISPUTED')]).legal, 'CONDITIONAL');
   assert.equal(computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'NOT_SATISFIED')]).legal, 'APPLIES');
+});
+
+test('판단 유보는 미확정 요건이 어느 쪽으로 확정되느냐에 따른 조건부 결론을 함께 계산한다', () => {
+  const elements = [el('A1.E1'), el('A1.E2')];
+  const open = computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'UNKNOWN')]);
+  assert.deepEqual(open.scenarios, { pendingElementIds: ['A1.E2'], ifSatisfied: 'APPLIES', ifUnsatisfied: 'NOT_APPLICABLE' });
+  assert.equal(computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'SATISFIED')]).scenarios, undefined, '확정된 결론에는 붙이지 않는다');
+
+  const withException = [el('A1.E1'), el('A1.E2', { isException: true })];
+  const exception = computeIssueConclusion(withException, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'UNKNOWN')]);
+  assert.deepEqual([exception.scenarios.ifSatisfied, exception.scenarios.ifUnsatisfied], ['EXCEPTION_APPLIES', 'APPLIES']);
+
+  const text = conditionalConclusionText(open, elements);
+  assert.match(text, /A1\.E2/);
+  assert.match(text, /충족되면 요건 충족, 충족되지 않으면 요건 불충족/);
+  assert.equal(conditionalConclusionText({ legal: 'APPLIES' }, elements), '');
+});
+
+test('의견서 첫머리의 결론 요약은 계산된 결론과 조건을 그대로 옮긴다', () => {
+  const elements = [el('A1.E1'), el('A1.E2')];
+  const conclusion = computeIssueConclusion(elements, [as('A1.E1', 'SATISFIED'), as('A1.E2', 'UNKNOWN')]);
+  const digest = conclusionDigest([{ id: 'I1', question: '가산수당 지급 대상인가' }], [{ issueId: 'I1', elements, conclusion }]);
+  assert.match(digest, /쟁점 1 가산수당 지급 대상인가 → 판단 유보/);
+  assert.match(digest, /· 확인이 필요한 요건: A1\.E2/);
 });
 
 test('선결 쟁점이 미해결이면 후속 쟁점은 확정하지 않되, 선결이 풀렸을 때의 결론은 남긴다', () => {

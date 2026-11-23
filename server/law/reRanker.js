@@ -1,4 +1,5 @@
 import { extractArticleReferences, normalizeArticleNo, isCitationReference } from './lawArticleRef.js';
+import { extractTerms } from '../reasoning/stages/statuteLinking.js';
 // server/law/reRanker.js - 판례·법령해석례 시맨틱 Re-ranking 및 관련도 스코어링 엔진
 
 /**
@@ -49,20 +50,14 @@ export function reRankPrecedents({ precedents = [], query = '', targetLaw = '', 
     }
 
     // 2. 핵심 쟁점 키워드 포섭도 (최대 40점)
-    let keywordHits = 0;
-    for (const term of queryTerms) {
-      if (term.length >= 2 && fullText.includes(term)) {
-        keywordHits++;
-        matchedTokens.push(term);
-      }
-    }
-
-    if (keywordHits >= 3) {
-      score += 35;
-      matchReasons.push('핵심 사실관계 및 쟁점 키워드 일치');
-    } else if (keywordHits >= 1) {
-      score += 25;
-      matchReasons.push('주요 법적 쟁점 키워드 일치');
+    // 질의어는 조사를 뗀 어간으로 비교한다("가산수당을"은 판결문의 "가산수당"과 닿아야 한다).
+    // 일치 개수에 따라 점수를 나눠야 쟁점에 가까운 판례가 위로 올라온다(전부 같은 점수가 되지 않게).
+    const hitTerms = queryTerms.filter(term => touchesTerm(fullText, term));
+    matchedTokens.push(...hitTerms);
+    const keywordHits = hitTerms.length;
+    if (keywordHits >= 1) {
+      score += Math.min(35, 14 + keywordHits * 7);
+      matchReasons.push(keywordHits >= 3 ? '핵심 사실관계 및 쟁점 키워드 일치' : '주요 법적 쟁점 키워드 일치');
     }
 
     // 3. 법원 권위 및 중요성 (최대 15점)
@@ -115,16 +110,10 @@ export function reRankInterpretations({ interpretations = [], query = '', target
       matchReasons.push(`소관 법령(${targetLaw}) 유권해석`);
     }
 
-    let keywordHits = 0;
-    for (const term of queryTerms) {
-      if (term.length >= 2 && fullText.includes(term)) {
-        keywordHits++;
-      }
-    }
-
-    if (keywordHits >= 2) {
-      score += 25;
-      matchReasons.push('사안 쟁점 해석 회답 일치');
+    const keywordHits = queryTerms.filter(term => touchesTerm(fullText, term)).length;
+    if (keywordHits >= 1) {
+      score += Math.min(35, 5 + keywordHits * 8);
+      matchReasons.push(keywordHits >= 2 ? '사안 쟁점 해석 회답 일치' : '쟁점 키워드 일부 일치');
     }
 
     const finalScore = Math.min(score, 100);
@@ -142,12 +131,12 @@ export function reRankInterpretations({ interpretations = [], query = '', target
 }
 
 function extractKeyTerms(text) {
-  if (!text) return [];
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s가-힣]/g, ' ')
-    .split(/\s+/)
-    .filter(t => t.length >= 2 && !['관한', '따라', '경우', '대한', '등의', '위한'].includes(t));
+  return extractTerms(String(text || '').toLowerCase()).filter(t => t.length >= 2);
+}
+
+/** 어간 일치: 4자 이상이면 끝 한 글자를 뗀 형태("연장근로수당"→"연장근로수")도 인정한다. */
+function touchesTerm(text, term) {
+  return text.includes(term) || (term.length >= 4 && text.includes(term.slice(0, term.length - 1)));
 }
 
 function normalizeArticleString(art) {

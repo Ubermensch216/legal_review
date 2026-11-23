@@ -15,14 +15,44 @@ const PROOF_LABEL = { SUFFICIENT: '입증 충분', INSUFFICIENT: '입증 부족'
 const STATUS_LABEL = { SATISFIED: '충족', NOT_SATISFIED: '불충족', PARTIALLY_SATISFIED: '일부 충족', DISPUTED: '다툼', UNKNOWN: '미확정' };
 export const DISCLAIMER = '본 검토의견서는 AI 법령검토 엔진에 의해 작성된 사전 분석 참고자료이며, 구체적인 행정처분, 소송 또는 계약 체결 시에는 법률전문가(변호사)의 최종 감수를 거치시기 바랍니다.';
 
+/**
+ * 판단 유보를 "어떤 사실이 확인되면 어떤 결론"인 조건부 결론으로 풀어 쓴다. 계산된 시나리오가 없으면 빈 문자열.
+ * 요건 문구가 길면 앞부분만 쓴다.
+ */
+export function conditionalConclusionText(conclusion, elements = []) {
+  const s = conclusion?.scenarios;
+  if (!s) return '';
+  const names = s.pendingElementIds.map(id => elements.find(e => e.id === id)?.text).filter(Boolean)
+    .map(text => text.length > 70 ? `${text.slice(0, 70)}…` : text);
+  if (!names.length) return '';
+  const label = value => LEGAL_LABEL[value] || '판단 유보';
+  return `확인이 필요한 요건: ${names.join(' / ')} → 모두 충족되면 ${label(s.ifSatisfied)}, 충족되지 않으면 ${label(s.ifUnsatisfied)}`;
+}
+
+/**
+ * 의견서 첫머리에 두는 쟁점별 결론 요약. 표·결론·조건은 계산된 값을 코드가 그대로 옮기고,
+ * 모델이 쓴 문장은 섞지 않는다(요약 문단은 따로 모델이 쓴다).
+ */
+export function conclusionDigest(issues, issueResults) {
+  return issues.map(issue => {
+    const r = issueResults.find(x => x.issueId === issue.id);
+    const c = r?.conclusion || {};
+    const head = `- 쟁점 ${issue.id.slice(1)} ${String(issue.question).replace(/\s+/g, ' ').slice(0, 80)} → ${LEGAL_LABEL[c.legal] || '판단 유보'}`;
+    const conditional = conditionalConclusionText(c, r?.elements);
+    const pre = c.ifResolved ? ` (선결 쟁점이 풀리면 ${LEGAL_LABEL[c.ifResolved]})` : '';
+    return `${head}${pre}${conditional ? `\n  · ${conditional}` : ''}`;
+  }).join('\n');
+}
+
 /** 쟁점별 결론 표. 모델 입력과 보고서 본문에 같은 표를 쓴다. */
 export function conclusionTable(issues, issueResults) {
   return issues.map(issue => {
     const r = issueResults.find(x => x.issueId === issue.id);
     const c = r?.conclusion || {};
     const deciding = (c.decidingElementIds || []).map(id => r.elements.find(e => e.id === id)?.text).filter(Boolean);
+    const conditional = conditionalConclusionText(c, r?.elements);
     return `[${issue.id}] ${issue.question}\n  결론: ${LEGAL_LABEL[c.legal] || '판단 유보'}${c.ifResolved ? ` (선결 쟁점이 풀리면 ${LEGAL_LABEL[c.ifResolved]})` : ''} · ${PROOF_LABEL[c.proof] || ''}`
-      + `${deciding.length ? `\n  결정 요건: ${deciding.join(' / ')}` : ''}${r?.counter?.position ? `\n  반대 논리: ${r.counter.position}` : ''}`;
+      + `${deciding.length ? `\n  결정 요건: ${deciding.join(' / ')}` : ''}${conditional ? `\n  조건부 결론: ${conditional}` : ''}${r?.counter?.position ? `\n  반대 논리: ${r.counter.position}` : ''}`;
   }).join('\n');
 }
 
@@ -144,6 +174,32 @@ export async function synthesize({ issues, issueResults, registry, preset, provi
   }
 }
 
+/** 요건 판단이 한 건이라도 실행된 쟁점이 있는가. 없으면 의견서를 쓸 근거가 없다. */
+export const hasJudgedIssue = issueResults => issueResults.some(r =>
+  ['OK', 'OK_WITH_WARNINGS', 'PARTIAL'].includes(r.stageStatus) && (r.assessments || []).length > 0);
+
+/**
+ * 판단이 실행된 쟁점이 없을 때의 결과. 쟁점마다 '판단 유보'를 템플릿으로 이어 붙인 의견서는
+ * 결과가 있는 것처럼 보이지만 내용이 없으므로, 대신 왜 판단하지 못했고 무엇을 해야 하는지 알린다.
+ */
+export function noJudgmentFields({ issues, issueResults, gaps = [] }) {
+  const reasonOf = issue => {
+    const r = issueResults.find(x => x.issueId === issue.id);
+    const text = r?.error || (r?.warnings || [])[0] || '적용할 공식 법령·판례와 판단 요건을 찾지 못했습니다.';
+    return `- [쟁점 ${issue.id.slice(1)}] ${issue.question}\n  사유: ${String(text).replace(/\s+/g, ' ').slice(0, 160)}`;
+  };
+  const summary = `이번 검토에서는 요건 판단이 실행된 쟁점이 없어 법률 의견을 작성하지 못했습니다. 쟁점 ${issues.length}개를 세웠으나 모두 적용할 근거를 연결하지 못했습니다.`;
+  const next = ['기준 법령이 올바르게 선택되었는지 확인하고, 필요하면 \'기준 대상 법령\'을 직접 입력해 다시 실행하십시오.',
+    '문서가 인용한 법령·규정이 공식 법령 API에서 조회되었는지 확인하십시오(검토 진행 화면의 수집 단계).',
+    '더 큰 모델을 쓰거나 \'외부 전문가 질의\' 탭으로 쟁점별 근거를 확보한 뒤 최종 검토를 실행하십시오.'];
+  const draftOpinion = ['# 법률 검토 미완료', '## 1. 결과', summary,
+    '## 2. 판단하지 못한 쟁점', issues.map(reasonOf).join('\n') || '- (세워진 쟁점 없음)',
+    '## 3. 다음에 할 일', next.map((x, i) => `${i + 1}. ${x}`).join('\n'),
+    ...(gaps.length ? ['## 4. 남은 확인 사항', gaps.slice(0, 12).map(g => `- ${g.question}`).join('\n')] : []),
+    '---', DISCLAIMER].join('\n\n');
+  return { summary, legalOpinion: draftOpinion, draftOpinion, risks: [], recommendations: next, redlineDiffs: [], noJudgment: true };
+}
+
 const redlineSchema = citableIds => ({ type: 'object', additionalProperties: false, required: ['revisedText', 'reason', 'evidenceIds'],
   properties: { revisedText: { type: 'string', maxLength: 600 }, reason: { type: 'string', maxLength: 200 },
     evidenceIds: { type: 'array', maxItems: 4, items: citableIds.length ? { type: 'string', enum: citableIds } : { type: 'string' } } } });
@@ -170,7 +226,11 @@ export function ensureOperationalRedline(text, kinds = []) {
     DISPUTE_WAIVER: /관할/.test(value) && /협의/.test(value) && /조정/.test(value) && /권리보전/.test(value)
   };
   const critical = kinds.find(kind => kind in CONTRACT_REDLINE_FALLBACK && !checks[kind]);
-  return critical ? { text: CONTRACT_REDLINE_FALLBACK[critical], substituted: true } : { text: value, substituted: false };
+  // 모델이 원문 맥락에 맞춰 쓴 수정안을 고정 문구로 덮어쓰지 않는다. 핵심 항목이 빠졌다고 알리고,
+  // 표준 문안은 참고용 보완 문안으로 따로 붙인다. 어느 쪽을 쓸지는 검토자가 정한다.
+  return critical
+    ? { text: value, substituted: false, incomplete: true, missingKind: critical, supplement: CONTRACT_REDLINE_FALLBACK[critical] }
+    : { text: value, substituted: false, incomplete: false, supplement: '' };
 }
 const REDLINE_TASK = ({ clause, issueLines, contractMode = false, kinds = [] }) => `[과제: 수정 조문 작성]
 아래 첨부문서 조항을, 연결된 쟁점의 결론과 근거에 맞게 고친 문구로 다시 쓴다. 조항의 목적은 유지하고 위험한 부분만 고친다.
@@ -233,16 +293,18 @@ export async function draftRedlines({ issues, issueResults, synthesis, registry,
         ? normalizeTableRedline(value.revisedText, entry.text) : value.revisedText;
       if (!revisedText) { warnings.push(`${entry.label} 수정 문구의 표 열 구조가 원문과 다릅니다.`); continue; }
       const kinds = linked.flatMap(({ issue }) => issue.contractKinds || []);
+      let supplementalText = '';
       if (contractFindings.length && !/별표|별지/.test(entry.label)) {
         const checked = ensureOperationalRedline(revisedText, kinds);
-        revisedText = checked.text;
-        if (checked.substituted) warnings.push(`${entry.label} 수정 문구가 핵심 정산·책임·권리·절차를 빠뜨려 기본 보완 문안으로 대체했습니다.`);
+        supplementalText = checked.supplement;
+        if (checked.incomplete) warnings.push(`${entry.label} 수정 문구가 핵심 정산·책임·권리·절차 중 일부를 다루지 않았습니다. 표준 보완 문안을 함께 제시하니 비교해 선택하십시오.`);
       }
       const verifiedIds = (value.evidenceIds || []).filter(id => citable.includes(id));
       if (verifiedIds.length !== (value.evidenceIds || []).length) warnings.push(`${entry.label} 수정 이유에서 미확인 법적 근거 ID를 제거했습니다.`);
       const reason = String(value.reason || '').replace(/\[([A-Z][A-Za-z0-9._]*)\]/g, (match, id) => citable.includes(id) ? match : '');
       if (reason !== value.reason) warnings.push(`${entry.label} 수정 이유에서 확인되지 않은 근거 표기를 제거했습니다.`);
       redlines.push({ clauseNo: entry.label.replace(/^첨부문서\s*/, ''), originalText: entry.text, revisedText,
+        ...(supplementalText ? { supplementalText } : {}),
         reason: `${contractFindings.length ? '법적 효력의 확정 판단이 아닌 위험 완화 권고: ' : ''}${expandMarkers(reason, registry)}`,
         riskLevel: level, evidenceIds: verifiedIds,
         issueIds: linked.map(l => l.issue.id), sourceVerified: true, source: 'REASONING_PIPELINE' });
@@ -352,6 +414,7 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
       `A · 사실에 적용:\n${rows.join('\n') || '- 요건별 적용 판단 없음'}${r?.narrative ? `\n판단 보충: ${expandMarkers(r.narrative, registry)}` : ''}`,
       `C · 쟁점별 결론:\n결론: ${LEGAL_LABEL[c.legal] || '판단 유보'} (${PROOF_LABEL[c.proof] || '입증 미평가'})${c.reasons?.length ? ` — ${c.reasons.join('; ')}` : ''}`,
       c.ifResolved ? `선결 쟁점 해결 시: ${LEGAL_LABEL[c.ifResolved] || '판단 유보'}` : '',
+      conditionalConclusionText(c, r?.elements) ? `조건부 결론: ${conditionalConclusionText(c, r?.elements)}` : '',
       r?.counter?.position ? `반대 논리: ${expandMarkers(r.counter.position, registry)}${r.counter.response ? `\n응답: ${expandMarkers(r.counter.response, registry)}` : '\n응답: (반박하지 못함 — 검토 필요)'}` : '',
       r?.stageStatus === 'FAILED' ? '이 쟁점은 모델 판단에 실패해 결론을 내지 못했습니다.' : ''
     ].filter(Boolean).join('\n');
@@ -386,7 +449,8 @@ export function renderReview({ caseIssues, issueResults, synthesis, gaps, regist
     `계약 성격: ${contractRegime.contractNature.candidates.join(' / ')} 중 추가 판단 필요`,
     `약관성: ${contractRegime.termsRegulation.needsFacts.join(' / ')} 확인 필요`,
     `발주기관 유형: ${contractRegime.publicProcurement.institutionType} · ${contractRegime.publicProcurement.needsFacts.join(' / ')}`] : [];
-  const draftOpinion = ['# 법률 검토의견서', '## 1. 검토 요지', summary,
+  const digest = clean(conclusionDigest(issues, issueResults));
+  const draftOpinion = ['# 법률 검토의견서', '## 1. 검토 요지', summary, ...(digest ? [`쟁점별 결론\n${digest}`] : []),
     '## 2. 사실관계', facts.map(f => `- ${f.text}${f.status === 'INFERRED' ? ' (원문 미확인)' : ''}`).join('\n') || '- (정리된 사실 없음)',
     ...regimeSection,
     '## 3. 쟁점별 검토', legalOpinion,

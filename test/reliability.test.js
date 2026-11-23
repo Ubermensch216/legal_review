@@ -400,6 +400,21 @@ test('시점 버전을 확인하지 못하면 현행 본문으로 대체하지 �
   assert.ok(result.meta.dataIntegrity.warnings.some(w => w.includes('19990101 시점에 시행 중이던 버전을 확인하지 못했습니다')));
 });
 
+test('첨부문서에 섞인 기존 AI 보고서 머리말은 안내로만 남기고 제한 결과로 판정하지 않는다', async () => {
+  const deps = services({ searchLaw: async () => [law], getLawDetail: async () => ({ ...law, articles: [structuredClone(article)] }) });
+  const shell = '[검토 제한 및 출처 안내]\n본 검토의견서는 AI 법령검토 시스템에 의해 작성된 참고자료입니다.\n제15조 검토';
+  const result = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조', documentText: shell }, deps);
+  const integrity = result.meta.dataIntegrity;
+  assert.equal(integrity.hasOfficialArticles, true);
+  assert.equal(integrity.isFallback, false);
+  assert.equal(integrity.hasMockData, false);
+  assert.deepEqual(integrity.warnings, []);
+  assert.equal(integrity.notices.length, 1);
+  assert.match(integrity.notices[0], /공식 법령 근거가 아닙니다/);
+  // 모델 입력에는 계속 전달된다.
+  assert.ok(buildReviewInput(result, shell, '제15조').warnings.some(w => w.includes('기존 AI 검토보고서')));
+});
+
 test('형식이 잘못된 기준일은 조용히 오늘로 떨어지지 않는다', async () => {
   const deps = services({ searchLaw: async () => [law], getLawDetail: async () => ({ ...law, articles: [structuredClone(article)] }) });
   const result = await buildWorkbenchContext({ targetLaw: law.lawName, query: '제15조', targetDate: '2021-13-45' }, deps);

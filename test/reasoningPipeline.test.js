@@ -155,6 +155,34 @@ test('공식 요건이 없어 모든 쟁점을 생략하면 검토 필요 게이
   assert.equal(review.reasoning.gaps.filter(g => g.type === 'MISSING_AUTHORITY').length, review.reasoning.issues.length);
 });
 
+test('판단이 한 건도 실행되지 않으면 의견서를 짜 맞추지 않고 실패 원인을 안내하며, 종합·수정안 호출을 하지 않는다', async () => {
+  const calls = fakeOllama();
+  const context = workbenchContext();
+  context.officialEvidence.articles = [];
+  context.meta.dataIntegrity.hasOfficialArticles = false;
+  const session = createLlmSession();
+  const review = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText,
+    workbenchContext: context, provider: 'ollama', model: ENV.OLLAMA_MODEL, session, clients, embed, cache: cache() });
+
+  assert.equal(review.noJudgment, true);
+  assert.match(review.summary, /법률 의견을 작성하지 못했습니다/);
+  assert.match(review.draftOpinion, /^# 법률 검토 미완료/);
+  assert.match(review.draftOpinion, /판단하지 못한 쟁점[\s\S]*사유:/);
+  assert.doesNotMatch(review.draftOpinion, /판단 유보/, '템플릿으로 이은 유보 문장을 의견서처럼 내지 않는다');
+  assert.deepEqual(review.redlineDiffs, []);
+  assert.ok(review.reasoning.gateReasons.includes('요건 판단이 실행된 쟁점이 없음'));
+  assert.ok(!review.reasoning.gateReasons.some(r => /종합 요약 호출 실패/.test(r)));
+  assert.ok(!calls.some(c => c.marker?.includes('종합') || c.marker?.includes('수정 조문')), '쓸 근거가 없으므로 S5 호출을 건너뛴다');
+});
+
+test('판단이 실행된 쟁점이 있으면 기존대로 의견서를 조립한다', async () => {
+  fakeOllama();
+  const review = await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),
+    provider: 'ollama', model: ENV.OLLAMA_MODEL, session: createLlmSession(), clients, embed, cache: cache() });
+  assert.notEqual(review.noJudgment, true);
+  assert.match(review.draftOpinion, /^# 법률 검토의견서/);
+});
+
 test('REVIEW_PIPELINE=staged이면 검토가 단계형으로 돌고 인용 검증을 거치며, 쟁점 정리에 실패하면 단일 호출 검토로 넘어간다', async () => {
   process.env.REVIEW_PIPELINE = 'staged';
   const run = () => generateLegalReview({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),

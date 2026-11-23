@@ -15,6 +15,8 @@ import { normalizedLawName } from '../law/evidence.js';
 import { normalizeArticleNo } from '../law/lawArticleRef.js';
 import { buildCommonPrefix, PROMPT_VERSION, REASONING_SYSTEM } from './prompts.js';
 import { planCaseAndIssues } from './stages/caseIssues.js';
+import { profileDocument } from './documentProfile.js';
+import { topUpFacts } from './stages/factTopUp.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
@@ -22,9 +24,10 @@ import { computeIssueConclusion } from './verify/conclusion.js';
 import { verifyWarrants, verifyDocumentFindings } from './verify/warrant.js';
 import { attachVerifiedRules, exactAuthorityMatch } from './verifiedRules.js';
 import { deriveGaps } from './stages/gaps.js';
-import { draftRedlines, renderReview, synthesize } from './stages/synthesis.js';
+import { draftRedlines, hasJudgedIssue, noJudgmentFields, renderReview, synthesize } from './stages/synthesis.js';
 import { attachContractInventory, buildContractInventory, contractAssessments, scoreContractRisk } from './contractReview.js';
 import { assessPrivacyRowCoverage } from './privacyCoverage.js';
+import { applyStatuteLinks, linkStatutes } from './stages/statuteLinking.js';
 
 export class PipelineError extends Error {
   constructor(message, cause) { super(message); this.name = 'PipelineError'; this.cause = cause; }
@@ -201,7 +204,21 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       progress.fail('s1', `쟁점 정리 실패: ${err.message}`);
       throw new PipelineError(`쟁점 정리(S1) 실패: ${err.message}`, err);
     }
+    caseIssues.diagnostics.documentProfile = profileDocument({ query, documentText });
+    if (preset !== 'contract_risk' && preset !== 'privacy_security' && documentText) {
+      caseIssues = await topUpFacts({ caseIssues, registry: registry0, query, documentChars: documentText.length, provider,
+        config: configFor('s1'), session });
+    }
     if (contractInventory) caseIssues = attachContractInventory(caseIssues, contractInventory, registry0);
+    else {
+      // 모델이 쟁점에 조문을 연결하지 못해도 판단 단계가 비지 않도록, 코드가 후보 조문을 먼저 연결한다.
+      const primaryLaw = workbenchContext.meta?.primaryLawName || '';
+      const citedKeys = new Set((workbenchContext.impactAndRevisions?.extractedReferences || [])
+        .filter(r => r.fullArticleNo).map(r => `${normalizedLawName(r.lawName || primaryLaw)}|${normalizeArticleNo(r.fullArticleNo)}`));
+      const links = linkStatutes({ issues: caseIssues.issues, facts: caseIssues.facts, registry: registry0, citedKeys,
+        keyOf: e => `${normalizedLawName(e.lawName)}|${normalizeArticleNo(e.articleNo)}` });
+      caseIssues.diagnostics.statuteLinking = applyStatuteLinks(caseIssues.issues, links);
+    }
     if (!caseIssues.issues.length) {
       progress.fail('s1', '쟁점을 세우지 못했습니다');
       throw new PipelineError('쟁점을 세우지 못했습니다.');
@@ -412,11 +429,16 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     }),
     remainingGaps: gaps.map(g => ({ issueId: g.issueId, elementId: g.elementId, type: g.type, question: g.question }))
   } : null;
-  const synthesis = await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider,
-    config: configFor('s5'), session, finalReviewData, contractFindings: findings });
+  // 판단이 실행된 쟁점이 없으면 요약·수정안을 모델에 맡기지 않는다. 쓸 근거가 없고, 호출 시간만 쓴다.
+  // 계약서 검토는 모델 판단 없이도 코드가 문서에서 찾은 문언상 위험이 있으면 그 결과가 의미 있으므로 그대로 조립한다.
+  const noJudgment = !hasJudgedIssue(issueResults) && findings.length === 0;
+  const synthesis = noJudgment
+    ? { summary: '', risks: [], recommendations: [], table: '', source: 'NO_JUDGMENT' }
+    : await synthesize({ issues: caseIssues.issues, issueResults, registry, preset, provider,
+      config: configFor('s5'), session, finalReviewData, contractFindings: findings });
   if (synthesis.warning) warnings.push(synthesis.warning);
   // 수정 조문은 첨부문서가 있고, 견해 비교가 산출물인 사전 컨설팅감사가 아닐 때만 만든다.
-  const redline = documentText && preset !== 'pre_consulting_audit'
+  const redline = documentText && preset !== 'pre_consulting_audit' && !noJudgment
     ? await draftRedlines({ issues: caseIssues.issues, issueResults, synthesis, registry, provider, config: configFor('s5'), session,
       contractFindings: findings })
     : { redlines: [], warnings: [] };
@@ -424,10 +446,13 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines,
     contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
     missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null });
-  progress.done('s5', synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
+  if (noJudgment) Object.assign(review, noJudgmentFields({ issues: caseIssues.issues, issueResults, gaps }));
+  progress.done('s5', noJudgment ? '판단이 실행된 쟁점이 없어 의견서 대신 실패 원인을 안내'
+    : synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
 
   const gateReasons = [...new Set(issueResults.flatMap(r => (r.gateReasons || []).map(g => `${r.issueId}: ${g}`)))];
-  if (synthesis.source !== 'LLM') gateReasons.push('종합 요약 호출 실패 — 결론 표로 대체됨');
+  if (noJudgment) gateReasons.push('요건 판단이 실행된 쟁점이 없음');
+  else if (synthesis.source !== 'LLM') gateReasons.push('종합 요약 호출 실패 — 결론 표로 대체됨');
   if (redline.warnings.length) gateReasons.push(`수정 조문 생성 미완료: ${redline.warnings.join(' / ')}`);
   const incompleteArticles = [...decomposed.byArticle].filter(([, v]) => v.source === 'SKELETON' || v.source === 'PARTIAL').map(([id]) => id);
   if (incompleteArticles.length) gateReasons.push(`요건 분해 미검증 조문: ${incompleteArticles.join(', ')}`);

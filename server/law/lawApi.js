@@ -6,6 +6,7 @@ import { parseDocument } from '../parsers/index.js';
 import { buildWorkbenchContext } from './lawWorkbench.js';
 import { generateLegalReview } from './lawWorkbenchReview.js';
 import { createLlmSession } from '../reasoning/llmGateway.js';
+import { canStartWithProvider, ExternalTransmissionBlockedError } from '../reasoning/externalGate.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
 import { validDate } from './evidence.js';
@@ -40,7 +41,8 @@ router.get('/config', (req, res) => {
       ollama: ENV.OLLAMA_MODEL,
       openai: ENV.OPENAI_MODEL,
       anthropic: ENV.ANTHROPIC_MODEL,
-      gemini: ENV.GEMINI_MODEL
+      gemini: ENV.GEMINI_MODEL,
+      exaone: ENV.EXAONE_MODEL
     }
   });
 });
@@ -128,8 +130,23 @@ router.get(['/models', '/installed-models'], async (req, res) => {
       { name: 'gemini-1.5-pro', parameterSize: '', description: 'Gemini 1.5 Pro (권장)' },
       { name: 'gemini-1.5-flash', parameterSize: '', description: 'Gemini 1.5 Flash' },
       { name: 'gemini-2.0-flash-exp', parameterSize: '', description: 'Gemini 2.0 Flash (실험)' }
+    ],
+    exaone: [
+      { name: 'k-exaone_v2.5', parameterSize: '', description: 'K-EXAONE 2.5' }
     ]
   };
+
+  // 키 값은 내려보내지 않고 설정 여부만 알린다.
+  if (provider === 'exaone') {
+    const keyConfigured = Boolean(ENV.EXAONE_API_KEY);
+    return res.json({
+      ok: keyConfigured,
+      provider,
+      keyConfigured,
+      models: cloudModels.exaone,
+      ...(keyConfigured ? {} : { error: '.env에 EXAONE_API_KEY를 설정한 뒤 서버를 재시작하십시오.' })
+    });
+  }
 
   return res.json({
     ok: true,
@@ -158,7 +175,7 @@ router.post('/parse-document', upload.single('file'), async (req, res) => {
       textLength: parsed.text.length
     });
   } catch (err) {
-    res.status(500).json(formatErrorResponse(err));
+    res.status(err.statusCode || 500).json(formatErrorResponse(err));
   }
 });
 
@@ -298,19 +315,34 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
         openai: ENV.OPENAI_MODEL,
         anthropic: ENV.ANTHROPIC_MODEL,
         gemini: ENV.GEMINI_MODEL,
+        exaone: ENV.EXAONE_MODEL,
         ollama: ENV.OLLAMA_MODEL
       })[req.body.llmProvider || ENV.LLM_PROVIDER];
     }
 
+    const resolvedProvider = manualLearning ? 'ollama' : (req.body.llmProvider || ENV.LLM_PROVIDER || 'ollama');
     const llmConfig = {
-      provider: manualLearning ? 'ollama' : (req.body.llmProvider || ENV.LLM_PROVIDER || 'ollama'),
+      provider: resolvedProvider,
       model: chosenModel,
       apiKey: manualLearning ? undefined : req.body.llmApiKey,
       // 외부 질의 루프의 최초 검토에는 재사용할 쟁점·요건·공백 구조가 필요하다.
-      ...(manualLearning ? { pipeline: 'staged' } : {})
+      // EXAONE 검토도 같은 구조를 남겨야 외부 전문가 질의 탭을 그대로 쓸 수 있다.
+      ...(manualLearning || resolvedProvider === 'exaone' ? { pipeline: 'staged' } : {})
     };
+    // 승인 없이는 문서가 이 PC 밖으로 나가지 않게, 호출이 시작되기 전에 거절한다(호출 직전에도 다시 막는다).
+    if (!canStartWithProvider(resolvedProvider)) {
+      return fail(409, { ok: false, code: 'EXTERNAL_TRANSMISSION_BLOCKED', error: new ExternalTransmissionBlockedError(resolvedProvider).message });
+    }
+    // 요청이 임의의 주소를 모델 서버로 지정해 문서를 보내지 못하게 한다. 이 PC 또는 설정된 OLLAMA_URL만 허용한다.
     if (!manualLearning && req.body.llmUrl) {
-      llmConfig.url = req.body.llmUrl;
+      let requested;
+      try { requested = new URL(String(req.body.llmUrl)); } catch { requested = null; }
+      const configured = new URL(ENV.OLLAMA_URL);
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(requested?.hostname);
+      if (!requested || !(loopback || requested.origin === configured.origin)) {
+        return fail(400, { ok: false, error: 'llmUrl은 이 PC의 Ollama 또는 서버에 설정된 OLLAMA_URL만 사용할 수 있습니다.' });
+      }
+      llmConfig.url = requested.origin;
     }
 
     // 최초 검토에서만 공식 자료를 수집한다. 후속 검토는 저장된 스냅샷을 사용한다.

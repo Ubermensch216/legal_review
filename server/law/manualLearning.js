@@ -464,7 +464,7 @@ export function createManualLearningService({ store = getLearningStore(), histor
       const material = { query: context.meta?.query, focus, reviewStatus: r.reviewStatus,
         facts: r.facts, issues: r.coreIssues, opinion: r.legalOpinion, opposingViews: r.opposingViews,
         furtherChecks: r.furtherChecks, warnings: r.warnings,
-        sourceLimitations: context.meta?.dataIntegrity?.warnings,
+        sourceLimitations: [...(context.meta?.dataIntegrity?.warnings || []), ...(context.meta?.dataIntegrity?.notices || [])],
         documentExcerpts: (context.impactAndRevisions?.documentChunks || []).map(c => c.excerpt || c.content) };
       const prompt = JSON.stringify(redactLearningValue(material, terms).value);
       fitLocalInput(ANALYSIS_SYSTEM, prompt, 'analysis', '검토 자료가 로컬 AI 입력 한도를 넘었습니다. 쟁점을 나누어 검토하거나 첨부문서 범위를 좁히십시오.');

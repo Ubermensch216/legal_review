@@ -40,6 +40,9 @@ export const ENV = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   GEMINI_MODEL: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
 
+  EXAONE_API_KEY: process.env.EXAONE_API_KEY || '',
+  EXAONE_MODEL: process.env.EXAONE_MODEL || 'k-exaone_v2.5',
+
   // Paths
   CACHE_DIR: cacheDir,
   UPLOAD_DIR: uploadDir,

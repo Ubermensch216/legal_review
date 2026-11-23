@@ -139,12 +139,22 @@ test('지급 별표 수정안은 원문과 동일한 열 수를 유지한다', a
   assert.equal(normalizeTableRedline('| 잔금 | 조건 부족 |', original), null);
 });
 
-test('편의해지에 시정기간을 잘못 부여한 수정안은 정산 가능한 문안으로 바꾼다', () => {
-  const checked = ensureOperationalRedline('사업계획 변경 시 수급인에게 30일의 시정기간을 부여한다.', ['TERMINATION']);
-  assert.equal(checked.substituted, true);
-  assert.match(checked.text, /기성대가/);
-  assert.match(checked.text, /사전 서면통지/);
-  assert.doesNotMatch(checked.text, /사업계획 변경.{0,35}시정기간/);
+test('편의해지에 시정기간을 잘못 부여한 수정안은 덮어쓰지 않고 표준 보완 문안을 따로 붙인다', () => {
+  const written = '사업계획 변경 시 수급인에게 30일의 시정기간을 부여한다.';
+  const checked = ensureOperationalRedline(written, ['TERMINATION']);
+  assert.equal(checked.substituted, false);
+  assert.equal(checked.text, written, '모델이 쓴 수정안은 그대로 둔다');
+  assert.equal(checked.incomplete, true);
+  assert.match(checked.supplement, /기성대가/);
+  assert.match(checked.supplement, /사전 서면통지/);
+  assert.doesNotMatch(checked.supplement, /사업계획 변경.{0,35}시정기간/);
+});
+
+test('핵심 항목을 모두 다룬 수정안은 그대로 두고 보완 문안을 붙이지 않는다', () => {
+  const complete = '귀책해지는 서면통지 후 시정기간을 두고, 편의해지는 사전 서면통지와 기성 정산으로 한다.';
+  const checked = ensureOperationalRedline(complete, ['TERMINATION']);
+  assert.equal(checked.incomplete, false);
+  assert.equal(checked.supplement, '');
 });
 
 test('공식 근거가 없으면 높은 문언 위험을 법적 위반 확정으로 올리지 않는다', () => {

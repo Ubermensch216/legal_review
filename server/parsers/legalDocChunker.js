@@ -14,7 +14,7 @@ const RISK_PATTERNS = [
     category: 'VOICE_RECORDING',
     label: '음성 녹음/사생활 침해 우려',
     level: 'HIGH',
-    keywords: ['음성 녹음', '음성녹음', '대화내용을 녹음', '창문 방향', '사생활 침해와 관계없이', '임의로 확대', '줌 기능']
+    keywords: ['음성 녹음', '음성녹음', '대화내용을 녹음', '사생활 침해와 관계없이']
   },
   {
     category: 'IMMUNITY_CLAUSE',
@@ -26,7 +26,7 @@ const RISK_PATTERNS = [
     category: 'EXCESSIVE_PENALTY',
     label: '과도한 위약벌/손해배상 예정',
     level: 'HIGH',
-    keywords: ['위약벌', '배액을 배상', '3배', '5배', '과태료 50만원', '즉시 과태료', '몰수한다', '반환하지 아니한다']
+    keywords: ['위약벌', '배액을 배상', '3배', '5배', '몰수한다', '반환하지 아니한다']
   },
   {
     category: 'UNILATERAL_TERMINATION',
@@ -38,7 +38,7 @@ const RISK_PATTERNS = [
     category: 'DATA_SHARING',
     label: '개인정보 무단 3자 제공/영구보관',
     level: 'HIGH',
-    keywords: ['비식별 조치 없이', '영구 보관', '민간 솔루션 개발', '제3자에게 제공', '암호화 처리를 갈음']
+    keywords: ['비식별 조치 없이', '영구 보관', '제3자에게 제공', '암호화 처리를 갈음']
   },
   {
     category: 'ADMIN_CONFLICT',
@@ -57,7 +57,8 @@ const ARTICLE_START_REGEX = /^(?:###?\s*)?(?:■\s*)?(?:제\s*(?<article>\d+)(?:
 /**
  * 항(Paragraph) 기호: ① ~ ⑳ 또는 1. 2.
  */
-const PARAGRAPH_REGEX = /^(?:[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]|(?:\d+)\.)\s*/;
+// 항은 원문자(①~⑳)다. 예전에는 `1.`도 항으로 잡아 아래 호(ITEM_REGEX) 분기에 영영 닿지 못했다.
+const PARAGRAPH_REGEX = /^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]\s*/;
 
 /**
  * 호(Item) 기호: 1. 2. 3.
@@ -215,7 +216,7 @@ export function chunkLegalDocument(text) {
         // 항/호/목 파싱
         if (PARAGRAPH_REGEX.test(line)) {
           currentParagraph = {
-            header: line.slice(0, 3).trim(),
+            header: line.match(PARAGRAPH_REGEX)[0].trim(),
             text: line,
             items: []
           };
@@ -242,6 +243,44 @@ export function chunkLegalDocument(text) {
     }
   }
 
+  // 제N조가 하나도 없는 보고서·지침은 전체가 '전문' 한 조각이 되어 조항 선별과 위험 태깅이 의미를 잃는다.
+  // 개요 번호(Ⅰ. / 1. / □ 등)를 경계로 나눈다.
+  if (chunks.length === 1 && chunks[0].articleNo === '전문') {
+    const outline = outlineChunks(text);
+    if (outline.length >= 2) return outline;
+  }
+
+  return chunks;
+}
+
+// 최상위 개요 표지. 가.·1) 같은 하위 번호는 경계로 삼지 않는다(상위 항목 안에 남긴다).
+const OUTLINE_HEADING_REGEX = /^(?:(?<roman>[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]|[IVX]{1,4})\.\s*(?<romanTitle>\S.*)|(?<num>\d{1,2})\.\s+(?<numTitle>\S.*)|(?<mark>[□■◆▶●]|#{1,3})\s*(?<markTitle>\S.*))$/;
+
+function outlineChunks(text) {
+  const lines = text.split(/\r?\n/);
+  const sections = [];
+  let current = null;
+  const preamble = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    const match = line.match(OUTLINE_HEADING_REGEX);
+    // 한 줄이 문장처럼 길면(마침표로 끝나는 서술) 제목이 아니라 본문 번호 목록이다.
+    const isHeading = match && line.length <= 60 && !/[다요함]\.$/.test(line);
+    if (isHeading) {
+      const g = match.groups;
+      const label = g.roman ? `${g.roman}.` : g.num ? `${g.num}.` : g.mark;
+      const title = (g.romanTitle || g.numTitle || g.markTitle || '').trim();
+      current = { articleNo: label, title, fullHeader: line, content: '', paragraphs: [], items: [], rawLines: [line],
+        isRiskClause: false, riskTags: [], riskLevel: 'LOW' };
+      sections.push(current);
+    } else if (current) {
+      current.rawLines.push(raw);
+    } else if (line) preamble.push(raw);
+  }
+  if (sections.length < 2) return [];
+  const chunks = [];
+  if (preamble.join('').trim()) chunks.push(createPreambleChunk(preamble.join('\n').trim()));
+  for (const section of sections) { finalizeArticleChunk(section); chunks.push(section); }
   return chunks;
 }
 

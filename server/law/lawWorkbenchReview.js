@@ -89,7 +89,7 @@ export { describeProviderMisconfiguration };
  */
 export async function checkLlmReadiness(llmConfig = {}) {
   const provider = llmConfig.provider || ENV.LLM_PROVIDER || 'ollama';
-  const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider] || '';
+  const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, exaone: ENV.EXAONE_MODEL, ollama: ENV.OLLAMA_MODEL })[provider] || '';
 
   const envName = PROVIDER_KEY_ENV[provider];
   if (envName && !(llmConfig.apiKey || ENV[envName])) {
@@ -348,7 +348,7 @@ ${resolvedProvisionsText}` : ''}
       progress.done('verify', describeVerification(verifiedReview));
       return withContractFindings(verifiedReview);
     }
-    const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
+    const model = llmConfig.model || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, exaone: ENV.EXAONE_MODEL, ollama: ENV.OLLAMA_MODEL })[provider];
     const initialBudget = resolveBudget(provider, { ...llmConfig, model });
     const initialTokens = createTokenCounter(provider, { model }).estimate(systemPrompt, renderPrompt(input)).tokens;
     const capacityRisk = initialTokens > initialBudget.inputLimit;

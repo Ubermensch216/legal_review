@@ -21,6 +21,23 @@ import { detectContractLawSeeds } from '../reasoning/contractReview.js';
 const MAX_REFERENCE_HOPS = 1;
 const MAX_COLLECTED_ARTICLES = 16;
 
+/**
+ * 법령명(약칭 포함)으로 법령을 찾는다.
+ * 법령 API는 약칭(예: 국가유공자법)으로 검색하면 0건이고, 정식명에 든 단어(국가유공자)로 검색해야
+ * 약칭이 일치하는 법령이 나온다. 정확한 이름 검색이 비면 끝의 '법'을 뗀 어간으로 한 번 더 찾는다.
+ */
+export async function findLawByName(clients, name) {
+  const wanted = String(name || '').trim();
+  const stem = wanted.replace(/법(?=\s|$)/, '').replace(/\s+/g, ' ').trim();
+  // 정확한 이름은 짧아도(민법) 항상 검색한다. 어간 재검색만 너무 짧아 무관한 법이 나오는 경우를 피한다.
+  for (const query of [...new Set([wanted, ...(stem.length >= 3 ? [stem] : [])].filter(Boolean))]) {
+    const found = await clients.searchLaw(query, 1, 100);
+    const match = Array.isArray(found) ? found.find(l => matchesLaw(l, wanted)) : null;
+    if (match) return match;
+  }
+  return null;
+}
+
 // 같은 법령 안의 조문을, '준용·적용' 취지로 가리키는 지시만 추출한다.
 // "제3조(정의)에서 말하는" 같은 단순 언급까지 따라가면 법령 전체가 딸려 온다.
 // "법 제22조" / "영 제31조"처럼 다른 법령을 가리키는 표기는 연쇄 검색이 담당하므로 제외한다.
@@ -125,7 +142,13 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   // 3. 검색 대상 주요 법령 결정
   // 자치법규(조례/자치규칙)는 법령 API(searchLaw)가 제공하지 않으므로 별도 채널로 보낸다.
   // 인용 순서상 첫 항목이 조례이면 과거에는 여기서 조회가 끝나버렸다.
-  const isOrdinanceName = name => /(?:조례|자치법규)(?:\s*시행규칙)?$/.test(String(name || '').trim());
+  // 조례뿐 아니라 지자체가 정한 규정·규칙·훈령도 법령 API가 아닌 자치법규 채널로 조회한다.
+  // 법령 API에서 이런 제명을 찾으면 항상 실패해 기준 법령이 엉뚱한 법으로 대체되던 경로다.
+  const isOrdinanceName = name => {
+    const value = String(name || '').trim();
+    return /(?:조례|자치법규)(?:\s*시행규칙)?$/.test(value)
+      || /^[가-힣]{2,10}(?:특별자치도|특별자치시|광역시|특별시|시|군|구|도|교육청)\s+.+(?:규정|규칙|훈령|예규)$/.test(value);
+  };
   const citedLawNames = [...new Set(explicitRefs.filter(isCitationReference).map(r => r.lawName).filter(Boolean))];
   const citedStatuteNames = citedLawNames.filter(n => !isOrdinanceName(n));
   // 조문 인용이 붙은 조례 + 제명만 언급된 조례를 합친다.
@@ -155,8 +178,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
     const unresolved = [];
     for (const candidate of primaryCandidates.slice(0, 5)) {
       progress.note('law', `${candidate} 조회 중`);
-      const searchRes = await clients.searchLaw(candidate, 1, 100);
-      const exactMatch = Array.isArray(searchRes) ? searchRes.find(l => matchesLaw(l, candidate)) : null;
+      const exactMatch = await findLawByName(clients, candidate);
       if (!exactMatch) { unresolved.push(candidate); continue; }
 
       const detail = await resolveDetail(exactMatch)
@@ -287,7 +309,7 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   if (otherNames.length > 5) collectionWarnings.push('추가 인용 법령이 조회 예산을 초과하여 일부만 수집했습니다.');
   for (const name of otherNames.slice(0, 5)) {
     try {
-      const match = (await clients.searchLaw(name, 1, 100)).find(l => matchesLaw(l, name));
+      const match = await findLawByName(clients, name);
       const detail = match && await resolveDetail(match);
       if (!detail || !sameLaw(detail.lawName, match.lawName)) { collectionWarnings.push(`${name} 본문 수집 실패`); continue; }
       const numbers = new Set(explicitRefs.filter(r => isCitationReference(r) && sameLaw(r.lawName, name)).map(r => r.fullArticleNo));
@@ -538,8 +560,9 @@ export async function buildWorkbenchContext({ query = '', preset = 'compliance',
   progress.mark('integrity', '수집 자료 출처 검증',
     `공식 조문 ${dataIntegrity.hasOfficialArticles ? '확보' : '미확보'}`
     + ` · 제한 사항 ${countLabel(dataIntegrity.warnings.length)}`
-    + (dataIntegrity.isFallback ? ' · 폴백/목업 포함' : ''), '검증');
+    + (dataIntegrity.hasMockData ? ' · 샘플 목업 데이터 포함' : ''), '검증');
   for (const w of dataIntegrity.warnings.slice(0, 8)) progress.warn('integrity', w);
+  for (const n of dataIntegrity.notices) progress.note('integrity', n);
 
   return {
     meta: {
@@ -628,7 +651,9 @@ function buildDataIntegrityReport({
 
   // 조회 실패는 수집 진단에 남기되, 확보한 자료로 작성한 검토의 품질 판정과 분리한다.
   const warnings = [];
-  warnings.push(...collectionWarnings.filter(w => /검토 기준일|기준일\(|시점|시행되지 않은|기존 AI 검토보고서/.test(w)));
+  warnings.push(...collectionWarnings.filter(w => /검토 기준일|기준일\(|시점|시행되지 않은/.test(w)));
+  // 첨부문서의 성격에 관한 안내다. 수집 자료의 신뢰도 문제가 아니므로 제한 결과(isFallback) 판정에 넣지 않는다.
+  const notices = collectionWarnings.filter(w => /기존 AI 검토보고서/.test(w));
   if (Object.values(sources).includes('UNKNOWN')) warnings.push('출처를 확인하지 못한 자료가 포함되어 있습니다.');
   if (sources.law === 'MOCK' || sources.articles === 'MOCK') {
     warnings.push('법령 조문이 공식 API가 아닌 샘플 목업 데이터입니다. 인용하지 마십시오.');
@@ -650,8 +675,10 @@ function buildDataIntegrityReport({
     isFallback: warnings.length > 0,
     hasOfficialArticles: sources.articles === 'OFFICIAL_API',
     sources,
+    hasMockData: Object.values(sources).includes('MOCK'),
     collectionDiagnostics: collectionWarnings,
-    warnings
+    warnings,
+    notices
   };
 }
 

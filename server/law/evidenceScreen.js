@@ -31,7 +31,7 @@ export async function screenEvidenceCandidates({ candidates, kind, query, issue 
   const warnings = [];
   let budget = null;
   try {
-    if (['ollama', 'openai', 'anthropic', 'gemini'].includes(provider) && model) {
+    if (['ollama', 'openai', 'anthropic', 'gemini', 'exaone'].includes(provider) && model) {
       budget = resolveBudget(provider, { model, outputTokens: 512 });
     }
   } catch (err) { warnings.push(`목록 선별 예산 설정 오류: ${err.message}`); }

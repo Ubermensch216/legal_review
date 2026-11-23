@@ -39,9 +39,9 @@ export function formatErrorResponse(error) {
   return {
     ok: false,
     error: error.name || 'Error',
-    code: isLawError ? error.code : 'INTERNAL_SERVER_ERROR',
+    code: isLawError ? error.code : (error.code && /^[A-Z_]+$/.test(error.code) ? error.code : 'INTERNAL_SERVER_ERROR'),
     message: maskLawSecrets(error.message || '서버 내부 오류가 발생했습니다.'),
-    statusCode: isLawError ? error.statusCode : 500,
+    statusCode: isLawError ? error.statusCode : (Number.isInteger(error.statusCode) ? error.statusCode : 500),
     timestamp: new Date().toISOString()
   };
 }

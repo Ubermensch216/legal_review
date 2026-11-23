@@ -398,6 +398,7 @@ function renderDraftTab(review, officialEvidence, meta) {
           <td class="redline-cell-new">
             <div class="diff-tag new-tag">수정 권고안</div>
             <div class="diff-text-new">${escapeHtml(diff.revisedText)}</div>
+            ${diff.supplementalText ? `<div class="diff-tag" style="margin-top:8px;">보완 권고 문안 (일부 핵심 항목 보완)</div><div class="diff-text-new">${escapeHtml(diff.supplementalText)}</div>` : ''}
           </td>
           <td class="redline-cell-reason">
             <span class="reason-text">${escapeHtml(diff.reason)}</span>
