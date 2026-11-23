@@ -30,6 +30,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: var(--left-col) minmax(0, 1fr) var(--right-col);
+  grid-template-rows: minmax(0, 1fr);
   background: var(--bg-main);
   transition: grid-template-columns 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -184,16 +185,19 @@
   background: #FFFFFF;
   container-type: inline-size;
 }
-/* 중앙은 도크 경계까지 꽉 채운다. 카드 테두리·모서리·그림자를 없앤다. */
+/* 중앙은 도크 경계까지 꽉 채운다. 카드 테두리·모서리·그림자를 없앤다.
+   직계 섹션(.review-trace/.workbench-section)은 overflow:hidden이라 flex-shrink:1이면
+   높이가 뷰포트에 맞춰 줄어들어 내용이 잘리므로 flex-shrink:0으로 본래 높이를 유지한다. */
 .result-pane > .review-trace,
 .result-pane > .workbench-section {
+  flex: 0 0 auto;
   margin: 0;
   border-width: 0 0 1px;
   border-radius: 0;
   box-shadow: none;
 }
-.result-pane > .workbench-section { border-bottom-width: 0; }
-.result-pane > .reliability-banner { margin: 0; border-width: 0 0 1px; border-left-width: 4px; border-radius: 0; }
+.result-pane > .workbench-section { border-bottom-width: 0; overflow: visible; }
+.result-pane > .reliability-banner { flex: 0 0 auto; margin: 0; border-width: 0 0 1px; border-left-width: 4px; border-radius: 0; }
 .result-pane .tab-pane { padding: 20px 22px; }
 .result-pane .wb-tab { min-width: 0; padding: 12px 10px; font-size: 13px; }
 .result-pane .wb-tab .tab-title { min-width: 0; line-height: 1.3; }
