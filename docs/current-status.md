@@ -9,10 +9,10 @@
 ```mermaid
 flowchart TB
     subgraph Client["프론트엔드 (법령검토 워크벤치)"]
-        UI_Input["검토 요청 입력 / 첨부문서(HWPX/DOCX/PDF/XLSX/CSV/TXT)"]
-        UI_Presets["7대 검토 유형 프리셋"]
-        UI_Tabs["검토 4개 탭 + 외부 전문가 질의 탭"]
-        UI_Studio["보고서 스튜디오 & HWPX/PDF/DOCX/MD 다운로드"]
+        UI_Input["검토 요청 입력 / 첨부문서(HWPX/DOCX/PDF/XLSX/CSV/TXT) / 기본·심화분석 선택"]
+        UI_Presets["6대 빠른 프리셋 + 사전 컨설팅감사"]
+        UI_Tabs["4대 결과 탭 (공식근거 / 개정·영향 / 외부질의 / 법률검토의견서)"]
+        UI_Studio["보고서 스튜디오 · 검토 이력 & HWPX/PDF/DOCX/MD 다운로드"]
     end
 
     subgraph Server["백엔드 (Node.js/Express ESM)"]
@@ -21,7 +21,7 @@ flowchart TB
         Progress["실시간 진행률 스트리머 (NDJSON Stream)"]
         ReRanker["시맨틱 Re-ranking 엔진"]
         Verifier["조문 실존성 검증기 (Factuality Verifier)"]
-        LLM_Engine["IRAC 법리 추론 엔진 (Ollama / OpenAI / Claude / Gemini)"]
+        LLM_Engine["IRAC 법리 추론 엔진 (Ollama / LG EXAONE / OpenAI / Claude / Gemini)"]
         Doc_Parser["정밀 문서 파서 (HWPX/DOCX/PDF/Excel)"]
         Export_Engine["공공 표준 서식 생성기 (HWPX/DOCX/PDF/MD)"]
         Cache_DB["SQLite L2 WAL 캐시 DB"]
@@ -29,7 +29,7 @@ flowchart TB
 
     subgraph External["외부 연동"]
         Law_DRF["국가법령정보센터 DRF API (법령/조문/행정규칙/자치법규/판례)"]
-        LLM_Service["로컬 Ollama (gemma4 등) 또는 클라우드 LLM"]
+        LLM_Service["로컬 Ollama (gemma4:e2b / bge-m3) 또는 클라우드 LLM"]
     end
 
     UI_Input --> API_Router
@@ -51,20 +51,21 @@ flowchart TB
 ### 핵심 모듈 매핑
 - `server/law/lawWorkbench.js`: 공식 법령·판례·해석례 자료와 첨부문서를 결합하여 검토 컨텍스트 수집 및 파이프라인 제어.
 - `server/law/lawWorkbenchReview.js`: 기본 단일 호출 검토, 단계형 위임, 조문 실존성 검증 및 폴백 처리.
-- `server/reasoning/`: 단계형 검토(S0~S7). 근거 등록부(S0), 쟁점 추출(S1), 추가 조사(S2), 요건 분해(S3), 쟁점별 포섭(S4), 검증 원장(S6), 공백 산출(S7), 종합(S5).
+- `server/reasoning/`: 단계형 검토(S0~S7) — 근거 등록부(S0), 쟁점 추출(S1), 추가 조사(S2), 요건 분해(S3), 쟁점별 포섭(S4), 검증 원장(S6), 공백 산출(S7), 종합(S5), 분석 수준(`analysisDepth.js`), 외부 전송 게이트(`externalGate.js`) 및 외부 재검토(`escalation.js`).
+- `server/privacy/`: 외부 LLM 전송 전 자동 비식별(`deidentify.js`) 및 전송 감사 로그(`auditLog.js`).
 - `server/law/progressReporter.js`: 검토 단계별 진행률 및 세부 상태를 NDJSON 스트림으로 실시간 전송.
 - `server/law/manualLearning*.js`: 비식별 질의서 생성, 질문별 답변 카드 반입, 승인·지식 관리 및 재검토 루프.
 - `server/law/tools/toolRegistry.js`: 17개 공식 법령 도구 및 인프라 실행 모듈.
-- `public/js/`: 웹 워크벤치 4개 탭 및 학습 탭 UI, 검토 이력 관리(IndexedDB), 보고서 스튜디오.
+- `public/js/`: 3단 도크 워크벤치 UI(4대 결과 탭, `analysisDepthView.js`, `externalLlm.js`, `learningTab.js`), 검토 이력 관리(IndexedDB), 보고서 스튜디오.
 - `server/export/`: 검토 결과와 제한 사항을 반영한 HWPX, PDF, DOCX, Markdown 표준 공문서 패키징.
 
 ---
 
 ## 2. 실행 경로
 
-1. **기본 검토 경로 (Monolithic)**
-   - 일반 API 검토의 기본 경로는 단일 호출(`monolithic`) 경로이다.
-   - 단, 입력 문서 및 컨텍스트가 모델 예산을 초과하는 경우 토큰 안전을 위해 단계형 분할 검토(`staged`)를 먼저 시도한다.
+1. **기본 검토 및 분석 수준 경로 (`BASIC` / `DEEP` / Monolithic)**
+   - 웹 UI에서는 `기본분석`(`BASIC`, 기본 선택) 또는 `심화분석`(`DEEP`)을 선택해 단계형 파이프라인(`staged` S0~S7)으로 실행한다. `기본분석` 직후 결과 배너에서 `심화분석 실행`을 누르면 `deepenReviewId`로 서버 세션(3시간 보관)의 사실·쟁점·공식 근거를 재사용해 판단·검증 단계만 전체 수행한다.
+   - `analysisDepth`를 지정하지 않은 일반 API 직접 호출은 기존 단일 호출(`monolithic`) 경로를 유지하며, 입력 문서 및 컨텍스트가 모델 예산을 초과하면 토큰 안전을 위해 단계형 분할 검토(`staged`)를 먼저 시도한다.
 2. **판례·해석례 선별 및 본문 수집**
    - 판례·해석례는 공식 검색 목록을 먼저 조회하고, LLM을 통해 묶음별 적합도를 선별한 뒤 통과·불확실 후보의 공식 본문만을 2단계로 정밀 조회한다.
    - 명시 인용 후보는 강제 보존하며, 목록 판정 자체는 법적 근거가 될 수 없으므로 공식 본문이 확인된 자료만 인용한다.
@@ -83,9 +84,9 @@ flowchart TB
 
 ## 3. 검증 상태
 
-- **단위 테스트 (`npm test`)**: 2026-11-23 실측 기준 **360건 중 357건 통과, 3건 실패** (외부 통신 격리 픽스처 기반 회귀 검증).
+- **단위 테스트 (`npm test`)**: 2026-11-23 실측 기준 **362건 중 359건 통과, 3건 실패** (외부 통신 격리 픽스처 기반 회귀 검증).
   - 실패 3건(`test/elements.test.js` 1건, `test/reasoningStages.test.js` 2건)은 `.env`의 `LLM_MODEL_BUDGETS`(`hangul: 0.75`) 환경에서 테스트용 장문 입력이 분할 임계치 미만으로 계산되어 분할 호출이 1회로 병합되는 현상이다.
-  - 법령 API 파서, 다중 포맷 문서 파서, 조문 실존성 검증, 시맨틱 Re-ranking, 진행률 NDJSON 스트리밍, 시점 검토, 취소 제어 등 전 범위 포함.
+  - 법령 API 파서, 다중 포맷 문서 파서, 조문 실존성 검증, 시맨틱 Re-ranking, 진행률 NDJSON 스트리밍, 시점 검토, 취소 제어, 분석 수준(`analysisDepth.test.js`), 비식별·외부 전송 게이트 등 전 범위 포함.
 - **실제 API 및 모델 검증 상태**:
   - 로컬 Ollama (`gemma4:e2b`) 환경에서 5개 실무 샘플(취업규칙, 용역계약, 영업정지, 개인정보, 사전컨설팅)에 대한 진단 측정을 수행함 ([단계형 비교 기록](audit/pipeline-comparison-2026-09-23.md)).
   - 단계형 검토는 파싱 5/5건 성공 및 규칙 기반 폴백 0건을 달성하였으나, 일부 샘플의 쟁점 생략 및 시간 지연이 관찰되어 현재 기본 검토는 단일 호출을 우선 유지하고 초과 시 단계형으로 전환하도록 운영 중이다.
@@ -109,11 +110,14 @@ flowchart TB
 
 ---
 
-## 4. 분석 개선·LLM 3모드 (2026-11-23)
+## 4. 분석 개선·분석 깊이·LLM 3모드 (2026-11-23)
 
-**분석 품질**: 쟁점-조문 자동 연결(`statuteLinking`), 기준 법령 약칭·자치법규 해석(`findLawByName`), 판단이 한 건도 실행되지 않으면 의견서를 짜 맞추지 않고 원인을 안내(`noJudgmentFields`), 판단 유보를 "어떤 요건이 확인되면 어떤 결론"인 조건부 결론으로 계산(`conclusion.scenarios`), 의견서 첫머리 쟁점별 결론 요약, 문서 성격 식별(`documentProfile`), 사실이 부족한 긴 문서의 사실 보충 추출(`factTopUp`), 판례·해석례 재순위의 조사 제거·점수 분화.
+**분석 품질 및 문서 준수 검증**: 쟁점-조문 및 첨부문서 조항 자동 연결(`statuteLinking`, 법령 조문 번호 오인 방지), 기준 법령 약칭·자치법규 해석(`findLawByName`), 판단이 한 건도 실행되지 않으면 의견서를 짜 맞추지 않고 원인을 안내(`noJudgmentFields`), 판단 유보를 "어떤 요건이 확인되면 어떤 결론"인 조건부 결론으로 계산(`conclusion.scenarios`), 의견서 첫머리 쟁점별 결론 요약, 문서 성격 식별(`documentProfile`), 사실이 부족한 긴 문서의 사실 보충 추출(`factTopUp`), 판례·해석례 재순위의 조사 제거·점수 분화.
+- **문서 준수 판단(`verdictMode`)**: 계약서 외 일반 첨부문서 검토에서는 모델에 `COMPLIES` / `VIOLATES` / `NOT_ADDRESSED` / `UNCLEAR` 판단과 첨부문서 원문 인용(`quote`)을 요구한다(`application.js`, `resolveDocumentVerdict`). 원문 문장이 실제 첨부문서에 글자 그대로 존재(4자 이상)할 때만 준수·위반 판단을 인정하고, 법 조문 되풀이 등 미확인 인용은 `UNCLEAR`(사실 추가 확인 필요)로 강등한다. 결론은 `complianceConclusion`에서 `위반 소지(VIOLATION_RISK)` / `위반 사항 미발견(NO_VIOLATION_FOUND)` / `추가 확인 필요(NEEDS_FACTS)`로 계산한다.
 
-**속도**: 목록 선별을 로컬 임베딩 우선(경계 후보만 LLM, `evidenceScreen`), 포섭 출력 축소(서술 260자·두 번째 이후 호출은 서술/반대 논리 생략), 근거 검증은 긴 근거에서 의미가 가까운 조각 4개로 제한, 추출 단계(S1·S3)에 별도 경량 모델 지정 가능(`REVIEW_EXTRACT_MODEL`, 기본 꺼짐), 쟁점 확정 즉시 진행 화면에 표시, 분석 깊이 선택(`analysisDepth.js`: `BASIC` 기본분석 / `DEEP` 심화분석, 기본값 `DEEP`). 미착수: 수정안 묶음 생성(조문별 요건 사전 분해 스크립트는 `scripts/warmElements.js`로 제공).
+**분석 수준(`BASIC` 기본분석 / `DEEP` 심화분석) 및 속도**: 목록 선별을 로컬 임베딩(`bge-m3`) 우선 처리(경계 후보만 LLM, `evidenceScreen`), 포섭 출력 축소(서술 260자·두 번째 이후 호출은 서술/반대 논리 생략), 근거 검증은 긴 근거에서 의미가 가까운 조각 4개로 제한, 추출 단계(S1·S3)에 별도 경량 모델 지정 가능(`REVIEW_EXTRACT_MODEL`, 기본 꺼짐), 쟁점 확정 즉시 진행 화면에 표시. 미착수: 수정안 묶음 생성(조문별 요건 사전 분해 스크립트는 `scripts/warmElements.js`로 제공).
+- **기본분석(`BASIC`, UI 기본)**: 결론을 좌우하는 검증 요건만 판단하고(`selectJudgedElements`), 판단을 내린 요건마다 의미가 가까운 대표 근거 최대 2건·각 1조각만 원문 대조한다(`warrant.js`에서 미대조 항목은 `NOT_CHECKED`, UI에서는 `공식 출처 확인 · 내용 대조 전(SOURCE_ONLY)`으로 구분). 판례 유추·반대 논리·수정 조문은 제외하며 어떤 경우에도 '검토 완료'로 표시하지 않는다. 결과 상단 배너(`analysisDepthView.js`)에 검증 범위와 `심화분석 실행` 이어가기 버튼을 표시한다.
+- **심화분석(`DEEP`, API 미지정 시 기본)**: 모든 요건·근거·판례 유추·반대 논리·수정 조문을 전체 검증한다. 기본분석 완료 후 3시간 이내 이어가기(`deepenReviewId`) 시 사실·쟁점·공식 근거를 재사용하고 판단·검증만 전체 실행한다(외부 LLM 모드는 전송 재승인을 위해 처음부터 실행).
 
 **LLM 사용 방식(설정)**: 내부 LLM만 / 내부+외부 병용 / 외부 LLM만.
 - 외부로 나가는 모든 호출은 `externalGate`를 지난다. 기본은 차단이며 승인은 비식별된 전송 내용의 해시에 묶인다. 승인된 범위에서도 호출마다 식별정보 후보가 남아 있으면 막는다.
