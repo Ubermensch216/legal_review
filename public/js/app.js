@@ -5,10 +5,12 @@ import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio, resetStudio } from './documentStudio.js';
 import { initHistoryDrawer, refreshHistoryList, addHistoryRecord } from './history.js';
 import { initLearningTab } from './learningTab.js';
+import { initWorkspaceLayout } from './workspaceLayout.js';
 import { initReviewTrace, startReviewTrace, pushTraceEvent, finishReviewTrace, showTraceFallback, resetReviewTrace } from './reviewTrace.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // 모듈 초기화
+  initWorkspaceLayout();
   initWorkbenchTabs();
   initLearningTab();
   initReviewTrace();
@@ -336,7 +338,8 @@ function initReviewForm() {
     }
 
     updateCollapsedInputSummaries();
-    setReviewInputStepsCollapsed(true);
+    // 2분할 화면에서는 입력을 결과 옆에 계속 보여주고, 세로로 쌓인 좁은 화면에서만 접는다.
+    if (window.matchMedia('(max-width: 1099px)').matches) setReviewInputStepsCollapsed(true);
 
     // 로딩 상태 시작
     state.isReviewing = true;

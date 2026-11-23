@@ -1,0 +1,313 @@
+/* public/css/workspace.css - 3분할 작업 영역
+   [좌 입력 도크] [중앙 결과] [우 보조 도크(보고서 스튜디오·검토 이력)]
+   좌우 도크는 폭 조절과 접기가 가능하고, 접으면 44px 레일로 줄어든다. */
+
+:root {
+  --header-h: 52px;
+  --rail-w: 44px;
+}
+
+/* ── 상단 헤더: 낮게, 가장자리까지 ───────────────────────── */
+.app-header {
+  height: var(--header-h);
+  padding: 0 14px;
+  box-shadow: none;
+}
+.logo-app-icon { width: 30px; height: 30px; }
+.logo-title { font-size: 16.5px; }
+.header-left { gap: 12px; }
+.header-right { gap: 8px; }
+
+/* ── 작업 영역 ───────────────────────────────────────────── */
+@media (min-width: 1100px) {
+  .app-layout { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+}
+
+.workspace {
+  --left-col: 400px;
+  --right-col: var(--rail-w);
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--left-col) minmax(0, 1fr) var(--right-col);
+  background: var(--bg-main);
+  transition: grid-template-columns 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.workspace.is-resizing { transition: none; cursor: col-resize; user-select: none; }
+
+/* ── 도크 공통 ───────────────────────────────────────────── */
+.dock {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #FFFFFF;
+}
+.dock-left { border-right: 1px solid var(--border-color); }
+.dock-right { border-left: 1px solid var(--border-color); }
+
+.dock-header,
+.dock-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 42px;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: #FFFFFF;
+}
+.dock-tabs { padding-left: 8px; }
+
+.dock-title {
+  display: inline-flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  color: var(--brand-primary);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.dock-title .material-symbols-outlined { font-size: 19px; }
+
+.dock-collapse {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #64748B;
+  cursor: pointer;
+}
+.dock-collapse:hover,
+.dock-collapse:focus-visible { background: #EEF2F7; color: #0F172A; }
+.dock-collapse .material-symbols-outlined { font-size: 20px; }
+.dock-right .dock-collapse { margin-left: auto; }
+
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.dock-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock-tab:hover,
+.dock-tab:focus-visible { background: #F1F5F9; }
+.dock-tab[aria-selected="true"] { background: var(--brand-accent-light); color: var(--brand-primary); }
+.dock-tab .badge { padding: 1px 6px; background: #E2E8F0; color: #334155; font-size: 10px; transition: transform 0.25s; }
+
+/* ── 폭 조절 손잡이 ──────────────────────────────────────── */
+.dock-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.dock-left .dock-resizer { right: -3px; }
+.dock-right .dock-resizer { left: 0; }
+.dock-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.dock-resizer:hover::after,
+.dock-resizer:focus-visible::after,
+.dock-resizer.active::after { background: var(--brand-accent); }
+.dock-resizer:focus-visible { outline: none; }
+
+/* ── 좌측 도크 내용: 카드 겉틀을 걷어 내고 촘촘하게 ─────── */
+.dock-left .dock-body { padding: 12px 12px 0; }
+.dock-left .review-input-form { gap: 10px; min-height: 100%; }
+.dock-left .step-card { padding: 12px; }
+.dock-left .file-dropzone { padding: 30px 10px 12px; }
+.dock-left .dropzone-format-icons { gap: 6px; }
+.dock-left .dropzone-format-icon { height: 26px; padding: 0 6px; }
+.dock-left .dropzone-format-icon .material-symbols-outlined { font-size: 15px; }
+.dock-left .step-header { flex-wrap: nowrap; }
+.dock-left .step-toggle { flex-shrink: 0; }
+.dock-left .query-template-panel { padding: 10px; }
+.dock-left .query-primary-panel { padding: 8px; }
+.dock-left .query-optional-grid { grid-template-columns: 1fr; }
+.dock-left .chip { padding: 4px 9px; font-size: 11.5px; }
+
+.dock-left .form-actions-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: auto -12px 0;
+  padding: 10px 12px 12px;
+  background: #FFFFFF;
+  border-top: 1px solid var(--border-color);
+}
+.dock-left #btn-run-review { width: 100%; justify-content: center; }
+
+/* ── 중앙 결과 ───────────────────────────────────────────── */
+.result-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  background: #FFFFFF;
+  container-type: inline-size;
+}
+/* 중앙은 도크 경계까지 꽉 채운다. 카드 테두리·모서리·그림자를 없앤다. */
+.result-pane > .review-trace,
+.result-pane > .workbench-section {
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  box-shadow: none;
+}
+.result-pane > .workbench-section { border-bottom-width: 0; }
+.result-pane > .reliability-banner { margin: 0; border-width: 0 0 1px; border-left-width: 4px; border-radius: 0; }
+.result-pane .tab-pane { padding: 20px 22px; }
+.result-pane .wb-tab { min-width: 0; padding: 12px 10px; font-size: 13px; }
+.result-pane .wb-tab .tab-title { min-width: 0; line-height: 1.3; }
+.result-pane .impact-section { min-width: 0; overflow-x: auto; }
+
+.result-empty {
+  display: none;
+  flex: 1;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 32px;
+  color: #64748B;
+  text-align: center;
+  background: var(--bg-main);
+}
+.review-trace.hidden ~ .workbench-section.hidden ~ .result-empty { display: flex; }
+.result-empty .material-symbols-outlined { margin-bottom: 6px; color: #94A3B8; font-size: 40px; }
+.result-empty strong { color: #334155; font-size: 16px; }
+.result-empty p { font-size: 13px; }
+
+/* 결과 영역 폭에 맞춰 넓은 격자를 접는다. */
+@container (max-width: 860px) {
+  .result-pane .impact-header-card { grid-template-columns: minmax(0, 1fr); }
+  .result-pane #impact-summary-badge { width: 100%; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .result-pane .impact-summary-status { justify-content: flex-start; }
+  .result-pane .wb-tab { flex-wrap: wrap; gap: 4px 6px; padding: 10px 6px; font-size: 12.5px; }
+}
+
+/* ── 우측 도크 내용: 탭 패널이 남은 높이를 쓰고 안에서 스크롤 ── */
+.dock-right .dock-body { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
+.dock-right .dock-pane { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.dock-right .dock-pane.open { display: flex; }
+.dock-right .history-drawer,
+.dock-right .studio-drawer {
+  position: static;
+  right: auto;
+  width: auto;
+  height: auto;
+  border: 0;
+  box-shadow: none;
+  transition: none;
+  z-index: auto;
+}
+.dock-right .drawer-header,
+.dock-right .studio-header { flex: none; padding: 9px 14px; }
+.dock-right .drawer-header h3,
+.dock-right .studio-header h3 { font-size: 13.5px; }
+.dock-right .btn-close-drawer { display: none; }
+.dock-right .history-drawer-body { padding: 12px; }
+.dock-right .history-card { padding: 12px 14px; }
+.dock-right .studio-toolbar { padding: 10px 12px; }
+.dock-right .studio-toolbar-top { flex-wrap: wrap; }
+.dock-right .export-btn-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.dock-right .btn-export { flex: none; }
+/* 탭 이름과 겹치는 스튜디오 머리말은 숨긴다. */
+.dock-right .studio-header { display: none; }
+.dock-right .studio-editor-container { padding: 8px; }
+/* 편집기 안의 문서가 이미 종이 모양 카드이므로 바깥 겉틀과 이중 여백을 없앤다. */
+.dock-right .studio-visual-editor { padding: 0; border: 0; box-shadow: none; background: transparent; }
+.dock-right .studio-visual-editor .official-report-view { padding: 18px 16px; box-shadow: none; }
+.dock-right .studio-visual-editor:not(:has(.official-report-view)) { padding: 18px 16px; background: #FFFFFF; border: 1px solid #CBD5E1; }
+
+/* ── 접힌 도크(레일) — 데스크톱 ──────────────────────────── */
+@media (min-width: 1100px) {
+  .dock.is-collapsed .dock-body { display: none; }
+  .dock.is-collapsed .dock-resizer { display: none; }
+
+  .dock.is-collapsed .dock-header,
+  .dock.is-collapsed .dock-tabs {
+    flex-direction: column;
+    height: auto;
+    padding: 8px 0;
+    gap: 8px;
+    border-bottom: 0;
+  }
+  .dock.is-collapsed .dock-title { flex: none; flex-direction: column; gap: 6px; }
+  .dock.is-collapsed .dock-title-text { writing-mode: vertical-rl; letter-spacing: 0.04em; }
+  .dock.is-collapsed .dock-collapse { order: -1; margin: 0; }
+
+  .dock-right.is-collapsed .dock-tab {
+    flex-direction: column;
+    gap: 6px;
+    width: 34px;
+    height: auto;
+    padding: 10px 0;
+  }
+  .dock-right.is-collapsed .dock-tab-label { writing-mode: vertical-rl; }
+  .dock-right.is-collapsed .dock-tab[aria-selected="true"] { background: transparent; color: #475569; }
+}
+
+/* ── 좁은 화면: 위에서 아래로 쌓는다 ─────────────────────── */
+@media (max-width: 1099px) {
+  .app-header { height: auto; min-height: var(--header-h); flex-wrap: wrap; gap: 8px; padding: 8px 14px; }
+  .header-right { flex-wrap: wrap; }
+
+  .workspace { display: flex; flex-direction: column; transition: none; }
+  .dock-resizer { display: none; }
+  .dock-left { border-right: 0; border-bottom: 1px solid var(--border-color); }
+  .dock-right { border-left: 0; border-top: 1px solid var(--border-color); }
+  .dock-left .dock-body { flex: none; overflow: visible; padding-bottom: 12px; }
+  .dock-left .form-actions-bar { position: static; margin: 0; padding: 0; border-top: 0; }
+  .dock.is-collapsed .dock-body { display: none; }
+  .dock-right:not(.is-collapsed) .dock-body { flex: none; height: 75vh; }
+  .result-pane { overflow: visible; }
+  .result-empty { min-height: 160px; }
+}
+
+/* ── 인쇄: 결과만 ────────────────────────────────────────── */
+@media print {
+  .app-layout { height: auto; overflow: visible; }
+  .dock, .result-empty { display: none !important; }
+  .workspace { display: block; }
+  .result-pane { overflow: visible; padding: 0; container-type: normal; }
+}

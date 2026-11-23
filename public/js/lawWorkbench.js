@@ -1,6 +1,7 @@
 // public/js/lawWorkbench.js - 워크벤치 4단계 탭 렌더러 및 이벤트 컨트롤러 (Redline 대비표, IRAC 및 Re-ranking 지원)
 import { state } from './state.js';
-import { openArticleViewer, openPrecedentViewer } from './documentViewer.js';
+import { openArticleViewer, openPrecedentViewer, openInterpretationViewer } from './documentViewer.js';
+import { buildAuthorityExcerpt, buildRelevanceContext, renderAuthorityExcerptHtml } from './authorityExcerpt.js';
 import { openStudio } from './documentStudio.js';
 import { setLearningHistory, resetLearningTab } from './learningTab.js';
 import { renderReasoningOpinion } from './reasoningView.js';
@@ -691,9 +692,14 @@ function renderEvidenceTab(evidence, meta) {
 
   const precedents = evidence.precedents || [];
   const interpretations = evidence.interpretations || [];
+  const relevance = buildRelevanceContext(state.lastReviewResult);
 
   if (precedents.length > 0 || interpretations.length > 0) {
     precedents.forEach((p, idx) => {
+      const precExcerpt = buildAuthorityExcerpt([
+        { label: '판결요지', text: p.summary },
+        { label: '판시사항', text: p.summary ? '' : p.holding }
+      ], relevance, { caseNo: p.caseNo, extraTerms: p.matchedTokens || [] });
       const scoreBadge = Number.isFinite(p.relevanceScore)
         ? `<span class="badge-rerank"><span class="material-symbols-outlined" style="font-size:13px; color:#2563EB;">star</span>관련도 ${p.relevanceScore}점 (${escapeHtml(p.matchReason || '핵심 판례')})</span>` 
         : '';
@@ -702,7 +708,7 @@ function renderEvidenceTab(evidence, meta) {
         <div class="prec-card">
           <div class="prec-card-header">
             <div>
-              <div class="prec-title">[Top ${idx + 1} 판례] ${p.courtName || '대법원'} ${p.caseNo} ${escapeHtml(p.caseName)}</div>
+              <div class="prec-title">[Top ${idx + 1} 판례] ${escapeHtml(p.courtName || '대법원')} ${escapeHtml(p.caseNo)} ${escapeHtml(p.caseName)}</div>
               ${scoreBadge}
             </div>
             <button class="btn btn-xs btn-outline btn-view-prec" data-prec="${escapeHtml(JSON.stringify(p))}">
@@ -710,12 +716,16 @@ function renderEvidenceTab(evidence, meta) {
               <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span>
             </button>
           </div>
-          <div class="prec-summary">${escapeHtml(cleanText(p.summary || p.holding))}</div>
+          ${renderAuthorityExcerptHtml(precExcerpt, '판결요지 전문')}
         </div>
       `;
     });
 
     interpretations.forEach((interp, idx) => {
+      const interpExcerpt = buildAuthorityExcerpt([
+        { label: '회답', text: interp.answer },
+        { label: '이유', text: interp.reason }
+      ], relevance);
       const scoreBadge = Number.isFinite(interp.relevanceScore)
         ? `<span class="badge-rerank"><span class="material-symbols-outlined" style="font-size:13px; color:#16A34A;">verified</span>해석례 관련도 ${interp.relevanceScore}점</span>` 
         : '';
@@ -724,11 +734,15 @@ function renderEvidenceTab(evidence, meta) {
         <div class="prec-card" style="border-left: 3px solid #16A34A;">
           <div class="prec-card-header">
             <div>
-              <div class="prec-title" style="color:#15803D;">[유권해석 ${idx + 1}] ${interp.orgName || '법제처'} ${escapeHtml(interp.title || '')}</div>
+              <div class="prec-title" style="color:#15803D;">[유권해석 ${idx + 1}] ${escapeHtml(interp.orgName || '법제처')} ${escapeHtml(interp.title || '')}</div>
               ${scoreBadge}
             </div>
+            <button class="btn btn-xs btn-outline btn-view-interp" data-interp-index="${idx}">
+              <span>유권해석 전문</span>
+              <span class="material-symbols-outlined" style="font-size:14px;">open_in_new</span>
+            </button>
           </div>
-          <div class="prec-summary">${escapeHtml(cleanText(interp.answer || interp.reason || ''))}</div>
+          ${renderAuthorityExcerptHtml(interpExcerpt, '유권해석 전문')}
         </div>
       `;
     });
@@ -742,6 +756,10 @@ function renderEvidenceTab(evidence, meta) {
       const p = JSON.parse(btn.getAttribute('data-prec'));
       openPrecedentViewer(p);
     });
+  });
+
+  precContainer.querySelectorAll('.btn-view-interp').forEach(btn => {
+    btn.addEventListener('click', () => openInterpretationViewer(interpretations[Number(btn.dataset.interpIndex)]));
   });
 
   // 3. 행정규칙, 자치법규 및 3단계 연쇄 체계

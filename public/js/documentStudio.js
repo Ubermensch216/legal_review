@@ -3,6 +3,7 @@ import { state } from './state.js';
 import { renderReasoningOpinion } from './reasoningView.js';
 import { expandReferences, explainDiagnostic } from './learningIssues.js';
 import { parseReportBlocks, renderReportBlocksHtml } from './reportFormat.js';
+import { showDockTab, hideDockTab, isDockTabActive } from './workspaceLayout.js';
 
 const drawer = document.getElementById('studio-drawer');
 const btnOpen = document.getElementById('btn-open-studio');
@@ -22,21 +23,19 @@ let initialVisualHtml = '';
 let initialExportSource = '';
 
 export function initDocumentStudio() {
+  // 우측 도크의 탭 버튼이다. 열려 있는 탭을 다시 누르면 도크를 접는다.
   if (btnOpen) {
-    btnOpen.addEventListener('click', () => openStudio());
+    btnOpen.addEventListener('click', () => {
+      if (isDockTabActive('studio')) { closeStudio(); return; }
+      // 이미 이번 검토로 만든 편집본이 있으면 다시 만들지 않는다. 사용자가 고친 내용이 사라진다.
+      const current = state.lastReviewResult || null;
+      if (visualEditor.innerHTML.trim() && lastReviewPayload === current) showDockTab('studio');
+      else openStudio();
+    });
   }
   if (btnClose) {
     btnClose.addEventListener('click', () => closeStudio());
   }
-
-  // 스튜디오 바깥을 클릭하면 닫는다. 상단 열기 버튼 클릭은 예외로 둔다.
-  document.addEventListener('click', (event) => {
-    if (!drawer?.classList.contains('open')) return;
-    // 열기 버튼의 클릭도 document까지 전파된다. 이 클릭을 바깥 클릭으로 처리하면
-    // openStudio가 드로어를 연 직후 같은 이벤트에서 닫아 버린다.
-    if (drawer.contains(event.target) || event.target.closest?.('[data-studio-trigger]')) return;
-    closeStudio();
-  });
 
   // 모드 전환 버튼
   if (btnModeVisual && btnModeSource) {
@@ -91,11 +90,11 @@ export function openStudio(initialText = '', title = '', reviewData = null) {
   sourceAtModeChange = sourceEditor.value;
   currentMode = 'visual';
   switchMode('visual');
-  drawer.classList.add('open');
+  showDockTab('studio');
 }
 
 export function closeStudio() {
-  if (drawer) drawer.classList.remove('open');
+  hideDockTab('studio');
 }
 
 /** 새 리뷰 시작 시 이전 검토의 편집본도 화면 상태에서 제거한다. */

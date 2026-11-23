@@ -1,4 +1,5 @@
-// public/js/documentViewer.js - 조문/판례/별표 상세 모달 뷰어
+// public/js/documentViewer.js - 조문/판례/유권해석/별표 상세 모달 뷰어
+import { splitLegalParagraphs } from './authorityExcerpt.js';
 
 const modal = document.getElementById('viewer-modal');
 const modalTitle = document.getElementById('modal-viewer-title');
@@ -45,28 +46,57 @@ export function openPrecedentViewer(precedent) {
   let html = `
     <div class="viewer-precedent-container">
       <div style="margin-bottom: 14px; padding: 10px; background: #F8FAFC; border-radius: 6px; font-size: 13px;">
-        <span><strong>선고일자:</strong> ${precedent.judgeDate}</span> | 
-        <span><strong>사건종류:</strong> ${precedent.caseType || '일반'}</span> |
-        <span><strong>판결유형:</strong> ${precedent.judgeType || '판결'}</span>
+        <span><strong>선고일자:</strong> ${escapeHtml(precedent.judgeDate)}</span> |
+        <span><strong>사건종류:</strong> ${escapeHtml(precedent.caseType || '일반')}</span> |
+        <span><strong>판결유형:</strong> ${escapeHtml(precedent.judgeType || '판결')}</span>
       </div>
-      <div style="margin-bottom: 16px;">
-        <h4 style="font-size: 14px; font-weight: 700; color: #1E3A8A; margin-bottom: 6px;">【 판시사항 】</h4>
-        <p style="font-size: 14px; line-height: 1.7; background: #FFFBEB; padding: 12px; border-radius: 6px;">${escapeHtml(precedent.holding || '내용 없음')}</p>
-      </div>
-      <div>
-        <h4 style="font-size: 14px; font-weight: 700; color: #1E3A8A; margin-bottom: 6px;">【 판결요지 】</h4>
-        <p style="font-size: 14px; line-height: 1.7; white-space: pre-wrap;">${escapeHtml(precedent.summary || '내용 없음')}</p>
-      </div>
-      ${precedent.detailUrl ? `
-        <div style="margin-top: 20px; text-align: right;">
-          <a href="${precedent.detailUrl}" target="_blank" class="btn btn-xs btn-outline">국가법령정보센터 원문 보기 ↗</a>
-        </div>
-      ` : ''}
+      ${legalSection('판시사항', precedent.holding)}
+      ${legalSection('판결요지', precedent.summary)}
+      ${officialLink('precInfoP.do', 'precSeq', precedent.id)}
     </div>
   `;
 
   modalBody.innerHTML = html;
   modal.classList.remove('hidden');
+}
+
+export function openInterpretationViewer(interpretation) {
+  if (!modal || !interpretation) return;
+
+  modalTitle.textContent = `[유권해석] ${interpretation.orgName || '법제처'} ${interpretation.title || ''}`;
+  const meta = [['안건번호', interpretation.itemNo], ['회신일자', interpretation.replyDate]].filter(([, value]) => value);
+
+  modalBody.innerHTML = `
+    <div class="viewer-precedent-container">
+      ${meta.length ? `<div style="margin-bottom: 14px; padding: 10px; background: #F8FAFC; border-radius: 6px; font-size: 13px;">
+        ${meta.map(([label, value]) => `<span><strong>${label}:</strong> ${escapeHtml(value)}</span>`).join(' | ')}
+      </div>` : ''}
+      ${legalSection('질의요지', interpretation.question)}
+      ${legalSection('회답', interpretation.answer)}
+      ${legalSection('이유', interpretation.reason)}
+      ${officialLink('expcInfoP.do', 'expcSeq', interpretation.id)}
+    </div>
+  `;
+  modal.classList.remove('hidden');
+}
+
+function legalSection(title, text) {
+  const paragraphs = splitLegalParagraphs(text);
+  return `<section class="viewer-legal-section">
+    <h4>【 ${title} 】</h4>
+    ${paragraphs.length
+      ? paragraphs.map(p => `<p>${p.no ? `<span class="viewer-legal-no">[${p.no}]</span> ` : ''}${escapeHtml(p.text)}</p>`).join('')
+      : '<p class="viewer-legal-empty">내용 없음</p>'}
+  </section>`;
+}
+
+// API 상세 링크(/DRF/...)는 인증키 없이 열면 인증 실패 화면이 나오므로 공개 상세 페이지로 연결한다.
+function officialLink(page, param, id) {
+  if (!/^\d+$/.test(String(id || ''))) return '';
+  const href = `https://www.law.go.kr/LSW/${page}?${param}=${id}`;
+  return `<div style="margin-top: 20px; text-align: right;">
+    <a href="${href}" target="_blank" rel="noopener noreferrer" class="btn btn-xs btn-outline">국가법령정보센터 원문 보기 ↗</a>
+  </div>`;
 }
 
 export function closeViewer() {
@@ -86,5 +116,6 @@ export default {
   initDocumentViewer,
   openArticleViewer,
   openPrecedentViewer,
+  openInterpretationViewer,
   closeViewer
 };

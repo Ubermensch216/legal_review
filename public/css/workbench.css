@@ -179,7 +179,7 @@
   color: #64748B;
   font-size: 11.5px;
   font-weight: 500;
-  text-align: right;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -200,12 +200,13 @@
   color: #2563EB;
 }
 
+/* 6개 형식을 3개씩 2줄로 고르게 나눈다. */
 .dropzone-format-icons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, auto);
   align-items: center;
   justify-content: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px 10px;
   color: #64748B;
 }
 
@@ -1122,6 +1123,24 @@
   line-height: 1.6;
   white-space: pre-wrap;
 }
+
+/* 판례·유권해석 카드: 의뢰 내용 관련 발췌 */
+.prec-card-header { gap: 12px; }
+.prec-card-header .btn { flex-shrink: 0; }
+.authority-excerpt { margin-top: 10px; padding: 12px 14px; background: #F8FAFC; border-left: 3px solid var(--brand-accent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.authority-excerpt-title { margin-bottom: 8px; color: var(--brand-primary); font-size: 12px; font-weight: 700; }
+.authority-excerpt-item + .authority-excerpt-item { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.authority-excerpt-source { display: inline-block; margin-bottom: 3px; color: #64748B; font-size: 11.5px; font-weight: 600; }
+.authority-excerpt-item p { color: #334155; font-size: 13.5px; line-height: 1.75; overflow-wrap: anywhere; word-break: keep-all; }
+.authority-excerpt mark { padding: 0 2px; background: #FEF3C7; color: inherit; border-radius: 2px; font-weight: 600; }
+.authority-excerpt-empty { margin-top: 8px; color: #64748B; font-size: 13px; }
+
+/* 판례·유권해석 전문 팝업 */
+.viewer-legal-section { margin-bottom: 18px; }
+.viewer-legal-section h4 { margin-bottom: 6px; color: #1E3A8A; font-size: 14px; font-weight: 700; }
+.viewer-legal-section p { margin-bottom: 9px; color: #1E293B; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; word-break: keep-all; }
+.viewer-legal-no { color: #1E3A8A; font-weight: 700; }
+.viewer-legal-empty { color: #94A3B8 !important; }
 
 /* Tab 3: Impacts */
 .impact-layout {

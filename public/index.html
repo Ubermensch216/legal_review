@@ -14,12 +14,16 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+  <!-- Material Symbols: fonts.googleapis.com 차단망에서도 로드되도록 jsDelivr(npm: material-symbols) 사용 -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/material-symbols@0.31.2/outlined.css">
+  <!-- Noto Sans KR / JetBrains Mono는 위 Google Fonts 링크가 막히면 시스템 폰트(맑은 고딕, Consolas)로 대체됨 -->
   
   <link rel="stylesheet" href="/css/main.css">
   <link rel="stylesheet" href="/css/workbench.css">
   <link rel="stylesheet" href="/css/studio.css">
   <link rel="stylesheet" href="/css/reviewTrace.css">
+  <link rel="stylesheet" href="/css/workspace.css">
 </head>
 <body>
   <div class="app-layout">
@@ -41,18 +45,9 @@
           <span class="material-symbols-outlined icon-sm">add_circle</span>
           <span>새 리뷰 시작</span>
         </button>
-        <button id="btn-open-history" class="btn btn-secondary btn-sm" title="과거 검토 이력 조회 및 복원">
-          <span class="material-symbols-outlined icon-sm">history</span>
-          <span>검토 이력</span>
-          <span class="badge" id="badge-history-count" style="background:#E2E8F0; color:#334155; font-size:10px; padding:1px 5px;">0</span>
-        </button>
         <button id="btn-open-tools" class="btn btn-secondary btn-sm">
           <span class="material-symbols-outlined icon-sm">build</span>
           <span>19대 법령 도구</span>
-        </button>
-        <button id="btn-open-studio" class="btn btn-secondary btn-sm" data-studio-trigger>
-          <span class="material-symbols-outlined icon-sm">edit_document</span>
-          <span>보고서 스튜디오</span>
         </button>
         <button id="btn-open-settings" class="btn btn-icon btn-sm" title="환경 및 모델 설정">
           <span class="material-symbols-outlined icon-sm">settings</span>
@@ -61,10 +56,20 @@
     </header>
 
     <!-- 메인 컨테이너 -->
-    <main class="main-container">
-      
-      <!-- 1. HERO 입력 섹션 (사용자 의식의 흐름: 1.문서첨부 -> 2.질의작성&프리셋보조 -> 3.검토실행) -->
-      <section class="hero-section card">
+    <main class="workspace" id="workspace">
+
+      <!-- 좌측 도크: 검토 입력 (사용자 의식의 흐름: 1.문서첨부 -> 2.질의작성&프리셋보조 -> 3.검토실행) -->
+      <aside class="dock dock-left" id="left-dock" aria-label="검토 입력">
+        <div class="dock-header">
+          <span class="dock-title">
+            <span class="material-symbols-outlined" aria-hidden="true">edit_note</span>
+            <span class="dock-title-text">검토 입력</span>
+          </span>
+          <button type="button" class="dock-collapse" id="btn-toggle-left" aria-expanded="true" aria-controls="left-dock-body" title="입력 패널 접기" aria-label="입력 패널 접기">
+            <span class="material-symbols-outlined" aria-hidden="true">left_panel_close</span>
+          </button>
+        </div>
+        <div class="dock-body" id="left-dock-body">
         <form id="form-review" class="review-input-form">
           
           <!-- [STEP 1] 검토 대상 문서 첨부 (최우선 배치) -->
@@ -237,7 +242,14 @@
             </button>
           </div>
 
-          <!-- [진행 상황] 검토 추론 과정 폴딩 패널 (실행 버튼 바로 아래) -->
+        </form>
+        </div>
+        <div class="dock-resizer" id="resizer-left" role="separator" aria-orientation="vertical" aria-label="입력 패널 너비 조절 (좌우 방향키, 더블클릭으로 초기화)" tabindex="0"></div>
+      </aside>
+
+      <!-- 중앙: 진행 상황 → 검토 결과 -->
+      <div class="result-pane" id="result-pane">
+          <!-- [진행 상황] 검토 추론 과정 폴딩 패널 -->
           <section class="review-trace hidden" id="review-trace" aria-live="polite">
             <button type="button" class="trace-header" id="trace-toggle"
                     aria-expanded="true" aria-controls="trace-body">
@@ -270,8 +282,6 @@
               <ol class="trace-list" id="trace-list"></ol>
             </div>
           </section>
-        </form>
-      </section>
 
       <!-- 2. 워크벤치 결과 4단계 탭 섹션 -->
       <section class="workbench-section card hidden" id="workbench-section">
@@ -428,10 +438,35 @@
         </div>
       </section>
 
-    </main>
+      <!-- 진행 패널과 결과가 모두 숨겨져 있을 때만 CSS로 표시한다. -->
+      <div class="result-empty">
+        <span class="material-symbols-outlined" aria-hidden="true">balance</span>
+        <strong>검토 결과가 여기에 표시됩니다</strong>
+        <p>왼쪽에서 문서를 첨부하거나 질의를 작성한 뒤 종합 법령검토를 실행하세요.</p>
+      </div>
+      </div>
 
-    <!-- 검토 이력 관리 드로어 (우측 슬라이드) -->
-    <aside class="history-drawer" id="history-drawer">
+      <!-- 우측 도크: 보고서 스튜디오 · 검토 이력 -->
+      <aside class="dock dock-right is-collapsed" id="right-dock" aria-label="보고서 스튜디오와 검토 이력">
+        <div class="dock-resizer" id="resizer-right" role="separator" aria-orientation="vertical" aria-label="보조 패널 너비 조절 (좌우 방향키, 더블클릭으로 초기화)" tabindex="0"></div>
+        <div class="dock-tabs" role="tablist" aria-label="보조 패널 메뉴">
+          <button type="button" class="dock-tab" id="btn-open-studio" data-studio-trigger role="tab" aria-selected="false" aria-controls="studio-drawer" title="보고서 스튜디오 (공문서 에디터)">
+            <span class="material-symbols-outlined icon-sm" aria-hidden="true">edit_document</span>
+            <span class="dock-tab-label">보고서 스튜디오</span>
+          </button>
+          <button type="button" class="dock-tab" id="btn-open-history" role="tab" aria-selected="false" aria-controls="history-drawer" title="과거 검토 이력 조회 및 복원">
+            <span class="material-symbols-outlined icon-sm" aria-hidden="true">history</span>
+            <span class="dock-tab-label">검토 이력</span>
+            <span class="badge" id="badge-history-count">0</span>
+          </button>
+          <button type="button" class="dock-collapse" id="btn-toggle-right" aria-expanded="false" aria-controls="right-dock-body" title="보조 패널 펼치기" aria-label="보조 패널 펼치기">
+            <span class="material-symbols-outlined" aria-hidden="true">right_panel_open</span>
+          </button>
+        </div>
+        <div class="dock-body" id="right-dock-body">
+
+    <!-- 검토 이력 관리 -->
+    <section class="history-drawer dock-pane" id="history-drawer" role="tabpanel" aria-labelledby="btn-open-history">
       <div class="drawer-header">
         <div class="panel-title-group">
           <span class="material-symbols-outlined icon-sm">history</span>
@@ -458,10 +493,10 @@
           <p class="placeholder-text">저장된 검토 이력이 없습니다.</p>
         </div>
       </div>
-    </aside>
+    </section>
 
-    <!-- 보고서 스튜디오 드로어 (우측 슬라이드) -->
-    <aside class="studio-drawer" id="studio-drawer">
+    <!-- 보고서 스튜디오 -->
+    <section class="studio-drawer dock-pane" id="studio-drawer" role="tabpanel" aria-labelledby="btn-open-studio">
       <div class="studio-header">
         <div class="panel-title-group">
           <span class="material-symbols-outlined icon-sm">edit_document</span>
@@ -516,7 +551,12 @@
         <!-- 2. 마크다운 소스 에디터 (기본 숨김) -->
         <textarea id="studio-source-editor" class="studio-textarea hidden" placeholder="보고서 소스를 직접 입력하세요..."></textarea>
       </div>
-    </aside>
+    </section>
+
+        </div>
+      </aside>
+
+    </main>
 
     <!-- 모달 1: 조문/판례 딥뷰어 모달 -->
     <div class="modal-overlay hidden" id="viewer-modal">

@@ -1,6 +1,7 @@
 // server/law/decisionsApiParser.js - 판례, 법령해석례, 행정규칙, 자치법규 XML/JSON 응답 파서
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { DecisionDataError } from './decisionDiagnostics.js';
+import { stripLegalTags } from '../../public/js/authorityExcerpt.js';
 
 const xmlParser = new XMLParser({
   ignoreAttributes: false,
@@ -26,12 +27,15 @@ function decodeEntities(value) {
     .replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
 }
 
+// 공식 응답의 판결요지에는 <br/> 등이 문자로 들어 있어, 복원 뒤 태그를 줄바꿈으로 바꾼다.
+const plainText = value => stripLegalTags(decodeEntities(value)).trim();
+
 function getText(node) {
   if (node === null || node === undefined) return '';
-  if (typeof node === 'string' || typeof node === 'number') return decodeEntities(node).trim();
+  if (typeof node === 'string' || typeof node === 'number') return plainText(node);
   if (typeof node === 'object') {
-    if (node['#text'] !== undefined) return decodeEntities(node['#text']).trim();
-    if (node._ !== undefined) return decodeEntities(node._).trim();
+    if (node['#text'] !== undefined) return plainText(node['#text']);
+    if (node._ !== undefined) return plainText(node._);
   }
   return '';
 }

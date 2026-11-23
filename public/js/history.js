@@ -1,6 +1,7 @@
 // public/js/history.js - 브라우저 IndexedDB 기반 영구 검토 이력 관리 모듈
 import { renderWorkbench } from './lawWorkbench.js';
 import { renderTraceFromHistory } from './reviewTrace.js';
+import { showDockTab, hideDockTab, isDockTabActive } from './workspaceLayout.js';
 import {
   saveReviewToIndexedDB,
   getAllReviewsFromIndexedDB,
@@ -18,8 +19,10 @@ const countBadge = document.getElementById('badge-history-count');
 
 export async function initHistoryDrawer() {
   if (btnOpen) {
+    // 우측 도크의 탭 버튼이다. 열려 있는 탭을 다시 누르면 도크를 접는다.
     btnOpen.addEventListener('click', () => {
-      openHistoryDrawer();
+      if (isDockTabActive('history')) closeHistoryDrawer();
+      else openHistoryDrawer();
     });
   }
 
@@ -28,13 +31,6 @@ export async function initHistoryDrawer() {
       closeHistoryDrawer();
     });
   }
-
-  // 드로어 바깥을 클릭하면 닫는다. 열기 버튼 자체를 누른 경우에는 즉시 닫히지 않도록 제외한다.
-  document.addEventListener('click', (event) => {
-    if (!drawer?.classList.contains('open')) return;
-    if (drawer.contains(event.target) || btnOpen?.contains(event.target)) return;
-    closeHistoryDrawer();
-  });
 
   if (btnClearAll) {
     btnClearAll.addEventListener('click', async () => {
@@ -50,12 +46,12 @@ export async function initHistoryDrawer() {
 
 export function openHistoryDrawer() {
   if (!drawer) return;
-  drawer.classList.add('open');
+  showDockTab('history');
   refreshHistoryList();
 }
 
 export function closeHistoryDrawer() {
-  if (drawer) drawer.classList.remove('open');
+  hideDockTab('history');
 }
 
 /**
@@ -250,7 +246,7 @@ async function restoreHistory(id) {
     renderWorkbench({ ...data, historyId: data.historyId || id });
     // 그 검토가 어떤 추론 과정을 거쳤는지도 같은 폴딩 패널에 되살린다.
     renderTraceFromHistory(data.progressTrace);
-    closeHistoryDrawer();
+    // 도크는 그대로 둔다. 이력을 이어서 둘러볼 수 있어야 한다.
 
     // 워크벤치 영역으로 스크롤
     const wbSection = document.getElementById('workbench-section');
