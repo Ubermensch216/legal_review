@@ -6,12 +6,17 @@ import { parseDocument } from '../parsers/index.js';
 import { buildWorkbenchContext } from './lawWorkbench.js';
 import { generateLegalReview } from './lawWorkbenchReview.js';
 import { createLlmSession } from '../reasoning/llmGateway.js';
-import { canStartWithProvider, ExternalTransmissionBlockedError } from '../reasoning/externalGate.js';
+import { canStartWithProvider, ExternalTransmissionBlockedError, EXTERNAL_PROVIDERS, isExternalProvider } from '../reasoning/externalGate.js';
+import { createHash } from 'node:crypto';
+import { createDeidentifier, reidentifyDeep, remainingIdentifiers } from '../privacy/deidentify.js';
+import { readExternalAudit, recordExternalTransmission } from '../privacy/auditLog.js';
+import { recallReview } from '../reasoning/reviewSessionStore.js';
+import { EscalationError, previewEscalation, runEscalation } from '../reasoning/escalation.js';
 import { searchLaw, getLawDetail, getLawArticle } from './lawApiClient.js';
 import { runTool, getAvailableTools } from './tools/toolRunner.js';
 import { validDate } from './evidence.js';
 import { generateHwpx, generateDocx, generatePdf } from '../export/exportFiles.js';
-import { saveHistoryItem, getHistoryList, getHistoryById, deleteHistoryItem, clearAllHistory } from './lawHistoryDb.js';
+import { saveHistoryItem, getHistoryList, getHistoryById, deleteHistoryItem, clearAllHistory, updateHistoryData } from './lawHistoryDb.js';
 import { formatErrorResponse } from './lawErrors.js';
 import { LAW_CONFIG } from './lawConfig.js';
 import { ENV } from '../env.js';
@@ -37,6 +42,8 @@ router.get('/config', (req, res) => {
     presets: Object.values(LAW_CONFIG.REVIEW_PRESETS),
     currentProvider: ENV.LLM_PROVIDER,
     hasLawOc: Boolean(ENV.LAW_OC),
+    // 외부 LLM 제공자별로 서버에 키가 설정되어 있는지(값은 알려 주지 않는다). 설정 화면의 사용 방식 선택에 쓴다.
+    externalProviders: Object.fromEntries(EXTERNAL_PROVIDERS.map(name => [name, Boolean(ENV[`${name.toUpperCase()}_API_KEY`])])),
     models: {
       ollama: ENV.OLLAMA_MODEL,
       openai: ENV.OPENAI_MODEL,
@@ -45,6 +52,105 @@ router.get('/config', (req, res) => {
       exaone: ENV.EXAONE_MODEL
     }
   });
+});
+
+
+/** 사용자가 가릴 단어로 지정한 값을 정리한다. */
+const parseTerms = value => {
+  let list = value;
+  if (typeof value === 'string') { try { list = JSON.parse(value); } catch { list = value.split(/[\n,]/); } }
+  return (Array.isArray(list) ? list : []).map(x => String(x || '').trim()).filter(x => x.length >= 2 && x.length <= 100).slice(0, 100);
+};
+
+/** 외부 LLM만 쓰는 모드의 검토 입력 전체를 비식별화하고, 사용자가 승인할 내용의 해시를 만든다. */
+function sanitizeReviewInputs({ query, documentText, provider, terms }) {
+  const deid = createDeidentifier({ terms, sample: `${query}\n${documentText}` });
+  const sanitized = { query: deid.redact(query), documentText: deid.redact(documentText) };
+  const mapping = deid.mapping();
+  const digest = createHash('sha256').update(`${provider}|${sanitized.query}|${sanitized.documentText}`).digest('hex');
+  const used = Object.keys(mapping).filter(token => `${sanitized.query}\n${sanitized.documentText}`.includes(token));
+  const counts = {};
+  for (const token of used) { const kind = token.slice(1, token.lastIndexOf('_')); counts[kind] = (counts[kind] || 0) + 1; }
+  return { ...sanitized, mapping, digest, counts, replacements: used.length,
+    remaining: remainingIdentifiers(`${sanitized.query}\n${sanitized.documentText}`) };
+}
+
+/**
+ * POST /api/law/privacy/preview - 외부 LLM으로 보낼 검토 입력을 비식별화해 미리 보여 준다. 아무것도 전송하지 않는다.
+ */
+router.post('/privacy/preview', upload.single('file'), async (req, res) => {
+  try {
+    const provider = String(req.body.llmProvider || '').toLowerCase();
+    if (!isExternalProvider(provider)) return res.status(400).json({ ok: false, error: '외부 LLM 제공자를 선택한 경우에만 전송 미리보기를 만들 수 있습니다.' });
+    let documentText = req.body.documentText || '';
+    if (req.file) {
+      const parsed = await parseDocument(req.file.buffer, req.file.originalname);
+      documentText = `${documentText}\n\n[첨부문서: ${req.file.originalname}]\n${parsed.text}`.trim();
+    }
+    const query = req.body.query || '';
+    if (!query && !documentText) return res.status(400).json({ ok: false, error: '검토 요청 질의 또는 첨부문서가 필요합니다.' });
+    const sanitized = sanitizeReviewInputs({ query, documentText, provider, terms: parseTerms(req.body.privateTerms) });
+    res.json({ ok: true, provider, digest: sanitized.digest, query: sanitized.query, documentText: sanitized.documentText,
+      counts: sanitized.counts, replacements: sanitized.replacements, remaining: sanitized.remaining });
+  } catch (err) {
+    res.status(err.statusCode || 500).json(formatErrorResponse(err));
+  }
+});
+
+/** GET /api/law/privacy/audit - 외부 LLM 전송 기록(내용은 남기지 않는다) */
+router.get('/privacy/audit', (req, res) => {
+  res.json({ ok: true, entries: readExternalAudit(Math.min(500, parseInt(req.query.limit || '100', 10) || 100)) });
+});
+
+const escalationContext = reviewId => {
+  const ctx = recallReview(reviewId);
+  if (!ctx) throw new EscalationError('검토 세션이 만료되었거나 서버가 다시 시작되었습니다. 검토를 다시 실행한 뒤 외부 재검토를 요청하십시오.', 410, 'SESSION_EXPIRED');
+  return ctx;
+};
+const escalationProvider = value => {
+  const provider = String(value || '').toLowerCase();
+  if (!isExternalProvider(provider)) throw new EscalationError('외부 LLM 제공자를 선택하십시오.', 400, 'NOT_EXTERNAL');
+  return provider;
+};
+
+/**
+ * POST /api/law/escalation/preview - 로컬 모델이 풀지 못한 쟁점을 외부 LLM에 보낼 때의 비식별 전송 내용을 미리 보여 준다.
+ */
+router.post('/escalation/preview', express.json({ limit: '1mb' }), (req, res) => {
+  try {
+    const ctx = escalationContext(req.body.reviewId);
+    const provider = escalationProvider(req.body.provider);
+    res.json({ ok: true, ...previewEscalation(ctx, String(req.body.issueId || ''), { provider, terms: parseTerms(req.body.privateTerms) }) });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ ok: false, code: err.code, error: err.message });
+  }
+});
+
+/**
+ * POST /api/law/escalation/send - 사용자가 승인한 비식별 전송 내용을 외부 LLM으로 보내고 답변을 검토에 반영한다.
+ */
+router.post('/escalation/send', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const ctx = escalationContext(req.body.reviewId);
+    const provider = escalationProvider(req.body.provider);
+    const issueId = String(req.body.issueId || '');
+    const model = String(req.body.model || '').trim() || ({ openai: ENV.OPENAI_MODEL, anthropic: ENV.ANTHROPIC_MODEL, gemini: ENV.GEMINI_MODEL, exaone: ENV.EXAONE_MODEL })[provider];
+    const result = await runEscalation({ ctx, issueId, provider, model, apiKey: req.body.apiKey || undefined, digest: String(req.body.digest || ''),
+      terms: parseTerms(req.body.privateTerms),
+      local: { provider: 'ollama', model: String(req.body.localModel || '').trim() || ENV.OLLAMA_MODEL } });
+    const historyId = String(req.body.historyId || '').trim();
+    if (historyId) {
+      updateHistoryData(historyId, data => ({ ...data, review: { ...data.review, ...result.reviewPatch,
+        reviewStatus: data.review?.reviewStatus, escalation: data.review?.escalation, reasoning: { ...data.review?.reasoning, ...result.reasoningPatch,
+          gate: 'HUMAN_REVIEW_REQUIRED', gateReasons: [...new Set([...(data.review?.reasoning?.gateReasons || []), result.externalNote])] },
+        externalReviews: [...(data.review?.externalReviews || []), { issueId, provider, model, at: new Date().toISOString(),
+          before: result.before, after: result.after }] } }));
+    }
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[LawApi] escalation 에러:', err.message);
+    res.status(err.statusCode || 500).json({ ok: false, code: err.code, error: err.message });
+  }
 });
 
 /**
@@ -261,7 +367,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
     }
     const manualLearning = req.body.learningMode === 'manual' || Boolean(sourceHistoryId);
     if (manualLearning) localLearningEndpoint();
-    const query = req.body.query || '';
+    let query = req.body.query || '';
     const preset = req.body.preset || 'compliance';
     const targetLaw = req.body.targetLaw || '';
     // 검토 기준 시점(선택). 형식이 틀렸을 때 조용히 오늘로 떨어뜨리면
@@ -329,8 +435,28 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       // EXAONE 검토도 같은 구조를 남겨야 외부 전문가 질의 탭을 그대로 쓸 수 있다.
       ...(manualLearning || resolvedProvider === 'exaone' ? { pipeline: 'staged' } : {})
     };
+    // 외부 LLM만 쓰는 모드: 검토 입력 전체를 비식별화하고, 사용자가 미리보기에서 승인한 해시와 같을 때만 시작한다.
     // 승인 없이는 문서가 이 PC 밖으로 나가지 않게, 호출이 시작되기 전에 거절한다(호출 직전에도 다시 막는다).
-    if (!canStartWithProvider(resolvedProvider)) {
+    let externalApproval = null;
+    let originalQuery = null;
+    let reidentifyMapping = null;
+    if (!manualLearning && isExternalProvider(resolvedProvider)) {
+      const sanitized = sanitizeReviewInputs({ query, documentText, provider: resolvedProvider, terms: parseTerms(req.body.privateTerms) });
+      if (!req.body.externalApprovalDigest || req.body.externalApprovalDigest !== sanitized.digest) {
+        return fail(409, { ok: false, code: 'EXTERNAL_TRANSMISSION_BLOCKED', needsApproval: true,
+          error: new ExternalTransmissionBlockedError(resolvedProvider).message });
+      }
+      if (sanitized.remaining.length) {
+        return fail(422, { ok: false, code: 'IDENTIFIERS_REMAIN', error: `비식별 후에도 ${sanitized.remaining.join(', ')}이(가) 남아 있어 전송하지 않았습니다. 가릴 단어를 추가해 미리보기를 다시 확인하십시오.` });
+      }
+      originalQuery = query;
+      ({ query, documentText } = sanitized);
+      reidentifyMapping = sanitized.mapping;
+      externalApproval = { scope: { provider: resolvedProvider, inputDigest: sanitized.digest, label: 'review-input' } };
+      recordExternalTransmission({ provider: resolvedProvider, purpose: 'REVIEW_INPUT_APPROVED', digest: sanitized.digest,
+        counts: sanitized.counts, replacements: sanitized.replacements });
+    }
+    if (!canStartWithProvider(resolvedProvider, externalApproval)) {
       return fail(409, { ok: false, code: 'EXTERNAL_TRANSMISSION_BLOCKED', error: new ExternalTransmissionBlockedError(resolvedProvider).message });
     }
     // 요청이 임의의 주소를 모델 서버로 지정해 문서를 보내지 못하게 한다. 이 PC 또는 설정된 OLLAMA_URL만 허용한다.
@@ -347,6 +473,7 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
 
     // 최초 검토에서만 공식 자료를 수집한다. 후속 검토는 저장된 스냅샷을 사용한다.
     const llmSession = createLlmSession();
+    if (externalApproval) llmSession.externalApproval = externalApproval;
     const workbenchContext = sourceHistoryId
       ? { meta: structuredClone(sourceHistory.data.meta),
         officialEvidence: structuredClone(sourceHistory.data.officialEvidence),
@@ -437,9 +564,13 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       };
     }
 
+    // 외부 LLM에는 대체 표기로 보냈으므로, 사용자에게 돌려주는 결과는 원래 값으로 복원한다.
+    if (reidentifyMapping) Object.assign(responsePayload, reidentifyDeep(responsePayload, reidentifyMapping));
+    responsePayload.reliability.llmMode = reidentifyMapping ? 'EXTERNAL_ONLY' : (responsePayload.review?.escalation ? 'LOCAL_WITH_ESCALATION' : 'LOCAL_ONLY');
+
     // 3. 검토 이력 DB 자동 저장
     progress.start('save', '검토 이력 저장', '', '검증');
-    const historyTitle = query || (documentName ? `[문서검토] ${documentName}` : '법령 검토');
+    const historyTitle = (originalQuery ?? query) || (documentName ? `[문서검토] ${documentName}` : '법령 검토');
     const historyId = saveHistoryItem({
       query: historyTitle,
       preset,

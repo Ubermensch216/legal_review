@@ -232,6 +232,17 @@ export function buildEvidenceRegistry(context = {}, { documentText = '' } = {}) 
   return createRegistryView(entries, order, asOf);
 }
 
+/** 모든 항목의 텍스트에 변환을 적용한 사본 등록부. 비식별화한 입력으로 같은 판단 단계를 다시 돌릴 때 쓴다. */
+export function mapRegistryText(registry, transform) {
+  const entries = new Map();
+  const order = [];
+  for (const entry of registry.list()) {
+    entries.set(entry.id, { ...entry, text: transform(entry.text), label: transform(entry.label), title: transform(entry.title || '') });
+    order.push(entry.id);
+  }
+  return createRegistryView(entries, order, registry.asOf);
+}
+
 function createRegistryView(entries, order, asOf) {
   const childrenOf = new Map();
   for (const id of order) {

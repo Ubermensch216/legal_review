@@ -204,6 +204,8 @@ export function renderWorkbench(data) {
   // 3. 외부 전문가 질의 — 서버에 저장된 이력에만 연결한다.
   //    질의서는 저장된 검토 자료에서 만들어지므로 이력 저장에 실패하면 사용할 수 없다.
   setLearningHistory(data.meta?.sourceHistoryId || data.historyId, data);
+  // 외부 재검토 제안 패널 등, 결과가 바뀔 때 다시 그려야 하는 부분에 알린다.
+  document.dispatchEvent(new CustomEvent('workbench:rendered', { detail: data }));
 }
 
 /**

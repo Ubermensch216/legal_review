@@ -87,3 +87,20 @@ test('근거 ID가 없는 요건 판단도 검증 원장에 공식 근거 없음
   assert.equal(result.entailmentCalls, 0);
   assert.equal(result.ledger[0].overall, 'NO_OFFICIAL_SUPPORT');
 });
+
+test('긴 근거는 주장과 의미가 가까운 조각 4개만 확인하고, 안 본 조각이 있으면 "뒷받침하지 않음"을 확정하지 않는다', async () => {
+  const sentence = '허가 요건에 관한 설명이다. ';
+  const text = Array.from({ length: 8 }, (_, i) => `[조각${i}] ${sentence.repeat(70)}`).join('\n');
+  const entries = new Map([['P1', { id: 'P1', text, official: true, inForce: true }]]);
+  const count = evidenceFragments(text).length;
+  assert.ok(count > 4);
+  // 조각 번호가 클수록 주장과 가깝게 만든다. 가장 가까운 4개(뒤쪽)가 선택되어야 한다.
+  const near = async texts => ({ warning: null, vectors: texts.map((t, i) => i === 0 ? [1, 0] : [Math.min(1, i / count), 0.3]) });
+  const prompts = fakeOllama(() => response('NOT_SUPPORTED'));
+  const result = await verifyWarrants({ issueResults: [issue(['P1'])], registry: registry(entries), provider: 'ollama', config,
+    session: createLlmSession(), embed: near });
+  assert.equal(prompts.length, 4);
+  assert.equal(result.ledger[0].checks[0].skippedFragments, count - 4);
+  assert.equal(result.ledger[0].checks[0].entailment, 'PARTIAL');
+  assert.equal(result.ledger[0].overall, 'UNCONFIRMED');
+});

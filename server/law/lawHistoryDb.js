@@ -81,6 +81,27 @@ export function saveHistoryItem({ query = '', preset = 'compliance', targetLaw =
 }
 
 /**
+ * 저장된 검토의 전체 데이터를 갱신한다(외부 LLM 재검토 반영처럼 검토 결과가 나중에 바뀔 때).
+ * @param {string} id
+ * @param {(data: object) => object} update 기존 data를 받아 새 data를 돌려주는 함수
+ */
+export function updateHistoryData(id, update) {
+  if (!isDbReady || !db || !id) return false;
+  try {
+    const row = db.prepare('SELECT full_data FROM review_history WHERE id = ?').get(id);
+    if (!row) return false;
+    const next = update(JSON.parse(row.full_data || '{}'));
+    const summary = String(next?.review?.summary || '').replace(/^#+\s+/gm, '').replace(/[*_`]/g, '').trim().slice(0, 200);
+    db.prepare("UPDATE review_history SET full_data = ?, summary = COALESCE(NULLIF(?, ''), summary), risk_count = ? WHERE id = ?")
+      .run(JSON.stringify(next), summary, next?.review?.risks?.length || 0, id);
+    return true;
+  } catch (err) {
+    console.error('[LawHistoryDb] updateHistoryData 오류:', err.message);
+    return false;
+  }
+}
+
+/**
  * 검토 이력 목록 조회 (최신순)
  * @param {number} limit 
  * @param {number} offset 
@@ -183,6 +204,7 @@ export function clearAllHistory() {
 }
 
 export default {
+  updateHistoryData,
   saveHistoryItem,
   getHistoryList,
   getHistoryById,

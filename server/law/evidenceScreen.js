@@ -4,10 +4,15 @@ import { createTokenCounter, resolveBudget } from './llmBudget.js';
 import { complete } from '../reasoning/llmGateway.js';
 import { parseModelJson } from '../reasoning/schemas.js';
 import { isOfficial } from './evidence.js';
+import { cosine, embedTexts } from '../reasoning/embeddings.js';
+import { extractTerms } from '../reasoning/stages/statuteLinking.js';
 
 const BATCH_SIZE = 6;
 const MAX_TITLE = 120;
 const MAX_EXCERPT = 180;
+// 로컬 임베딩(bge-m3) 유사도 기준. 실측에서 같은 제도를 다룬 목록은 0.60~0.75, 무관한 목록은 0.31~0.39였다.
+// 두 기준 사이(경계)만 LLM에 묻는다. 무관 판정은 쟁점 용어가 제목·발췌에 하나도 없을 때만 인정한다.
+export const SCREEN_SIMILARITY = Object.freeze({ relevant: 0.55, irrelevant: 0.40 });
 const KIND = { precedent: '판례', interpretation: '법령해석례' };
 
 const metadata = (item, kind) => ({
@@ -24,7 +29,7 @@ const metadata = (item, kind) => ({
  * 결론, 인용 가능성, 사실관계의 유사성은 공식 본문을 확보한 뒤 판단한다.
  */
 export async function screenEvidenceCandidates({ candidates, kind, query, issue = '', provider, model, apiKey, session,
-  classify = null, protectedIds = [], batchSize = BATCH_SIZE }) {
+  classify = null, protectedIds = [], batchSize = BATCH_SIZE, embed = embedTexts, thresholds = SCREEN_SIMILARITY }) {
   const unique = [...new Map((Array.isArray(candidates) ? candidates : []).filter(x => x?.id)
     .map(x => [String(x.id), x])).values()];
   const decisions = [];
@@ -38,8 +43,30 @@ export async function screenEvidenceCandidates({ candidates, kind, query, issue 
   if (budget) batchSize = Math.min(batchSize, Math.max(1, Math.floor((budget.inputLimit - 900) / 700)));
   const protectedSet = new Set(protectedIds.map(String));
   let unavailable = false;
-  for (let start = 0; start < unique.length; start += batchSize) {
-    const batch = unique.slice(start, start + batchSize);
+
+  // 1차: 로컬 임베딩으로 분명한 후보(관련·무관)를 먼저 가른다. LLM은 경계 후보에만 쓴다.
+  const pre = new Map();
+  const basis = `${issue || ''} ${query || ''}`.trim();
+  if (!classify && basis && unique.length) {
+    const metas = unique.map(x => metadata(x, kind));
+    const texts = metas.map(m => `${m.title} ${m.excerpt}`.trim());
+    const { vectors, warning } = await embed([String(basis).slice(0, 1200), ...texts]);
+    if (warning) warnings.push(warning);
+    const [basisVector, ...itemVectors] = vectors;
+    const terms = extractTerms(issue || query);
+    unique.forEach((item, i) => {
+      const score = cosine(basisVector, itemVectors[i]);
+      if (score === null) return;
+      const shown = score.toFixed(2);
+      if (score >= thresholds.relevant) pre.set(String(item.id), { label: 'RELEVANT', reason: `의미 유사도 ${shown}`, method: 'EMBEDDING' });
+      else if (score <= thresholds.irrelevant && !terms.some(t => texts[i].includes(t)))
+        pre.set(String(item.id), { label: 'IRRELEVANT', reason: `의미 유사도 ${shown} · 쟁점 용어 없음`, method: 'EMBEDDING' });
+    });
+  }
+  const toAsk = unique.filter(x => !pre.has(String(x.id)));
+  const llmLabels = new Map();
+  for (let start = 0; start < toAsk.length; start += batchSize) {
+    const batch = toAsk.slice(start, start + batchSize);
     let labels = null;
     try {
       if (classify) labels = await classify(batch.map(x => metadata(x, kind)), { query, issue, kind });
@@ -62,18 +89,20 @@ export async function screenEvidenceCandidates({ candidates, kind, query, issue 
         if (!Array.isArray(labels) || labels.length !== batch.length) warnings.push(`${KIND[kind] || kind} 목록 선별 응답이 불완전해 빠진 후보를 본문 확인 대상으로 남겼습니다.`);
       }
     } catch (err) { warnings.push(`${KIND[kind] || kind} 목록 선별 실패: ${err.message}`); unavailable = true; }
-    const byId = new Map((Array.isArray(labels) ? labels : [])
-      .filter(x => x && ['RELEVANT', 'UNKNOWN', 'IRRELEVANT'].includes(x.label)).map(x => [String(x.id), x]));
-    for (const item of batch) {
-      // 본문을 이미 가진 호출자·목업은 기존 검토 흐름을 유지한다.
-      const protectedItem = protectedSet.has(String(item.id)) || item.contentStatus === 'FULL_TEXT' || !isOfficial(item);
-      const decision = byId.get(String(item.id));
-      const label = protectedItem ? 'UNKNOWN' : (decision?.label || 'UNKNOWN');
-      decisions.push({ id: String(item.id), kind, label, selected: label !== 'IRRELEVANT',
-        reason: protectedSet.has(String(item.id)) ? '명시 인용 또는 필수 후보' : protectedItem ? '기존 본문 또는 비공식 후보'
-          : label === 'IRRELEVANT' ? '목록상 명백히 무관' : '본문 확인 대상',
-        modelReason: typeof decision?.reason === 'string' ? decision.reason.slice(0, 70) : '' });
+    for (const x of (Array.isArray(labels) ? labels : [])) {
+      if (x && ['RELEVANT', 'UNKNOWN', 'IRRELEVANT'].includes(x.label)) llmLabels.set(String(x.id), x);
     }
+  }
+  for (const item of unique) {
+    // 본문을 이미 가진 호출자·목업은 기존 검토 흐름을 유지한다.
+    const protectedItem = protectedSet.has(String(item.id)) || item.contentStatus === 'FULL_TEXT' || !isOfficial(item);
+    const decision = pre.get(String(item.id)) || llmLabels.get(String(item.id));
+    const label = protectedItem ? 'UNKNOWN' : (decision?.label || 'UNKNOWN');
+    decisions.push({ id: String(item.id), kind, label, selected: label !== 'IRRELEVANT',
+      method: pre.has(String(item.id)) ? 'EMBEDDING' : llmLabels.has(String(item.id)) ? 'LLM' : 'NONE',
+      reason: protectedSet.has(String(item.id)) ? '명시 인용 또는 필수 후보' : protectedItem ? '기존 본문 또는 비공식 후보'
+        : label === 'IRRELEVANT' ? '목록상 명백히 무관' : '본문 확인 대상',
+      modelReason: typeof decision?.reason === 'string' ? decision.reason.slice(0, 70) : '' });
   }
   if (unique.length && !decisions.some(d => d.selected)) {
     decisions[0] = { ...decisions[0], label: 'UNKNOWN', selected: true, reason: '전부 제외 방지: 최상위 후보 본문 확인' };

@@ -6,7 +6,7 @@ import { resolveBudget } from '../server/law/llmBudget.js';
 import { createLlmSession } from '../server/reasoning/llmGateway.js';
 import { buildEvidenceRegistry } from '../server/reasoning/evidenceRegistry.js';
 import { applyFactProvenance, computeIssueConclusion, narrativeConflicts } from '../server/reasoning/verify/conclusion.js';
-import { applyIssue, buildRunPrefix, cleanNarrative } from '../server/reasoning/stages/application.js';
+import { applicationSchema, applyIssue, buildRunPrefix, cleanNarrative } from '../server/reasoning/stages/application.js';
 import { conditionalConclusionText, conclusionDigest } from '../server/reasoning/stages/synthesis.js';
 
 const noNetwork = globalThis.fetch;
@@ -231,4 +231,15 @@ test('하위 항이 없는 긴 근거도 원문 조각으로 나누어 포섭한
   assert.deepEqual(result.omittedEvidence, []);
   assert.equal(result.stageStatus, 'OK');
   assert.ok(bodies.some(b => /원문 \d+-\d+/.test(b.messages[1].content)));
+});
+
+test('같은 쟁점의 두 번째 이후 호출은 서술·반대 논리를 다시 쓰지 않아 출력 토큰을 줄인다', () => {
+  const args = { elementIds: ['A1.E1'], evidenceIds: ['A1'], factIds: ['F1'], authorityIds: [], withReasoning: true };
+  const first = applicationSchema(args);
+  const later = applicationSchema({ ...args, includeCounter: false, includeNarrative: false });
+  assert.ok(first.properties.narrative && first.properties.counter);
+  assert.equal(first.properties.narrative.maxLength, 260);
+  assert.equal(later.properties.narrative, undefined);
+  assert.equal(later.properties.counter, undefined);
+  assert.deepEqual(later.required.sort(), ['assessments', 'precedents', 'reasoning']);
 });

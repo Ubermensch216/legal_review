@@ -57,8 +57,11 @@ function redactor(value, terms) {
       kind === '계좌번호' && /^\d{4}-\d{2}-\d{2}$/.test(found) ? found : substitute(kind, found));
     return text;
   };
-  return { redact, counts };
+  return { redact, counts, identities };
 }
+
+/** 외부 LLM 전송용 비식별화가 같은 규칙을 쓰도록 노출한다. identities는 '종류:원문' → 대체 표기. */
+export const createRedactor = (terms = []) => redactor('', terms);
 
 export function redactLearningText(value, terms = []) {
   const { redact, counts } = redactor(value, terms);

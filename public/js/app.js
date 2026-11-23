@@ -1,5 +1,6 @@
 // public/js/app.js - 메인 프론트엔드 엔트리포인트 및 이벤트 바인딩
-import { state, saveSettings } from './state.js';
+import { state, saveSettings, LLM_MODES } from './state.js';
+import { confirmReviewTransmission } from './externalLlm.js';
 import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs, resetWorkbench } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio, resetStudio } from './documentStudio.js';
@@ -349,6 +350,13 @@ function initReviewForm() {
       return;
     }
 
+    // 외부 LLM만 쓰는 모드: 개인정보를 가린 전송 내용을 확인·승인해야만 검토를 시작한다.
+    let externalApproval = null;
+    if (state.settings.mode === LLM_MODES.EXTERNAL_ONLY && !state.manualLearningRerun) {
+      externalApproval = await confirmReviewTransmission({ query, file: state.selectedFile, provider: state.settings.provider });
+      if (!externalApproval) return;
+    }
+
     updateCollapsedInputSummaries();
     // 2분할 화면에서는 입력을 결과 옆에 계속 보여주고, 세로로 쌓인 좁은 화면에서만 접는다.
     if (window.matchMedia('(max-width: 1099px)').matches) setReviewInputStepsCollapsed(true);
@@ -382,6 +390,10 @@ function initReviewForm() {
     } else {
       formData.append('llmProvider', state.settings.provider);
       if (state.settings.modelName) formData.append('llmModel', state.settings.modelName);
+    }
+    if (externalApproval) {
+      formData.append('externalApprovalDigest', externalApproval.digest);
+      formData.append('privateTerms', JSON.stringify(externalApproval.terms));
     }
 
     // 같은 사건의 재검토라면 그 이력을 알려, 그 사건에서 승인한 지식을 검토에 싣는다.
@@ -422,6 +434,8 @@ function initReviewForm() {
         : await res.json();
 
       finishReviewTrace({ totalMs: data.progressTrace?.totalMs ?? null });
+      // 이 검토의 중간 산출물이 서버 메모리에 있는 동안에만 외부 재검토 제안을 보여 준다.
+      data.escalationLive = true;
       renderWorkbench(data);
       await addHistoryRecord(data);
 
@@ -586,7 +600,7 @@ function initToolsModal() {
  * 설정에서 EXAONE을 고른 경우에만 외부 API로 보낸다. 다른 클라우드 제공자는 기존처럼 로컬로 실행한다.
  */
 function usesLocalReviewPath() {
-  return Boolean(document.getElementById('manual-learning-mode')?.checked) && state.settings.provider !== 'exaone';
+  return Boolean(document.getElementById('manual-learning-mode')?.checked) && state.settings.mode !== LLM_MODES.EXTERNAL_ONLY;
 }
 
 /**
@@ -738,14 +752,48 @@ function initSettingsModal() {
     loadAvailableModels(provider, model);
   });
 
+  // 사용 방식(내부 / 병용 / 외부)에 따라 보이는 설정이 달라진다. 주 제공자는 방식이 정한다.
+  const modeRadios = [...document.querySelectorAll('input[name="llm-mode"]')];
+  const externalProviderSelect = document.getElementById('setting-external-provider');
+  const externalModelInput = document.getElementById('setting-external-model');
+  const externalHint = document.getElementById('setting-external-hint');
+  const privateTermsInput = document.getElementById('setting-private-terms');
+  const selectedMode = () => modeRadios.find(r => r.checked)?.value || LLM_MODES.LOCAL_ONLY;
+
+  function updateExternalHint() {
+    if (!externalHint) return;
+    const provider = externalProviderSelect.value;
+    const configured = state.config?.externalProviders?.[provider];
+    externalHint.textContent = configured === false
+      ? `서버 .env에 ${provider.toUpperCase()}_API_KEY가 설정되어 있지 않습니다. 키를 넣고 서버를 다시 시작하십시오.`
+      : configured ? `${provider.toUpperCase()}_API_KEY 설정됨 · 승인한 내용만 전송됩니다.` : '';
+    externalHint.style.color = configured === false ? '#ef4444' : 'var(--text-muted, #64748b)';
+  }
+  function applyModeUi() {
+    const mode = selectedMode();
+    const usesExternal = mode !== LLM_MODES.LOCAL_ONLY;
+    document.getElementById('external-llm-settings')?.classList.toggle('hidden', !usesExternal);
+    document.getElementById('private-terms-settings')?.classList.toggle('hidden', !usesExternal);
+    document.getElementById('local-llm-settings')?.classList.add('hidden');
+    document.getElementById('local-model-settings')?.classList.toggle('hidden', mode === LLM_MODES.EXTERNAL_ONLY);
+    updateExternalHint();
+  }
+  modeRadios.forEach(radio => radio.addEventListener('change', applyModeUi));
+  externalProviderSelect?.addEventListener('change', () => {
+    externalModelInput.value = state.config?.models?.[externalProviderSelect.value] || '';
+    updateExternalHint();
+  });
+
   btnOpen.addEventListener('click', () => {
-    providerSelect.value = state.settings.provider;
-    modelNameInput.value = state.settings.modelName;
-
-    const isOllama = state.settings.provider === 'ollama';
-    if (btnRefreshModels) btnRefreshModels.style.display = isOllama ? 'inline-flex' : 'none';
-
-    loadAvailableModels(state.settings.provider, state.settings.modelName);
+    providerSelect.value = 'ollama';
+    modelNameInput.value = state.settings.localModel;
+    modeRadios.forEach(radio => { radio.checked = radio.value === state.settings.mode; });
+    externalProviderSelect.value = state.settings.externalProvider;
+    externalModelInput.value = state.settings.externalModel;
+    privateTermsInput.value = state.settings.privateTerms;
+    applyModeUi();
+    if (btnRefreshModels) btnRefreshModels.style.display = 'inline-flex';
+    loadAvailableModels('ollama', state.settings.localModel);
     modal.classList.remove('hidden');
   });
 
@@ -753,14 +801,17 @@ function initSettingsModal() {
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    const finalModel = (modelSelect.value === '__custom__'
+    const localModel = (modelSelect.value === '__custom__'
       ? modelNameInput.value.trim()
-      : modelSelect.value) || state.settings.modelName;
-
-    saveSettings({
-      provider: providerSelect.value,
-      modelName: finalModel
-    });
+      : modelSelect.value) || state.settings.localModel;
+    const mode = selectedMode();
+    const externalProvider = externalProviderSelect.value;
+    if (mode !== LLM_MODES.LOCAL_ONLY && state.config?.externalProviders?.[externalProvider] === false) {
+      alert(`${externalProvider.toUpperCase()}_API_KEY가 서버에 설정되어 있지 않아 이 방식을 사용할 수 없습니다. .env에 키를 넣고 서버를 다시 시작하십시오.`);
+      return;
+    }
+    saveSettings({ mode, localModel, externalProvider, externalModel: externalModelInput.value.trim(),
+      privateTerms: privateTermsInput.value.trim() });
 
     updateLlmDisplay();
     modal.classList.add('hidden');
@@ -785,16 +836,17 @@ async function loadServerConfig() {
   }
 }
 
+const MODE_LABEL = { LOCAL_ONLY: '내부 LLM만', HYBRID: '내부 + 외부 병용', EXTERNAL_ONLY: '외부 LLM만' };
+
 function updateLlmDisplay() {
   const display = document.getElementById('current-llm-display');
-  if (display) {
-    const isManual = usesLocalReviewPath();
-    const model = state.settings.modelName
-      || state.config?.models?.[isManual ? 'ollama' : state.settings.provider] || (isManual ? 'gemma4:e2b' : '');
-    display.textContent = isManual
-      ? `로컬 Ollama (${model}) · 외부 AI 직접 질의`
-      : `AI 엔진: ${state.settings.provider.toUpperCase()} (${model})`;
-  }
+  if (!display) return;
+  const { mode, localModel, externalProvider, externalModel } = state.settings;
+  const local = localModel || state.config?.models?.ollama || 'gemma4:e2b';
+  const external = `${externalProvider.toUpperCase()} (${externalModel || state.config?.models?.[externalProvider] || '모델 기본값'})`;
+  display.textContent = mode === LLM_MODES.EXTERNAL_ONLY ? `외부 LLM만 · ${external}`
+    : mode === LLM_MODES.HYBRID ? `내부 + 외부 병용 · 로컬 ${local} → 어려운 쟁점은 ${external}`
+      : `${MODE_LABEL[mode]} · 로컬 Ollama (${local})`;
 }
 
 export default {};

@@ -18,6 +18,7 @@ import { parseDocument } from '../../server/parsers/index.js';
 import { buildWorkbenchContext } from '../../server/law/lawWorkbench.js';
 import { generateLegalReview } from '../../server/law/lawWorkbenchReview.js';
 import { scoreCitations } from './scoring.js';
+import { loadGoldSet, scoreAgainstGold } from './goldSet.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const samples = path.join(root, 'test/docs/review-samples');
@@ -79,6 +80,7 @@ async function runCase(item, run) {
     counts: { issues: (review.coreIssues || []).length, legalBasis: (review.legalBasis || []).length,
       risks: (review.risks || []).length, redlines: (review.redlineDiffs || []).length,
       opinionChars: (review.legalOpinion || '').length, draftChars: (review.draftOpinion || '').length },
+    gold: (() => { const g = loadGoldSet().cases.find(c => c.id === item.id); return g ? scoreAgainstGold(review, g) : null; })(),
     citationExistence: verification.citationConfidence ?? null,
     citations: item.expected.length ? scoreCitations(review, item.expected, item.targetLaw) : null,
     inputBudget: review.inputBudget ? { estimatedInputTokens: review.inputBudget.estimatedInputTokens,
@@ -90,6 +92,15 @@ async function runCase(item, run) {
       skippedIssues: review.reasoning.issues.filter(i => i.stageStatus === 'SKIPPED').length,
       privacyRows: review.reasoning.privacyRowCoverage?.length ?? null,
       privacyRowsReviewed: review.reasoning.privacyRowCoverage?.filter(r => r.status === 'REVIEWED').length ?? null,
+      // 품질 지표: 판단이 실제로 실행된 쟁점 비율, 쟁점-조문 연결, 사실 수, 외부 재검토 후보.
+      judgedIssues: review.reasoning.issues.filter(i => ['OK', 'OK_WITH_WARNINGS', 'PARTIAL'].includes(i.stageStatus) && (i.assessments || []).length > 0).length,
+      linkedIssues: review.reasoning.issues.filter(i => (i.research?.evidenceIds || []).some(id => /^[AO]/.test(id))).length,
+      facts: review.reasoning.facts?.length ?? null,
+      factTopUp: review.reasoning.diagnostics?.s1?.factTopUp || null,
+      statuteLinking: review.reasoning.diagnostics?.s1?.statuteLinking || null,
+      documentProfile: review.reasoning.diagnostics?.s1?.documentProfile?.type || null,
+      escalationCandidates: review.escalation?.candidates?.length ?? 0,
+      conditionalIssues: review.reasoning.issues.filter(i => i.conclusion?.legal === 'CONDITIONAL').length,
       rejectedIds: review.reasoning.diagnostics?.s1?.rejectedIds?.length ?? 0,
       warrants: review.reasoning.warrants.map(w => w.overall) } : null,
     ledger: review.llmLedger || null };

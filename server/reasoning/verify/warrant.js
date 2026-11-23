@@ -7,6 +7,9 @@ import { cosine, embedTexts } from '../embeddings.js';
 export const ALIGNMENT_THRESHOLD = 0.55;
 const EVIDENCE_CHARS = 900;
 const MIN_FRAGMENT_CHARS = 180;
+// 한 (주장, 근거) 쌍에서 함의를 확인하는 조각 수의 상한. 긴 판례·해석례는 조각이 수십 개라 호출이 폭증한다.
+// 조각이 이보다 많으면 주장과 의미가 가까운 조각부터 확인한다(짧은 조문은 영향 없음).
+export const MAX_FRAGMENTS_PER_PAIR = 4;
 
 export function collectClaims(issueResults, { contractMode = false } = {}) {
   const claims = [];
@@ -70,6 +73,16 @@ async function verifyFragment({ claim, evidenceId, fragment, registry, provider,
   }
 }
 
+/** 조각이 상한보다 많으면 주장과 의미가 가까운 조각을 골라 원문 순서로 돌려준다. 임베딩이 없으면 전부 확인한다. */
+export async function pickFragments(fragments, claimText, embed, max) {
+  if (fragments.length <= max) return fragments;
+  const { vectors } = await embed([claimText, ...fragments.map(f => f.text)]);
+  const [claimVector, ...fragmentVectors] = vectors;
+  const scored = fragments.map((fragment, index) => ({ fragment, index, score: cosine(claimVector, fragmentVectors[index]) }));
+  if (scored.some(x => x.score === null)) return fragments;
+  return scored.sort((a, b) => b.score - a.score).slice(0, max).sort((a, b) => a.index - b.index).map(x => x.fragment);
+}
+
 function combineLabels(segments) {
   if (!segments.length || segments.some(s => !s.label)) return null;
   const labels = new Set(segments.map(s => s.label));
@@ -79,7 +92,7 @@ function combineLabels(segments) {
 
 /** 모든 공식·현행 근거 쌍을 검증한다. 토큰 초과는 근거 조각을 더 나눈다. */
 export async function verifyWarrants({ issueResults, registry, embed = embedTexts, entailment = true, prefix, provider, config, session,
-  contractMode = false }) {
+  contractMode = false, maxFragments = MAX_FRAGMENTS_PER_PAIR }) {
   const claims = collectClaims(issueResults, { contractMode });
   const pairs = claims.flatMap(claim => claim.evidenceIds.map(evidenceId => ({ claim, evidenceId, entry: registry.get(evidenceId) })));
   const warnings = [];
@@ -105,12 +118,17 @@ export async function verifyWarrants({ issueResults, registry, embed = embedText
       check.alignment = score === null ? 'UNMEASURED' : score >= ALIGNMENT_THRESHOLD ? 'ALIGNED' : 'LOW';
     }
     if (!entailment || check.existence !== 'PASS' || check.official !== 'PASS' || check.temporal !== 'PASS') continue;
-    for (const fragment of evidenceFragments(p.entry.text)) {
+    const all = evidenceFragments(p.entry.text);
+    const fragments = await pickFragments(all, p.claim.text, embed, maxFragments);
+    check.skippedFragments = all.length - fragments.length;
+    for (const fragment of fragments) {
       const result = await verifyFragment({ claim: p.claim.text, evidenceId: p.evidenceId, fragment, registry, provider,
         config, session, calls, warnings });
       check.segments.push(...(Array.isArray(result) ? result : [result]));
     }
     check.entailment = combineLabels(check.segments);
+    // 일부 조각만 확인했다면 "뒷받침하지 않는다"는 판정을 확정할 수 없다(안 본 조각이 뒷받침할 수 있다).
+    if (check.skippedFragments && check.entailment === 'NOT_SUPPORTED') check.entailment = 'PARTIAL';
   }
 
   const ledger = claims.map(claim => {

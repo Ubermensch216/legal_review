@@ -17,6 +17,9 @@ import { buildCommonPrefix, PROMPT_VERSION, REASONING_SYSTEM } from './prompts.j
 import { planCaseAndIssues } from './stages/caseIssues.js';
 import { profileDocument } from './documentProfile.js';
 import { topUpFacts } from './stages/factTopUp.js';
+import { selectEscalationCandidates } from './escalation.js';
+import { rememberReview } from './reviewSessionStore.js';
+import { isExternalProvider } from './externalGate.js';
 import { planResearchQueries, reapplyResearch, runResearchQueries, selectIssueEvidence } from './stages/issueResearch.js';
 import { decomposeArticles, selectIssueElements } from './stages/elements.js';
 import { applyIssue, buildIssuePrefix } from './stages/application.js';
@@ -141,8 +144,16 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const budgetFor = outputTokens => resolveBudget(provider, { model, contextTokens: base.contextTokens, outputTokens: Math.min(outputTokens, base.outputTokens) });
   const stageTokens = stage => preset === 'privacy_security' && stage === 's1' ? 4096
     : preset === 'privacy_security' && stage === 's5' ? 3072 : OUTPUT_TOKENS[stage];
-  const configFor = (stage, think = false) => ({ model, apiKey, think,
-    budget: budgetFor(stage === 's4' && think ? OUTPUT_TOKENS.s4Think : stageTokens(stage)) });
+  // 추출 단계(S1·S3)에 더 작고 빠른 로컬 모델을 따로 쓸 수 있다(REVIEW_EXTRACT_MODEL). 판단·종합 단계는 선택한 모델을 쓴다.
+  // 모델이 바뀌면 Ollama가 모델을 다시 적재하므로 두 모델이 함께 메모리에 올라가는 환경에서만 이득이다.
+  const extractModel = provider === 'ollama' ? String(process.env.REVIEW_EXTRACT_MODEL || '').trim() : '';
+  const modelFor = stage => (extractModel && ['s1', 's3'].includes(stage) ? extractModel : model);
+  const configFor = (stage, think = false) => ({ model: modelFor(stage), apiKey, think,
+    budget: (() => {
+      const stageBase = resolveBudget(provider, { model: modelFor(stage) });
+      return resolveBudget(provider, { model: modelFor(stage), contextTokens: stageBase.contextTokens,
+        outputTokens: Math.min(stage === 's4' && think ? OUTPUT_TOKENS.s4Think : stageTokens(stage), stageBase.outputTokens) });
+    })() });
   const counter = createTokenCounter(provider, { model });
   const warnings = [];
   const embedOption = embed ? { embed } : {};
@@ -229,6 +240,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.done('s1', `쟁점 ${countLabel(caseIssues.issues.length, '개')} · 사실 ${countLabel(caseIssues.facts.length, '개')}`
       + `${d1.downgradedFacts.length ? ` · 원문 미확인 사실 ${d1.downgradedFacts.length}` : ''}${d1.rejectedIds.length ? ` · 없는 근거 ID 제거 ${d1.rejectedIds.length}` : ''}`,
     'DONE', { totalIssues: caseIssues.issues.length });
+    // 쟁점이 정해지면 판단이 끝나기를 기다리지 않고 바로 보여 준다(사용자가 방향을 일찍 확인할 수 있게).
+    progress.note('s1-issues', caseIssues.issues.map(i => `${i.id} ${i.question}`.slice(0, 90)).join(' / ').slice(0, 400));
 
     // ── S2 쟁점별 조사 ──
     progress.start('s2', '쟁점별 판례·해석례 조사', '', '수집');
@@ -558,6 +571,21 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     dispatchFactors: findings.filter(f => f.dispatchFactors?.length).flatMap(f => f.dispatchFactors),
     additionalChecks: review.furtherChecks
   };
+  // 내부+외부 병용 모드: 로컬 모델이 풀지 못한 쟁점을 외부 LLM에 다시 물을 수 있도록 제안한다. 여기서는 아무것도 보내지 않는다.
+  if (!isExternalProvider(provider) && !noJudgment) {
+    const candidates = selectEscalationCandidates({ issues: caseIssues.issues, issueResults, ledger });
+    if (candidates.length) {
+      const reviewId = rememberReview({ caseIssues, issueResults, registry, preset, gaps, synthesis, redlines: redline.redlines, ledger,
+        contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
+        missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null,
+        research: Object.fromEntries(caseIssues.issues.map(issue => {
+          const s = perIssue.get(issue.id) || {};
+          return [issue.id, { queries: plan.byIssue[issue.id] || [], evidenceIds: s.evidenceIds || [], adverseCandidateIds: s.adverseCandidateIds || [],
+            documentIds: s.documentIds || [], candidates: s.candidates || [] }];
+        })) });
+      review.escalation = { reviewId, candidates };
+    }
+  }
   review.warnings = warnings;
   return review;
 }

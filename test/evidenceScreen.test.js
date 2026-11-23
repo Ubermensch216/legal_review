@@ -47,3 +47,32 @@ test('공식 목록 상세 링크에서 API 계정 식별자를 제거한다', (
   assert.equal(publicDetailUrl('/DRF/lawService.do?OC=private-account&target=prec&ID=12'),
     '/DRF/lawService.do?target=prec&ID=12');
 });
+
+test('임베딩이 분명히 가른 후보는 LLM을 부르지 않고, 경계 후보만 LLM에 묻는다', async () => {
+  const listed = [candidate('1', { caseName: '보훈수당 지급 조례' }), candidate('2', { caseName: '교통사고 과실상계' }),
+    candidate('3', { caseName: '수당 지급 규정의 위임' })];
+  const scores = { 1: 0.7, 2: 0.3, 3: 0.48 };
+  const embed = async texts => ({ warning: null, vectors: texts.map((_, i) => i === 0 ? [1, 0] : [scores[i], Math.sqrt(1 - scores[i] ** 2)]) });
+  const asked = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => { asked.push(JSON.parse(options.body)); throw new Error('모델 호출 시험 차단'); };
+  try {
+    const screened = await screenEvidenceCandidates({ candidates: listed, kind: 'precedent', query: '보훈수당', issue: '보훈수당을 조례로 지급할 수 있는가',
+      provider: 'ollama', model: 'x', embed });
+    const byId = Object.fromEntries(screened.decisions.map(d => [d.id, d]));
+    assert.deepEqual([byId[1].label, byId[1].method], ['RELEVANT', 'EMBEDDING']);
+    assert.deepEqual([byId[2].label, byId[2].method], ['IRRELEVANT', 'EMBEDDING']);
+    assert.equal(byId[3].method, 'NONE', '경계 후보는 LLM 몫이다(여기서는 호출이 차단되어 본문 확인 대상으로 남는다)');
+    assert.deepEqual(screened.selected.map(x => x.id), ['1', '3']);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('임베딩을 쓸 수 없으면 종전처럼 모든 후보를 LLM 선별로 넘긴다', async () => {
+  const listed = [candidate('1'), candidate('2')];
+  const asked = [];
+  const screened = await screenEvidenceCandidates({ candidates: listed, kind: 'precedent', query: '허가', issue: '허가 취소가 적법한가',
+    embed: async texts => ({ vectors: texts.map(() => null), warning: '임베딩 불가' }),
+    classify: undefined, provider: 'none' });
+  assert.deepEqual(screened.selected.map(x => x.id), ['1', '2']);
+  assert.ok(screened.warnings.includes('임베딩 불가'));
+});

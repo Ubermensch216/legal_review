@@ -58,7 +58,9 @@ function conclusionBody(issue, contract, label, tone, readable) {
   const reasonList = result.reasons.length
     ? `<div class="rv-conclusion-reasons"><b>${c.legal === 'CONDITIONAL' || ['AUTHORITY_INCOMPLETE', 'CONDITIONAL_ON_MATERIAL_FACT', 'FAILED'].includes(result.status) ? '아직 결론을 내리지 못한 이유' : '판단의 제한 사항'}</b>${list(result.reasons.map(esc), '')}</div>`
     : '';
-  if (!contract.length) return `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong><span>${esc(PROOF[c.proof] || '입증 미평가')}</span></div>
+  const external = issue.source === 'EXTERNAL'
+    ? `<p class="rv-note rv-external-note">이 쟁점은 외부 LLM(${esc(issue.externalProvider || '')} ${esc(issue.externalModel || '')})이 비식별된 입력으로 다시 판단한 결과를 반영했습니다. 결론은 요건별 판단으로 코드가 다시 계산했으며, 전문가 확인이 필요합니다.</p>` : '';
+  if (!contract.length) return `<div class="rv-conclusion"><strong class="rv-verdict rv-${tone}">${esc(label)}</strong><span>${esc(PROOF[c.proof] || '입증 미평가')}</span></div>${external}
     <p class="rv-conclusion-summary">${esc(result.summary)}</p>${reasonList}
     ${c.ifResolved ? `<p class="rv-note">먼저 판단해야 할 쟁점이 해결되면: ${esc((LEGAL[c.ifResolved] || LEGAL.CONDITIONAL)[0])}</p>` : ''}
     ${scenarioNote(c, issue.elements || [])}
@@ -92,7 +94,7 @@ function issueCard(issue, index, facts, evidence, gaps, contractFindings = [], r
     const contrary = (a.contraryFactIds || []).map(id => facts.get(id)).filter(Boolean);
     const statuses = a.ruleStatus ? `${RULE_STATUS[a.ruleStatus] || '규범 확인 필요'} · ${FACT_STATUS[a.factStatus] || '사실 추가 확인'} · ${APPLICATION_STATUS[a.applicationStatus] || '적용 판단 필요'}`
       : `${STATUS[a.status] || a.status || '미확정'} · ${PROOF[a.proof] || a.proof || '입증 미평가'}`;
-    return `<div class="rv-application ${(c.decidingElementIds || []).includes(a.elementId) ? 'rv-deciding' : ''}"><div class="rv-application-head"><strong>${esc(elementDescription)}</strong><span class="rv-status">${esc(statuses)}</span></div>
+    return `<div class="rv-application ${(c.decidingElementIds || []).includes(a.elementId) ? 'rv-deciding' : ''}"><div class="rv-application-head"><strong>${esc(elementDescription)}</strong>${a.origin === 'EXTERNAL' ? ' <span class="rv-tag rv-tag-external">외부 LLM 판단</span>' : ''}<span class="rv-status">${esc(statuses)}</span></div>
       ${supporting.length ? `<p><b>적용 사실</b> ${supporting.map(f => esc(readable(f.text))).join(' / ')}</p>` : contract.length ? '<p class="rv-note">요건별 추가 사실 연결 필요</p>' : '<p class="rv-note">연결된 뒷받침 사실 없음</p>'}
       ${contrary.length ? `<p><b>반대 사실</b> ${contrary.map(f => esc(readable(f.text))).join(' / ')}</p>` : ''}
       <p><b>사실에 대입한 판단</b> ${esc(readable(a.analysis || '판단 내용 없음'))}</p>

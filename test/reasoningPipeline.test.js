@@ -125,6 +125,22 @@ test('단계형 파이프라인은 캐시를 살리는 순서로 호출하고 �
   assert.equal(review.reasoning.gate, 'HUMAN_REVIEW_REQUIRED');
 });
 
+test('REVIEW_EXTRACT_MODEL을 지정하면 추출 단계(S1·S3)만 그 모델로 호출하고 판단·종합은 선택한 모델을 쓴다', async () => {
+  const calls = fakeOllama();
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, options) => String(url).endsWith('/api/tags')
+    ? { ok: true, json: async () => ({ models: [{ name: ENV.OLLAMA_MODEL }, { name: 'extract-small' }] }) } : inner(url, options);
+  process.env.REVIEW_EXTRACT_MODEL = 'extract-small';
+  try {
+    await runReasoningPipeline({ query: '취업규칙 변경 검토', preset: 'labor_hr', documentText, workbenchContext: workbenchContext(),
+      provider: 'ollama', model: ENV.OLLAMA_MODEL, session: createLlmSession(), clients, embed, cache: cache() });
+  } finally { delete process.env.REVIEW_EXTRACT_MODEL; }
+  const byStage = calls.map(c => [c.body.model, c.marker]);
+  assert.equal(calls[0].body.model, 'extract-small', 'S1');
+  assert.equal(calls[1].body.model, 'extract-small', 'S3');
+  assert.ok(byStage.filter(([, m]) => /요건별 포섭|근거-주장|종합/.test(m || '')).every(([model]) => model === ENV.OLLAMA_MODEL));
+});
+
 test('선결 쟁점은 뒤에 적혀 있어도 먼저 판단한다', () => {
   const order = orderByDependency([{ id: 'I1', dependsOn: ['I2'] }, { id: 'I2', dependsOn: [] }, { id: 'I3', dependsOn: ['I1'] }]);
   assert.deepEqual(order.map(i => i.id), ['I2', 'I1', 'I3']);

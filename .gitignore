@@ -10,6 +10,8 @@ Thumbs.db
 data/cache/*.db-wal
 data/cache/*.db-shm
 data/cache/llm-calibration.json
+# 외부 LLM 전송 기록(시각·해시·분량만 담지만 사용자 PC의 기록이므로 저장소에 올리지 않는다)
+data/cache/external-audit.jsonl
 
 # 비밀정보. .env 본체뿐 아니라 백업·로컬 변형까지 모두 막는다.
 # (.env만 막아두면 .env.bak / .env.local 같은 사본으로 API 키가 커밋된다)

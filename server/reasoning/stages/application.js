@@ -14,6 +14,9 @@ export const PROOF = ['SUFFICIENT', 'INSUFFICIENT', 'CONFLICTING', 'NO_EVIDENCE'
 const ISSUE_EVIDENCE_CHARS = 9000;
 const ELEMENT_BATCH = 4;
 const FRAGMENT_CHARS = 900;
+// 서술은 쟁점당 한 번이면 충분하다(요건별 판단은 표로 따로 나온다). 출력 토큰이 곧 시간이므로 길이를 줄이고,
+// 같은 쟁점의 두 번째 이후 호출에서는 서술·반대 논리를 다시 쓰지 않는다.
+const NARRATIVE_CHARS = 260;
 const fragmentToken = (id, start, end) => `${id}@fragment:${start}:${end}`;
 const parseFragment = value => String(value).match(/^([A-Z][A-Za-z0-9._]*)@fragment:(\d+):(\d+)$/);
 // 길이 상한은 곧 출력 토큰 상한이다. 실측(사례 01): 쟁점당 출력 958~1,835토큰, 이 단계가 전체 모델 시간의 약 60%.
@@ -42,7 +45,7 @@ function issueBlock({ issue, elements, evidenceText, omittedEvidence, adverseIds
   ].filter(Boolean).join('\n\n');
 }
 
-const TASK = (withReasoning, contractMode = false) => `[과제: 요건별 포섭]
+const TASK = (withReasoning, contractMode = false, { counter = true, narrative = true } = {}) => `[과제: 요건별 포섭]
 ${withReasoning ? '먼저 reasoning에 판단 과정을 200자 이내로 적는다.\n' : ''}1. assessments: [판단할 요건] 각각에 대해
    - status: SATISFIED / NOT_SATISFIED / PARTIALLY_SATISFIED / DISPUTED / UNKNOWN. 자료로 판단할 수 없으면 UNKNOWN이다.
    - proof: 그 판단을 뒷받침하는 사실이 원문으로 입증되는지 — SUFFICIENT / INSUFFICIENT / CONFLICTING / NO_EVIDENCE.
@@ -53,10 +56,10 @@ ${contractMode ? '   - documentSupportIds: 계약서 문언을 뒷받침하는 D
    - analysis: 120자 이내. openQuestion: 자료로는 답할 수 없어 판단을 막는 법리 질문이 있으면 한 문장(120자 이내), 없으면 빈 문자열.
 2. precedents: 근거 원문에 있는 판례·해석례 각각이 이 사안과 결정적 사실에서 같은지(ANALOGOUS) 다른지(DISTINGUISH), 무관한지(NOT_RELEVANT),
    그리고 이 쟁점에서 어느 쪽을 지지하는지(SUPPORTS: 요건 충족 쪽 / OPPOSES / NEUTRAL)와 결정적 차이·공통점을 적는다.
-3. counter: 가장 강한 반대 논리(반대 근거 후보를 먼저 검토)와 그 근거 ID, 그에 대한 응답. 응답할 수 없으면 response를 빈 문자열로 둔다.
-4. narrative: 쟁점 판단을 400자 이내로 쓴다. 법적 주장마다 [ID]를 붙인다. 판단할 수 없는 부분은 유보한다고 쓴다.`;
+${counter ? '3. counter: 가장 강한 반대 논리(반대 근거 후보를 먼저 검토)와 그 근거 ID, 그에 대한 응답. 응답할 수 없으면 response를 빈 문자열로 둔다.\n' : ''}${narrative ? `${counter ? '4' : '3'}. narrative: 쟁점 판단을 ${NARRATIVE_CHARS}자 이내로 쓴다. 법적 주장마다 [ID]를 붙인다. 판단할 수 없는 부분은 유보한다고 쓴다.` : ''}`;
 
-export function applicationSchema({ elementIds, evidenceIds, documentIds = [], factIds, authorityIds, withReasoning }) {
+export function applicationSchema({ elementIds, evidenceIds, documentIds = [], factIds, authorityIds, withReasoning,
+  includeCounter = true, includeNarrative = true }) {
   const idList = (values, max) => values.length
     ? { type: 'array', maxItems: max, items: { type: 'string', enum: values } }
     : { type: 'array', maxItems: 0, items: { type: 'string' } };
@@ -73,9 +76,9 @@ export function applicationSchema({ elementIds, evidenceIds, documentIds = [], f
       properties: { id: authorityIds.length ? { type: 'string', enum: authorityIds } : { type: 'string' },
         relation: { type: 'string', enum: ['ANALOGOUS', 'DISTINGUISH', 'NOT_RELEVANT'] },
         stance: { type: 'string', enum: ['SUPPORTS', 'OPPOSES', 'NEUTRAL'] }, decisiveFactor: { type: 'string', maxLength: 80 } } } },
-    counter: { type: 'object', additionalProperties: false, required: ['position', 'evidenceIds', 'response'],
-      properties: { position: { type: 'string', maxLength: 150 }, evidenceIds: idList(evidenceIds, 4), response: { type: 'string', maxLength: 150 } } },
-    narrative: { type: 'string', maxLength: 400 }
+    ...(includeCounter ? { counter: { type: 'object', additionalProperties: false, required: ['position', 'evidenceIds', 'response'],
+      properties: { position: { type: 'string', maxLength: 150 }, evidenceIds: idList(evidenceIds, 4), response: { type: 'string', maxLength: 150 } } } } : {}),
+    ...(includeNarrative ? { narrative: { type: 'string', maxLength: NARRATIVE_CHARS } } : {})
   };
   return { type: 'object', additionalProperties: false, required: Object.keys(properties), properties };
 }
@@ -194,15 +197,17 @@ export async function applyIssue({ issue, elements, research, registry, facts, r
       .filter(id => !registry.get(id).kind.startsWith('DOCUMENT')))];
     const authorityIds = [...new Set(batchEvidence.map(id => registry.get(id)).filter(e => /^(PRECEDENT|INTERPRETATION)/.test(e.kind))
       .map(e => e.parentId || e.id))];
+    const adverseInBatch = research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId));
+    const output = { counter: !values.some(v => v.counter?.position) || adverseInBatch.length > 0, narrative: !values.some(v => v.narrative) };
     const schema = applicationSchema({ elementIds: groupElements.map(e => e.id), evidenceIds: batchEvidence,
       documentIds: rendered.included.filter(id => registry.get(id)?.kind.startsWith('DOCUMENT')),
-      factIds: facts.map(f => f.id), authorityIds, withReasoning });
+      factIds: facts.map(f => f.id), authorityIds, withReasoning, includeCounter: output.counter, includeNarrative: output.narrative });
     try {
       const result = await runStage({ stage: groupIndex || batch ? `s4:${issue.id}:part:${groupIndex + 1}:${batch + 1}` : `s4:${issue.id}`,
         provider, system: REASONING_SYSTEM,
         prefix: `${runPrefix}\n\n${issueBlock({ issue, elements: groupElements, evidenceText: rendered.text, omittedEvidence: rendered.omitted,
           adverseIds: research.adverseCandidateIds.filter(id => rendered.included.includes(id) || rendered.included.includes(registry.get(id)?.parentId)), predecessors })}`,
-        task: TASK(withReasoning, contractMode), schema, config, session });
+        task: TASK(withReasoning, contractMode, output), schema, config, session });
       values.push(result.value); attempts += result.attempts;
       included.push(...rendered.included);
       batchEvidence.forEach(id => allowedEvidence.add(id));

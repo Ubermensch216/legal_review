@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "status": "DRAFT_NOT_EXPERT_VERIFIED",
+  "note": "샘플 README의 '기대 탐지 결과'를 정답셋 형식으로 옮긴 초안이다. 법률 전문가가 검수해 expertReviewed를 채우기 전에는 법리 정답이 아니라 회귀 비교용이다. 쟁점 키워드는 쟁점 문장에 이 말들이 모두 있으면 그 쟁점을 다룬 것으로 센다.",
+  "cases": [
+    {
+      "id": "01",
+      "title": "취업규칙 전부개정안",
+      "expertReviewed": null,
+      "baseLaw": "근로기준법",
+      "expectedArticles": ["제20조", "제23조", "제27조", "제50조", "제53조", "제54조", "제56조", "제60조", "제94조"],
+      "mustCite": ["제94조", "제56조"],
+      "expectedIssues": [
+        { "label": "불이익 변경 동의", "keywords": [["불이익", "동의"], ["제94조"]] },
+        { "label": "연장근로 한도·가산수당", "keywords": [["연장", "근로"], ["가산"], ["제53조"], ["제56조"]] },
+        { "label": "징계해고 절차", "keywords": [["해고"], ["징계"]] },
+        { "label": "경업금지·위약벌", "keywords": [["경업"], ["위약"]] }
+      ],
+      "mustNotConclude": [
+        { "issueKeywords": ["경업", "제20조"], "legal": ["NOT_APPLICABLE"], "reason": "퇴직 후 경업 위약벌을 제20조 위반으로 자동 판정하지 않는다" }
+      ]
+    },
+    {
+      "id": "03",
+      "title": "영업정지 사전통지·의견제출서",
+      "expertReviewed": null,
+      "baseLaw": "식품위생법",
+      "expectedArticles": ["제37조", "제75조", "제81조", "제82조"],
+      "mustCite": ["제82조"],
+      "expectedIssues": [
+        { "label": "의견제출·청문 절차", "keywords": [["청문"], ["의견제출"]] },
+        { "label": "과징금 전환", "keywords": [["과징금"]] },
+        { "label": "변경 미신고", "keywords": [["신고"], ["변경"]] }
+      ],
+      "mustNotConclude": []
+    },
+    {
+      "id": "04",
+      "title": "개인정보 처리현황표",
+      "expertReviewed": null,
+      "baseLaw": "개인정보 보호법",
+      "expectedArticles": ["제15조", "제17조", "제22조", "제23조", "제24조의2", "제25조", "제26조", "제28조의2", "제28조의8"],
+      "mustCite": ["제15조", "제26조"],
+      "expectedIssues": [
+        { "label": "위탁·제3자 제공 구분", "keywords": [["위탁"], ["제3자"]] },
+        { "label": "국외 이전", "keywords": [["국외"]] },
+        { "label": "영상정보처리기기", "keywords": [["영상"], ["CCTV"]] }
+      ],
+      "mustNotConclude": []
+    }
+  ]
+}

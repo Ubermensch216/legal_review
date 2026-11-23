@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="/css/studio.css">
   <link rel="stylesheet" href="/css/reviewTrace.css">
   <link rel="stylesheet" href="/css/workspace.css">
+  <link rel="stylesheet" href="/css/externalLlm.css">
 </head>
 <body>
   <div class="app-layout">
@@ -285,6 +286,7 @@
 
       <!-- 2. 워크벤치 결과 4단계 탭 섹션 -->
       <section class="workbench-section card hidden" id="workbench-section">
+        <div class="escalation-panel hidden" id="escalation-panel" aria-live="polite"></div>
         <!-- 탭 네비게이션 (4대 탭) -->
         <div class="workbench-tabs">
           <button class="wb-tab active" data-tab="tab-evidence">
@@ -601,6 +603,35 @@
       </div>
     </aside>
 
+    <!-- 모달: 외부 LLM 전송 확인 -->
+    <div class="modal-overlay hidden" id="external-confirm-modal">
+      <div class="modal-card external-confirm-card">
+        <div class="modal-header">
+          <div class="panel-title-group">
+            <span class="material-symbols-outlined icon-sm">shield</span>
+            <h3 id="external-confirm-title">외부 LLM 전송 확인</h3>
+          </div>
+          <button class="btn-close-modal" id="btn-external-cancel-x" title="닫기"><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <div class="modal-body">
+          <p id="external-confirm-lead" class="external-confirm-lead"></p>
+          <div id="external-confirm-counts" class="external-confirm-counts"></div>
+          <div id="external-confirm-warning" class="external-confirm-warning hidden"></div>
+          <details open>
+            <summary>외부로 전송되는 내용 (개인정보를 가린 상태)</summary>
+            <pre id="external-confirm-text" class="external-confirm-text"></pre>
+          </details>
+          <label for="external-confirm-terms" class="external-confirm-terms-label">더 가릴 단어 (한 줄에 하나) — 추가하고 「다시 비식별」을 누르면 전송 내용이 다시 만들어집니다</label>
+          <textarea id="external-confirm-terms" class="form-input" rows="2"></textarea>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btn-external-refresh">다시 비식별</button>
+          <button type="button" class="btn btn-secondary" id="btn-external-cancel">전송 안 함</button>
+          <button type="button" class="btn btn-primary" id="btn-external-approve">내용을 확인했으며 전송을 승인</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 모달 3: 설정 모달 -->
     <div class="modal-overlay hidden" id="settings-modal">
       <div class="modal-card">
@@ -615,7 +646,32 @@
         </div>
         <div class="modal-body">
           <form id="form-settings">
-            <div class="form-group">
+            <fieldset class="form-group llm-mode-group">
+              <legend>LLM 사용 방식</legend>
+              <label class="llm-mode-option"><input type="radio" name="llm-mode" value="LOCAL_ONLY">
+                <span><strong>내부 LLM만 사용</strong><small>모든 분석을 이 PC의 로컬 모델(Ollama)로 처리합니다. 문서가 밖으로 나가지 않습니다.</small></span></label>
+              <label class="llm-mode-option"><input type="radio" name="llm-mode" value="HYBRID">
+                <span><strong>내부 + 외부 LLM 병용</strong><small>로컬 모델이 풀지 못한 어려운 쟁점만, 개인정보를 가린 내용을 확인·승인한 뒤 외부 LLM에 다시 묻고 답변을 반영합니다.</small></span></label>
+              <label class="llm-mode-option"><input type="radio" name="llm-mode" value="EXTERNAL_ONLY">
+                <span><strong>외부 LLM만 사용</strong><small>검토 전체를 외부 LLM으로 처리합니다. 실행할 때마다 개인정보를 가린 전송 내용을 확인하고 승인해야 합니다.</small></span></label>
+            </fieldset>
+            <div class="form-group hidden" id="external-llm-settings">
+              <label for="setting-external-provider">외부 LLM</label>
+              <select id="setting-external-provider" class="form-select">
+                <option value="exaone">LG EXAONE (K-EXAONE 2.5)</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+              <input type="text" id="setting-external-model" class="form-input" placeholder="모델명 (비우면 서버 .env 값)" style="margin-top: 6px;">
+              <small id="setting-external-hint" class="input-hint" style="margin-top: 4px; display: block;"></small>
+            </div>
+            <div class="form-group hidden" id="private-terms-settings">
+              <label for="setting-private-terms">추가로 가릴 단어 (한 줄에 하나)</label>
+              <textarea id="setting-private-terms" class="form-input" rows="3" placeholder="기관명·사업명·거래처 이름처럼 자동으로 찾지 못하는 식별 단어"></textarea>
+              <small class="input-hint" style="display: block; margin-top: 4px;">주민번호·전화·이메일·계좌·주소와 직함이 붙은 이름은 자동으로 가립니다. 자동 비식별은 완전하지 않으므로 전송 전 확인 화면에서 직접 검토하십시오.</small>
+            </div>
+            <div class="form-group" id="local-llm-settings">
               <label>AI 프로바이더</label>
               <select id="setting-provider" class="form-select">
                 <option value="ollama">Ollama (로컬 LLM)</option>
@@ -625,8 +681,8 @@
                 <option value="exaone">LG EXAONE (K-EXAONE 2.5)</option>
               </select>
             </div>
-            <div class="form-group">
-              <label for="setting-model-select">모델명</label>
+            <div class="form-group" id="local-model-settings">
+              <label for="setting-model-select">로컬 모델명 (Ollama)</label>
               <div class="model-select-row">
                 <select id="setting-model-select" class="form-select">
                   <option value="">서버 설치 모델 확인 중...</option>
