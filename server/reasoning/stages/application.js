@@ -318,11 +318,12 @@ export async function applyIssue({ issue, elements: requestedElements, research,
     const documentSupportIds = [...new Set([...(raw.documentSupportIds || []),
       ...(raw.factIds || []).map(id => factsById.get(id)?.docRef).filter(id => id?.startsWith('D'))])]
       .filter(id => research.documentIds.includes(registry.get(id)?.parentId || id));
-    const sourceIds = contractMode ? (e.sourceIds || []).filter(id => registry.get(id)?.official && registry.get(id)?.inForce) : [];
+    // 문서 판단의 규정 근거: 요건은 그 조문을 분해해 만든 것이므로 출처 조문을 근거에 포함한다(모델이 고른 근거만으로는 일부가 빠진다).
+    const sourceIds = contractMode || verdictMode ? (e.sourceIds || []).filter(id => registry.get(id)?.official && registry.get(id)?.inForce) : [];
     const sourceArticles = new Set(sourceIds.map(id => registry.get(id)?.parentId || id));
     const evidenceIds = [...new Set([...sourceIds, ...(raw.evidenceIds || []).filter(id => {
       const entry = registry.get(id);
-      return !contractMode || !/^(ARTICLE|ORDINANCE_ARTICLE)/.test(entry?.kind || '')
+      return !(contractMode || verdictMode) || !/^(ARTICLE|ORDINANCE_ARTICLE)/.test(entry?.kind || '')
         || !sourceArticles.size || sourceArticles.has(entry.parentId || id);
     })])];
     const adjusted = applyFactProvenance({ ...raw, contraryFactIds: raw.contraryFactIds || [], evidenceIds, documentSupportIds,

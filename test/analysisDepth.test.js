@@ -216,8 +216,12 @@ test('문서 검토 결론: 어긋남이 하나면 위반 소지, 모두 지켜�
   assert.deepEqual([clean.legal, clean.compliance], ['APPLIES', 'NO_VIOLATION_FOUND'], '골격 요건은 결론에 영향을 주지 않는다');
   const open = computeIssueConclusion(elements, judged('COMPLIES', 'NOT_ADDRESSED'));
   assert.deepEqual([open.legal, open.compliance, open.scenarios.pendingElementIds], ['CONDITIONAL', 'NEEDS_FACTS', ['E2']]);
-  const blocked = computeIssueConclusion(elements, judged('VIOLATES', 'COMPLIES'), [{ issueId: 'I1', legal: 'CONDITIONAL' }]);
-  assert.deepEqual([blocked.legal, blocked.compliance, blocked.ifResolved], ['CONDITIONAL', 'NEEDS_FACTS', 'NOT_APPLICABLE']);
+  const pre = [{ issueId: 'I1', legal: 'CONDITIONAL' }];
+  const kept = computeIssueConclusion(elements, judged('VIOLATES', 'COMPLIES'), pre);
+  assert.deepEqual([kept.legal, kept.compliance], ['NOT_APPLICABLE', 'VIOLATION_RISK'], '원문 인용으로 확인된 위반 소지는 선결 쟁점이 풀리지 않아도 유지한다');
+  assert.match(kept.reasons.join(' '), /선결 쟁점 미해결: I1/);
+  const blocked = computeIssueConclusion(elements, judged('COMPLIES', 'COMPLIES'), pre);
+  assert.deepEqual([blocked.legal, blocked.compliance, blocked.ifResolved], ['CONDITIONAL', 'NEEDS_FACTS', 'APPLIES'], '위반 없음은 선결 쟁점이 풀려야 확정한다');
 });
 
 test('만료된 기본분석에 이어가기를 요청하면 재실행을 안내한다', async () => {

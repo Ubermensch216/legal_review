@@ -58,7 +58,10 @@ function complianceConclusion(elements, assessments, predecessors) {
   if (!applicable.length) reasons.push('검증된 판단 요건이 없음');
   const blocked = predecessors.filter(p => p.legal === LEGAL.CONDITIONAL || p.stageStatus === 'FAILED');
   const base = { proof: proofOf(deciding, byId), decidingElementIds: deciding.map(e => e.id), derivedBy: 'RULES' };
-  if (blocked.length && legal !== LEGAL.CONDITIONAL) {
+  // 문서 원문 인용으로 확인된 위반 소지는 선결 쟁점이 풀리지 않았다고 사라지지 않는다. 선결 쟁점은 "위반 없음"을 확정하는 데만 막는다.
+  // (소형·대형 모델 모두 "개별 조항이 확인되는가" 같은 막연한 선결 쟁점을 세우는데, 이것이 모든 후속 쟁점의 위반 지적을 덮어서는 안 된다.)
+  if (blocked.length && legal === LEGAL.NOT_APPLICABLE) reasons.push(`선결 쟁점 미해결: ${blocked.map(p => p.issueId).join(', ')} — 위반 소지는 문서 원문 인용으로 확인됨`);
+  else if (blocked.length && legal !== LEGAL.CONDITIONAL) {
     reasons.push(`선결 쟁점 미해결: ${blocked.map(p => p.issueId).join(', ')}`);
     return { ...base, legal: LEGAL.CONDITIONAL, compliance: COMPLIANCE.NEEDS_FACTS, ifResolved: legal, reasons };
   }
