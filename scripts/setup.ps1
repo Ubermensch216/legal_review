@@ -166,8 +166,18 @@ function Install-OllamaOfficial {
         $exe = Join-Path $env:TEMP 'OllamaSetup.exe'
         Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile $exe -UseBasicParsing -TimeoutSec 600
         Write-Host '  [INFO] Ollama를 설치하는 중입니다...'
-        $proc = Start-Process -FilePath $exe -ArgumentList @('/VERYSILENT', '/NORESTART') -Wait -PassThru
-        if ($proc.ExitCode -ne 0) {
+        # NOTE: Start-Process -Wait는 설치 완료 후 백그라운드로 실행되는 ollama app.exe 때문에 무한 대기할 수 있어
+        #       설치 프로세스 자체($proc.HasExited)만 대기합니다.
+        $proc = Start-Process -FilePath $exe -ArgumentList @('/VERYSILENT', '/NORESTART') -PassThru
+        $deadline = (Get-Date).AddMinutes(10)
+        while (-not $proc.HasExited) {
+            if ((Get-Date) -gt $deadline) {
+                if (Find-Ollama) { break }
+                throw 'Ollama 설치 프로그램 대기 시간이 초과되었습니다.'
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if ($proc.HasExited -and $proc.ExitCode -ne 0) {
             throw "Ollama 설치 프로그램이 실패했습니다 (종료 코드: $($proc.ExitCode))."
         }
     } finally {
