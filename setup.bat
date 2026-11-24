@@ -43,7 +43,7 @@ if !NODE_OK! EQU 0 (
             "Start-Process msiexec.exe -ArgumentList \"/i `\"$msi`\" /passive /norestart\" -Wait"
     )
     call :refresh_path
-    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;%PATH%"
+    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;!PATH!"
     call :check_node
     if !NODE_OK! EQU 0 (
         echo.
@@ -208,7 +208,7 @@ REM ============================================================================
 set "NODE_OK=0"
 where node > nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;%PATH%"
+    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;!PATH!"
 )
 where node > nul 2>&1
 if %ERRORLEVEL% NEQ 0 exit /b 0
@@ -224,12 +224,12 @@ if %ERRORLEVEL% EQU 0 (
     exit /b 0
 )
 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
-    set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+    set "PATH=%LOCALAPPDATA%\Programs\Ollama;!PATH!"
     set "OLLAMA_FOUND=1"
     exit /b 0
 )
 if exist "%ProgramFiles%\Ollama\ollama.exe" (
-    set "PATH=%ProgramFiles%\Ollama;%PATH%"
+    set "PATH=%ProgramFiles%\Ollama;!PATH!"
     set "OLLAMA_FOUND=1"
     exit /b 0
 )

@@ -11,7 +11,7 @@ echo.
 REM 1. 기본 실행 환경 점검
 where node > nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;%PATH%"
+    if exist "C:\Program Files\nodejs\node.exe" set "PATH=C:\Program Files\nodejs;!PATH!"
 )
 where node > nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
@@ -55,7 +55,7 @@ if exist ".env" (
 
 REM 3. 로컬 Ollama 엔진 확인 및 필요 시 자동 기동
 if /i "%LLM_PROV%"=="ollama" (
-    if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;%PATH%"
+    if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "PATH=%LOCALAPPDATA%\Programs\Ollama;!PATH!"
     call :probe_ollama
     if !ERRORLEVEL! NEQ 0 (
         where ollama > nul 2>&1
