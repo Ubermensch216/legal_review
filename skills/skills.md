@@ -127,7 +127,7 @@ skills/
   "match": { "all": ["연장|최대 ?근로 ?시간"], "any": ["(동의|합의) ?없이", "최대 ?근로 ?시간"], "none": ["초과할 ?수 ?없", "검토", "여부"] },
   "numeric": [ { "pattern": "최대 ?근로 ?시간[은는이가]? ?([0-9]+) ?시간", "violatesIf": "> 52", "unit": "시간" } ],
   "numericDecides": false,
-  "closedQuestion": "이 문장은 근로자와의 합의 없이 연장근로를 시킬 수 있게 하거나, 1주 12시간을 넘는 연장근로를 허용하는가?",
+  "closedQuestion": "문서 문장이 근로자 동의(합의) 없이 연장근로를 시킬 수 있다고 하거나, 1주 12시간을 넘는 연장근로를 허용한다고 정하고 있는가?",
   "ceiling": "VIOLATION_RISK", "route": "USER",
   "legalQuestion": "", "factQuestions": ["특별연장근로 인가를 받았는지 확인해 주십시오."],
   "positiveExamples": ["…"], "negativeExamples": ["연장근로는 당사자 간 합의로 1주 12시간을 한도로 한다."]
@@ -138,6 +138,7 @@ skills/
 - `unit`: `제1항`, `제1항 제2호`, `제1항 단서`(등록부의 `A3.1x` 단서 단위).
 - `numeric`: 숫자 비교가 성립하면 모델을 부르지 않고 위반 소지 후보가 된다. `numericDecides: true`면 숫자가 모두 기준 안일 때 점검을 해소로 본다(기간·금액만이 쟁점인 점검).
 - `ceiling`: `VIOLATION_RISK`(위반 소지까지) 또는 `REVIEW_POINT`(검토 필요까지 — 판례 판단·사실 의존 점검). `VIOLATION_RISK` 점검은 닫힌 질문이나 숫자 판정이 반드시 있어야 한다.
+- `closedQuestion`: **문서 문장을 읽는 질문**으로 쓴다("문서 문장이 ~라고 정하고 있는가?"). 조문은 싣지 않는다. 그 내용이 조문 요건과 어긋난다는 판단은 점검 정의(스킬 작성자)가 한 것이고, 모델은 문장을 읽고 `{"evidence":"문장 속 표현","answer":"YES|NO|UNCLEAR"}`만 낸다. YES인데 evidence가 문장에 없으면 `UNCLEAR`로 낮춘다. 실측(gemma4:e2b): 조문과 함께 "규정을 어기는가"를 물으면 6문항 전부 NO(3/6), 읽기 질문은 6/6.
 - `route`·`legalQuestion`: 검토 필요 판정의 법리 질문을 외부 전문가 질의(`EXTERNAL_INQUIRY`)로 보낸다. 사실 질문은 항상 사용자 확인이다.
 - `positiveExamples`는 반드시 걸리고 `negativeExamples`는 걸리지 않아야 한다(`test/skills.test.js`가 모든 스킬에 대해 확인).
 
@@ -237,7 +238,7 @@ skills/
 | `skillRouter.skillAuthoritySeeds` | 수집 단계 키워드 확장 직후 | 조문 씨앗을 `suggestedLaws`에 합치고, 다른 법령 씨앗은 명시 수집 대상으로 |
 | `skillRouter.skillPromptFragment` | S0 `buildCommonPrefix(skillFocus)`, S1 분할 추출 | `[쟁점 설정 방향]`을 스킬 지침으로 대신하고 금지 쟁점을 붙임 |
 | `skillElements.checkSkillStaleness` | S0 직후 | 조문 해시가 기록과 다르면 그 조문의 점검·요건 트리를 끄고 경고 |
-| `skillChecks.findCheckHits` / `evaluateCheckHits` | S0 직후 (`progress` 단계 `skills`) | 문장·행 탐색 → 숫자 판정 → 닫힌 질문(`{"answer":"YES|NO|UNCLEAR"}`). 조문이 등록부에 없으면 `NO_AUTHORITY`로 두고 반영하지 않음 |
+| `skillChecks.findCheckHits` / `evaluateCheckHits` | S0 직후 (`progress` 단계 `skills`) | 문장·행 탐색 → 숫자 판정 → 읽기 질문(`{"evidence","answer"}`, 조문 미포함). 조문이 등록부에 없으면 `NO_AUTHORITY`로 두고 반영하지 않음 |
 | `skillChecks.coverSkillIssues` | S1 조문·문서 연결 직후 | 판정된 점검의 쟁점이 없으면 보충(`origin: SKILL`), 있으면 문서 조항·조문을 이음 |
 | `skillElements.skillElementTrees` | S3 `decomposeArticles(skillTrees)` | 해시가 맞는 검수 요건 트리를 모델 분해·캐시보다 먼저 씀(`source: SKILL`) |
 | `skillChecks.skillAssessmentsFor` | S4 `applyIssue(skillAssessments)` | 판정을 문서 판단(`VIOLATES`/`UNCLEAR` + 코드가 찾은 원문 인용)으로 주입. 주입한 요건은 모델에게 다시 묻지 않음 |
