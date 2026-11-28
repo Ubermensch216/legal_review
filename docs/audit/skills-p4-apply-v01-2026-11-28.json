@@ -1,0 +1,1623 @@
+{
+  "measuredAt": "2026-11-28T07:50:48.802Z",
+  "pipeline": "staged",
+  "provider": "ollama",
+  "model": "gemma4:e2b",
+  "lawOc": true,
+  "modelBudgets": "{\"ollama:gemma4:e2b\":{\"contextTokens\":40960,\"outputTokens\":8192,\"tokensPerChar\":{\"hangul\":0.75}}}",
+  "sectionBudgets": "{\"precedents\":12000,\"interpretations\":9000}",
+  "note": "효율·안정성 기준선. 법리 정확도 평가가 아니다.",
+  "summary": {
+    "runs": 2,
+    "completed": 2,
+    "parseFailures": 0,
+    "fallbacks": 0,
+    "medianWallMs": 462072,
+    "medianLlmWallMs": 408073,
+    "medianOutputTokens": 7626,
+    "medianInputTokens": 46315,
+    "llmCalls": 52
+  },
+  "rows": [
+    {
+      "id": "01",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 322264,
+      "collectMs": 1898,
+      "primaryLaw": "근로기준법",
+      "analysisDepth": "BASIC",
+      "analysisCoverage": {
+        "depth": "BASIC",
+        "label": "기본분석",
+        "claims": 22,
+        "assertedClaims": 1,
+        "supportedClaims": 1,
+        "pairs": 17,
+        "checkedPairs": 1,
+        "judgedElements": 22,
+        "skippedSkeletons": 7,
+        "deferredEvidence": 11
+      },
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 15,
+        "risks": 5,
+        "redlines": 0,
+        "opinionChars": 6691,
+        "draftChars": 14012
+      },
+      "gold": {
+        "violations": {
+          "found": 1,
+          "quotes": [
+            "I4/A11.E1: 회사는 프로젝트 납기 준수를 위하여 필요한 경우 근로자 개별 동의 없이 1주 12시간을 초과하는 연장근로를 명할 수 있으며, 이 경우 1주 최대 근로시간은 68시간으로 한다."
+          ],
+          "expected": 4,
+          "matched": 1,
+          "missing": [
+            "구두·메신저 해고 통지",
+            "동의 없는 불이익 변경",
+            "근로시간 도중이 아닌 휴게"
+          ],
+          "falsePositives": null
+        },
+        "citation": {
+          "recall": 67,
+          "precision": 67,
+          "mustCited": "2/2",
+          "missed": [
+            "근로기준법:20",
+            "근로기준법:54",
+            "근로기준법:60"
+          ]
+        },
+        "issueCoverage": {
+          "covered": 4,
+          "expected": 4,
+          "missing": []
+        },
+        "forbidden": [],
+        "judged": {
+          "issues": 5,
+          "judged": 5,
+          "rate": 1
+        },
+        "expertReviewed": null
+      },
+      "citationExistence": 67,
+      "citations": {
+        "measurable": true,
+        "precision": 67,
+        "recall": 67,
+        "cited": [
+          "근로기준법:56",
+          "근로기준법:41",
+          "근로기준법:50",
+          "근로기준법:27",
+          "근로기준법:23",
+          "근로기준법:94",
+          "근로기준법:93",
+          "근로기준법:53",
+          "근로기준법:18"
+        ],
+        "hit": [
+          "근로기준법:56",
+          "근로기준법:50",
+          "근로기준법:27",
+          "근로기준법:23",
+          "근로기준법:94",
+          "근로기준법:53"
+        ],
+        "missed": [
+          "근로기준법:20",
+          "근로기준법:54",
+          "근로기준법:60"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "제18조 포괄임금제 및 제23조 연장근로 조항은 근로기준법 제50조, 제53조, 제56조를 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "제31조 징계해고 절차는 근로기준법 제27조(서면통지) 및 제23조(정당한 이유)에 저촉되는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I3",
+            "question": "제41조 불이익 변경 절차는 근로기준법 제94조(불이익 변경 동의)를 위반하는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "PARTIAL"
+          },
+          {
+            "id": "I4",
+            "question": "취업규칙의 연장근로 규정이 당사자 합의와 1주 12시간 한도를 지키는가?",
+            "conclusion": "NOT_APPLICABLE",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "퇴직 후 경업금지 위반에 대한 위약벌 조항이 위약 예정 금지에 해당하거나 경업금지 약정으로서 효력을 잃는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "LEGAL_INTERPRETATION",
+            "route": "EXTERNAL_INQUIRY"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          }
+        ],
+        "gate": "HUMAN_REVIEW_REQUIRED",
+        "reviewedIssues": 4,
+        "skippedIssues": 0,
+        "privacyRows": 0,
+        "privacyRowsReviewed": 0,
+        "judgedIssues": 5,
+        "linkedIssues": 5,
+        "facts": 1,
+        "factTopUp": null,
+        "statuteLinking": {
+          "linkedIssues": 2,
+          "addedArticles": 2,
+          "unlinkedIssues": []
+        },
+        "documentProfile": "REGULATION",
+        "escalationCandidates": 3,
+        "conditionalIssues": 4,
+        "rejectedIds": 0,
+        "warrants": [
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "SUPPORTED",
+          "NOT_CHECKED",
+          "NOT_CHECKED"
+        ],
+        "skills": {
+          "mode": "apply",
+          "digest": "f8e00b13780ce020",
+          "applied": [
+            "labor-work-rules@0.1.0",
+            "method-issue-framing@0.1.0"
+          ],
+          "shadow": [],
+          "checkCalls": 11,
+          "findings": [
+            "LB-01@D9:VIOLATION_RISK(숫자)",
+            "LB-01@D17:CLEARED",
+            "LB-02@D12:CLEARED",
+            "LB-02@D17:CLEARED",
+            "LB-04@D10:CLEARED",
+            "LB-06@D6:CLEARED",
+            "LB-06@D17:CLEARED",
+            "LB-07@D7:CLEARED",
+            "LB-08@D13:REVIEW_POINT",
+            "LB-08@D17:REVIEW_POINT",
+            "LB-09@D16:CLEARED",
+            "LB-11@D12:REVIEW_POINT",
+            "LB-11@D17:REVIEW_POINT",
+            "LB-13@D4:CLEARED"
+          ],
+          "shadowFindings": [],
+          "addedIssues": 2,
+          "linkedIssues": 1,
+          "elementTrees": 3,
+          "injected": 2,
+          "staleArticles": 0,
+          "verifiedArticles": 16
+        }
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "skill:LB-01",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 375,
+            "outputTokens": 6,
+            "prefillMs": 737,
+            "decodeMs": 231,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1136,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-02",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 360,
+            "outputTokens": 6,
+            "prefillMs": 993,
+            "decodeMs": 192,
+            "loadMs": 102,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1315,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-02",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 352,
+            "outputTokens": 6,
+            "prefillMs": 878,
+            "decodeMs": 173,
+            "loadMs": 33,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1092,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-04",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 381,
+            "outputTokens": 6,
+            "prefillMs": 985,
+            "decodeMs": 187,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1219,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-06",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 444,
+            "outputTokens": 6,
+            "prefillMs": 1230,
+            "decodeMs": 216,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1497,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-06",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 431,
+            "outputTokens": 6,
+            "prefillMs": 1078,
+            "decodeMs": 188,
+            "loadMs": 46,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1325,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-07",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 518,
+            "outputTokens": 6,
+            "prefillMs": 1220,
+            "decodeMs": 201,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1466,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "skill:LB-08",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 384,
+            "outputTokens": 6,
+            "prefillMs": 1042,
+            "decodeMs": 206,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 16,
+            "wallMs": 1296,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-08",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 385,
+            "outputTokens": 6,
+            "prefillMs": 977,
+            "decodeMs": 168,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 16,
+            "wallMs": 1182,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-09",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 379,
+            "outputTokens": 6,
+            "prefillMs": 851,
+            "decodeMs": 167,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 15,
+            "wallMs": 1058,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "skill:LB-13",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 555,
+            "outputTokens": 11,
+            "prefillMs": 1176,
+            "decodeMs": 341,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 18,
+            "wallMs": 1570,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7748,
+            "outputTokens": 611,
+            "prefillMs": 22457,
+            "decodeMs": 25689,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 1343,
+            "wallMs": 48234,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 142,
+            "prefillMs": 1633,
+            "decodeMs": 5169,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 280,
+            "wallMs": 6931,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 571,
+            "outputTokens": 129,
+            "prefillMs": 1367,
+            "decodeMs": 4098,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 266,
+            "wallMs": 5519,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 677,
+            "outputTokens": 102,
+            "prefillMs": 1741,
+            "decodeMs": 4162,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 226,
+            "wallMs": 5955,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 149,
+            "prefillMs": 1773,
+            "decodeMs": 5094,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 368,
+            "wallMs": 6950,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 634,
+            "outputTokens": 193,
+            "prefillMs": 1632,
+            "decodeMs": 6054,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 498,
+            "wallMs": 7735,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 668,
+            "outputTokens": 83,
+            "prefillMs": 1894,
+            "decodeMs": 3762,
+            "loadMs": 44,
+            "thinkingChars": 0,
+            "outputChars": 194,
+            "wallMs": 5720,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 600,
+            "outputTokens": 146,
+            "prefillMs": 1371,
+            "decodeMs": 4651,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 391,
+            "wallMs": 6063,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4608,
+            "outputTokens": 498,
+            "prefillMs": 12471,
+            "decodeMs": 23182,
+            "loadMs": 37,
+            "thinkingChars": 0,
+            "outputChars": 1033,
+            "wallMs": 35759,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3473,
+            "outputTokens": 117,
+            "prefillMs": 9267,
+            "decodeMs": 4902,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 252,
+            "wallMs": 14231,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4729,
+            "outputTokens": 381,
+            "prefillMs": 11663,
+            "decodeMs": 13814,
+            "loadMs": 31,
+            "thinkingChars": 0,
+            "outputChars": 773,
+            "wallMs": 25564,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4570,
+            "outputTokens": 567,
+            "prefillMs": 11166,
+            "decodeMs": 22871,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 1244,
+            "wallMs": 34102,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 2703,
+            "outputTokens": 134,
+            "prefillMs": 6485,
+            "decodeMs": 5380,
+            "loadMs": 33,
+            "thinkingChars": 0,
+            "outputChars": 258,
+            "wallMs": 11924,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 1574,
+            "outputTokens": 141,
+            "prefillMs": 3680,
+            "decodeMs": 5218,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 288,
+            "wallMs": 8957,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s6",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 304,
+            "outputTokens": 7,
+            "prefillMs": 767,
+            "decodeMs": 248,
+            "loadMs": 37,
+            "thinkingChars": 0,
+            "outputChars": 20,
+            "wallMs": 1082,
+            "prefixCacheLikely": null
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 1125,
+            "outputTokens": 937,
+            "prefillMs": 2552,
+            "decodeMs": 34685,
+            "loadMs": 117,
+            "thinkingChars": 0,
+            "outputChars": 1759,
+            "wallMs": 37379,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 27,
+          "failed": 0,
+          "inputTokens": 40026,
+          "outputTokens": 4408,
+          "prefillMs": 103086,
+          "decodeMs": 171249,
+          "wallMs": 276261,
+          "prefixCacheHits": 0
+        }
+      }
+    },
+    {
+      "id": "06",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 462072,
+      "collectMs": 760,
+      "primaryLaw": "근로기준법",
+      "analysisDepth": "BASIC",
+      "analysisCoverage": {
+        "depth": "BASIC",
+        "label": "기본분석",
+        "claims": 33,
+        "assertedClaims": 0,
+        "supportedClaims": 0,
+        "pairs": 28,
+        "checkedPairs": 0,
+        "judgedElements": 33,
+        "skippedSkeletons": 11,
+        "deferredEvidence": 4
+      },
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 26,
+        "risks": 5,
+        "redlines": 0,
+        "opinionChars": 11305,
+        "draftChars": 22460
+      },
+      "gold": {
+        "violations": {
+          "found": 0,
+          "quotes": [],
+          "expected": 0,
+          "matched": 0,
+          "missing": [],
+          "falsePositives": 0
+        },
+        "citation": {
+          "recall": null,
+          "precision": null,
+          "mustCited": "0/0",
+          "missed": []
+        },
+        "issueCoverage": {
+          "covered": 0,
+          "expected": 0,
+          "missing": []
+        },
+        "forbidden": [],
+        "judged": {
+          "issues": 5,
+          "judged": 5,
+          "rate": 1
+        },
+        "expertReviewed": null
+      },
+      "citationExistence": 85,
+      "citations": null,
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "취업규칙 제31조(징계해고)는 근로기준법상 해고의 정당성 요건을 준수하고 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "취업규칙 제94조(규칙의 변경)에 따른 불이익 변경 동의 절차는 근로기준법 제94조를 준수하고 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "PARTIAL"
+          },
+          {
+            "id": "I3",
+            "question": "취업규칙 제22조(근로시간)는 근로기준법상 법정 근로시간 기준을 준수하고 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "취업규칙 제18조(연장·야간·휴일근로수당)는 연장/야간/휴일근로에 대한 가산수당 지급 기준을 준수하고 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "취업규칙 제20조(연차유급휴가)는 근로기준법상 연차 유급휴가 부여 및 사용 촉진 의무를 준수하고 있는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          }
+        ],
+        "gate": "HUMAN_REVIEW_REQUIRED",
+        "reviewedIssues": 4,
+        "skippedIssues": 0,
+        "privacyRows": 0,
+        "privacyRowsReviewed": 0,
+        "judgedIssues": 5,
+        "linkedIssues": 5,
+        "facts": 1,
+        "factTopUp": null,
+        "statuteLinking": {
+          "linkedIssues": 2,
+          "addedArticles": 2,
+          "unlinkedIssues": []
+        },
+        "documentProfile": "REGULATION",
+        "escalationCandidates": 3,
+        "conditionalIssues": 5,
+        "rejectedIds": 0,
+        "warrants": [
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED"
+        ],
+        "skills": {
+          "mode": "apply",
+          "digest": "f8e00b13780ce020",
+          "applied": [
+            "labor-work-rules@0.1.0",
+            "method-issue-framing@0.1.0"
+          ],
+          "shadow": [],
+          "checkCalls": 0,
+          "findings": [],
+          "shadowFindings": [],
+          "addedIssues": 0,
+          "linkedIssues": 0,
+          "elementTrees": 2,
+          "injected": 0,
+          "staleArticles": 0,
+          "verifiedArticles": 15
+        }
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 6953,
+            "outputTokens": 809,
+            "prefillMs": 21836,
+            "decodeMs": 33464,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 1657,
+            "wallMs": 55469,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 677,
+            "outputTokens": 96,
+            "prefillMs": 1588,
+            "decodeMs": 3665,
+            "loadMs": 67,
+            "thinkingChars": 0,
+            "outputChars": 212,
+            "wallMs": 5457,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 92,
+            "prefillMs": 1788,
+            "decodeMs": 3187,
+            "loadMs": 36,
+            "thinkingChars": 0,
+            "outputChars": 225,
+            "wallMs": 5865,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 634,
+            "outputTokens": 199,
+            "prefillMs": 1374,
+            "decodeMs": 5763,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 498,
+            "wallMs": 7966,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 668,
+            "outputTokens": 86,
+            "prefillMs": 1551,
+            "decodeMs": 3218,
+            "loadMs": 40,
+            "thinkingChars": 0,
+            "outputChars": 204,
+            "wallMs": 5578,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 600,
+            "outputTokens": 146,
+            "prefillMs": 1374,
+            "decodeMs": 4204,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 391,
+            "wallMs": 6394,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 731,
+            "outputTokens": 240,
+            "prefillMs": 1558,
+            "decodeMs": 6686,
+            "loadMs": 36,
+            "thinkingChars": 0,
+            "outputChars": 599,
+            "wallMs": 9058,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 882,
+            "outputTokens": 373,
+            "prefillMs": 1890,
+            "decodeMs": 10149,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 774,
+            "wallMs": 12802,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 675,
+            "outputTokens": 153,
+            "prefillMs": 1423,
+            "decodeMs": 4230,
+            "loadMs": 36,
+            "thinkingChars": 0,
+            "outputChars": 367,
+            "wallMs": 7220,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 108,
+            "prefillMs": 1612,
+            "decodeMs": 3208,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 228,
+            "wallMs": 6588,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 571,
+            "outputTokens": 134,
+            "prefillMs": 1220,
+            "decodeMs": 4055,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 272,
+            "wallMs": 6596,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 745,
+            "outputTokens": 76,
+            "prefillMs": 1668,
+            "decodeMs": 2534,
+            "loadMs": 33,
+            "thinkingChars": 0,
+            "outputChars": 180,
+            "wallMs": 6038,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 732,
+            "outputTokens": 112,
+            "prefillMs": 1771,
+            "decodeMs": 3378,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 292,
+            "wallMs": 7074,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 704,
+            "outputTokens": 76,
+            "prefillMs": 1651,
+            "decodeMs": 2976,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 180,
+            "wallMs": 6436,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 620,
+            "outputTokens": 149,
+            "prefillMs": 1359,
+            "decodeMs": 4248,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 344,
+            "wallMs": 5656,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 1017,
+            "outputTokens": 207,
+            "prefillMs": 2217,
+            "decodeMs": 6318,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 443,
+            "wallMs": 8592,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 818,
+            "outputTokens": 221,
+            "prefillMs": 1899,
+            "decodeMs": 7177,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 470,
+            "wallMs": 9125,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3662,
+            "outputTokens": 492,
+            "prefillMs": 8826,
+            "decodeMs": 19155,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 932,
+            "wallMs": 28098,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4037,
+            "outputTokens": 395,
+            "prefillMs": 11505,
+            "decodeMs": 16375,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 796,
+            "wallMs": 27957,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3831,
+            "outputTokens": 469,
+            "prefillMs": 11373,
+            "decodeMs": 18965,
+            "loadMs": 190,
+            "thinkingChars": 0,
+            "outputChars": 1035,
+            "wallMs": 30575,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4131,
+            "outputTokens": 795,
+            "prefillMs": 10752,
+            "decodeMs": 27497,
+            "loadMs": 38,
+            "thinkingChars": 0,
+            "outputChars": 1767,
+            "wallMs": 38341,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3980,
+            "outputTokens": 489,
+            "prefillMs": 9945,
+            "decodeMs": 18556,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 1046,
+            "wallMs": 28565,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3962,
+            "outputTokens": 313,
+            "prefillMs": 9531,
+            "decodeMs": 10522,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 599,
+            "wallMs": 20126,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 2848,
+            "outputTokens": 403,
+            "prefillMs": 6814,
+            "decodeMs": 14223,
+            "loadMs": 26,
+            "thinkingChars": 0,
+            "outputChars": 802,
+            "wallMs": 21089,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 1359,
+            "outputTokens": 993,
+            "prefillMs": 3242,
+            "decodeMs": 38064,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 1825,
+            "wallMs": 41408,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 25,
+          "failed": 0,
+          "inputTokens": 46315,
+          "outputTokens": 7626,
+          "prefillMs": 119767,
+          "decodeMs": 271817,
+          "wallMs": 408073,
+          "prefixCacheHits": 0
+        }
+      }
+    }
+  ]
+}
