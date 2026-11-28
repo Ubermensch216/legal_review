@@ -10,7 +10,9 @@ const issue = (id, question, legal, stageStatus = 'OK') => ({ id, question, stag
 test('정답셋은 전문가 검수 전에는 초안으로 표시되고 사례마다 기대 조문과 쟁점을 가진다', () => {
   const set = loadGoldSet();
   assert.equal(set.status, 'DRAFT_NOT_EXPERT_VERIFIED');
-  assert.ok(set.cases.every(c => c.expectedArticles.length && c.expectedIssues.length && c.mustCite.every(m => c.expectedArticles.includes(m))));
+  // 대조 사례(control)는 위반이 없도록 만든 문서라 기대 조문·쟁점 대신 위반 소지 0건을 기대한다.
+  assert.ok(set.cases.filter(c => !c.control).every(c => c.expectedArticles.length && c.expectedIssues.length && c.mustCite.every(m => c.expectedArticles.includes(m))));
+  assert.ok(set.cases.filter(c => c.control).every(c => Array.isArray(c.expectedViolations) && !c.expectedViolations.length));
   assert.ok(set.cases.every(c => c.expertReviewed === null), '검수 전에는 expertReviewed가 비어 있어야 한다');
 });
 
@@ -44,4 +46,18 @@ test('두 측정 결과를 사례별로 비교한다', () => {
   assert.equal(result.time, '299s → 240s');
   assert.equal(result.judged, '0/5 → 4/5');
   assert.equal(result.linked, '0 → 5');
+});
+
+test('문서 원문 인용으로 확인된 위반 소지를 세고, 대조 사례에서는 오탐으로 센다', () => {
+  const set = loadGoldSet();
+  const positive = set.cases.find(c => c.id === '01');
+  const control = set.cases.find(c => c.id === '06');
+  const review = { legalBasis: [], reasoning: { issues: [{ id: 'I1', question: '불이익 변경 동의', stageStatus: 'OK', conclusion: { legal: 'NOT_APPLICABLE' },
+    assessments: [{ elementId: 'A1.E2', verdict: 'VIOLATES', quoteVerified: true, quote: '불이익 변경의 경우에도 별도 동의 없이 시행할 수 있다', derivedBy: 'SKILL_CLOSED_QUESTION' },
+      { elementId: 'A1.E1', verdict: 'VIOLATES', quoteVerified: false, quote: '' }] }] } };
+  const scored = scoreAgainstGold(review, positive);
+  assert.equal(scored.violations.found, 1);
+  assert.equal(scored.violations.matched, 1);
+  assert.equal(scored.violations.falsePositives, null);
+  assert.equal(scoreAgainstGold(review, control).violations.falsePositives, 1);
 });

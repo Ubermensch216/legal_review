@@ -1,0 +1,32 @@
+{
+  "laws": [
+    {
+      "lawName": "지방자치법",
+      "role": "CORE",
+      "snapshotPolicy": "HASH",
+      "articles": [
+        "제28조",
+        "제29조",
+        "제34조"
+      ],
+      "snapshot": {
+        "제28조": {
+          "title": "조례",
+          "enforceDate": "20261015",
+          "textHash": "6423263a528b84e8"
+        },
+        "제29조": {
+          "title": "규칙",
+          "enforceDate": "20261015",
+          "textHash": "87fef6f902f83dff"
+        },
+        "제34조": {
+          "title": "조례 위반에 대한 과태료",
+          "enforceDate": "20261015",
+          "textHash": "b41a29b6a7590fb4"
+        }
+      }
+    }
+  ],
+  "snapshotAt": "2026-11-28"
+}

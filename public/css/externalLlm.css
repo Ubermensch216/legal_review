@@ -43,3 +43,19 @@
   border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 10px 14px; margin: 0 0 12px; }
 .depth-banner-body { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 220px; flex: 1; }
 .depth-banner-left { color: var(--text-secondary, #475569); font-size: 12.5px; }
+
+/* 분석 스킬 */
+.skill-banner { border-color: #99f6e4; background: #f0fdfa; }
+.skill-finding-list { list-style: none; margin: 6px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.skill-finding { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 12.5px; }
+.skill-finding-tag { font-weight: 600; padding: 0 6px; border-radius: 4px; background: #fef3c7; color: #92400e; }
+.skill-violation_risk .skill-finding-tag { background: #fee2e2; color: #991b1b; }
+.skill-finding-quote { color: var(--text-secondary, #475569); font-style: normal; }
+.skills-catalog { margin-top: 8px; overflow-x: auto; }
+.skills-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.skills-table th, .skills-table td { border-bottom: 1px solid var(--border-color, #e2e8f0); padding: 4px 6px; text-align: left; white-space: nowrap; }
+.skill-status-active { color: #047857; font-weight: 600; }
+.skill-status-shadow { color: #92400e; }
+.skill-error { color: #b91c1c !important; }
+.skills-candidates-box { margin-top: 8px; font-size: 12.5px; }
+.skill-candidate-list { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }

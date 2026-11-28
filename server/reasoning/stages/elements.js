@@ -142,9 +142,10 @@ async function decomposeGroup({ id, fragments, registry, provider, config, sessi
 
 /**
  * 조문들을 요건으로 분해한다.
- * @returns {Promise<{ byArticle: Map<string, { elements: object[], burden: string, source: 'CACHE'|'LLM'|'PARTIAL'|'SKELETON' }>, warnings: string[] }>}
+ * @returns {Promise<{ byArticle: Map<string, { elements: object[], burden: string, source: 'CACHE'|'LLM'|'PARTIAL'|'SKELETON'|'SKILL' }>, warnings: string[] }>}
  */
-export async function decomposeArticles({ articleIds, registry, prefix, provider, config, session, cache = getStageCache() }) {
+export async function decomposeArticles({ articleIds, registry, prefix, provider, config, session, cache = getStageCache(),
+  skillTrees = null }) {
   const result = new Map();
   const warnings = [];
   const misses = [];
@@ -152,6 +153,8 @@ export async function decomposeArticles({ articleIds, registry, prefix, provider
   for (const id of [...new Set(articleIds)]) {
     const entry = registry.get(id);
     if (!entry || !ARTICLE_KINDS.has(entry.kind)) continue;
+    // 분석 스킬의 검수 요건 트리. 공식 원문 해시가 기록과 같을 때만 skillTrees에 들어 있다(skillElements.js).
+    if (skillTrees?.has(id)) { result.set(id, skillTrees.get(id)); continue; }
     const cached = cache?.get(keyOf(id));
     if (cached?.elements?.length && cached.elements.every(e => !provenanceOnly(e.text)))
       result.set(id, { ...cached, source: 'CACHE' });

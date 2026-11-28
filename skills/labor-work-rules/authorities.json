@@ -1,0 +1,125 @@
+{
+  "laws": [
+    {
+      "lawName": "근로기준법",
+      "role": "CORE",
+      "articles": [
+        "제17조",
+        "제20조",
+        "제23조",
+        "제26조",
+        "제27조",
+        "제50조",
+        "제53조",
+        "제54조",
+        "제56조",
+        "제60조",
+        "제61조",
+        "제63조",
+        "제93조",
+        "제94조",
+        "제95조"
+      ],
+      "snapshotPolicy": "HASH",
+      "snapshot": {
+        "제17조": {
+          "title": "근로조건의 명시",
+          "enforceDate": "20261008",
+          "textHash": "89e80897db903d22"
+        },
+        "제20조": {
+          "title": "위약 예정의 금지",
+          "enforceDate": "20261008",
+          "textHash": "ad21ec8dd118015a"
+        },
+        "제23조": {
+          "title": "해고 등의 제한",
+          "enforceDate": "20261008",
+          "textHash": "efcaa1cbd34bd547"
+        },
+        "제26조": {
+          "title": "해고의 예고",
+          "enforceDate": "20261008",
+          "textHash": "c5db4569f75ff6a7"
+        },
+        "제27조": {
+          "title": "해고사유 등의 서면통지",
+          "enforceDate": "20261008",
+          "textHash": "ebabeabd14196f30"
+        },
+        "제50조": {
+          "title": "근로시간",
+          "enforceDate": "20261008",
+          "textHash": "38c2e483c6b93166"
+        },
+        "제53조": {
+          "title": "연장 근로의 제한",
+          "enforceDate": "20261008",
+          "textHash": "8834848ae5577878"
+        },
+        "제54조": {
+          "title": "휴게",
+          "enforceDate": "20261008",
+          "textHash": "e94965324013fe86"
+        },
+        "제56조": {
+          "title": "연장ㆍ야간 및 휴일 근로",
+          "enforceDate": "20261008",
+          "textHash": "4d9ecaee488cfed8"
+        },
+        "제60조": {
+          "title": "연차 유급휴가",
+          "enforceDate": "20261008",
+          "textHash": "6eed44bf177d3c7b"
+        },
+        "제61조": {
+          "title": "연차 유급휴가의 사용 촉진",
+          "enforceDate": "20261008",
+          "textHash": "6b6353a5fe36f872"
+        },
+        "제63조": {
+          "title": "적용의 제외",
+          "enforceDate": "20261008",
+          "textHash": "45ce7a9e043cee1c"
+        },
+        "제93조": {
+          "title": "취업규칙의 작성ㆍ신고",
+          "enforceDate": "20261008",
+          "textHash": "2903f8a5bd53d6d9"
+        },
+        "제94조": {
+          "title": "규칙의 작성, 변경 절차",
+          "enforceDate": "20261008",
+          "textHash": "e008671954109e9e"
+        },
+        "제95조": {
+          "title": "제재 규정의 제한",
+          "enforceDate": "20261008",
+          "textHash": "19d2502449837736"
+        }
+      }
+    },
+    {
+      "lawName": "민법",
+      "role": "SUPPORT",
+      "articles": [
+        "제103조"
+      ],
+      "when": {
+        "checks": [
+          "LB-08"
+        ]
+      },
+      "snapshotPolicy": "HASH",
+      "note": "퇴직 후 경업금지 약정의 유효성(사회질서 위반) 판단에 쓰인다.",
+      "snapshot": {
+        "제103조": {
+          "title": "반사회질서의 법률행위",
+          "enforceDate": "20260317",
+          "textHash": "f1f1f2a7f68acc3d"
+        }
+      }
+    }
+  ],
+  "snapshotAt": "2026-11-28"
+}

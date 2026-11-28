@@ -2,17 +2,11 @@
 import { provenanceOnly } from './stages/elements.js';
 const ROLE = Object.freeze({ ARTICLE: 'DIRECT_RULE', ORDINANCE_ARTICLE: 'DIRECT_RULE',
   PRECEDENT: 'INTERPRETIVE_PRECEDENT', INTERPRETATION: 'INTERPRETIVE_PRECEDENT' });
-const ARTICLE_EXPECTATIONS = [
-  { test: /위임.{0,25}(언제든지|해지|불리한 시기)|불리한 시기.{0,25}위임|부득이한 사유.{0,40}불리한 시기/, law: '민법', article: '689' },
-  { test: /도급.{0,35}(완성.{0,12}전|완성하기 전|해제)|완성.{0,12}전.{0,25}도급/, law: '민법', article: '673' },
-  { test: /선량한 풍속|사회질서에 반|반사회질서/, law: '민법', article: '103' },
-  { test: /합의관할|전속관할 합의/, law: '민사소송법', article: '29' },
-  { test: /저작재산권.{0,35}양도|2차적저작물.{0,35}(권리|추정)/, law: '저작권법', article: '45' },
-  { test: /저작인격권.{0,35}(양도|일신전속|행사|저작자)/, law: '저작권법', article: '14' }
-];
+import { contractSkillData } from '../skills/contractSkill.js';
+// 명제 문구로 기대되는 조문(예: 위임 해지 → 민법 제689조)은 skills/contract-services/contract.json의 articleExpectations에 있다.
 
 export function exactAuthorityMatch(text, entry) {
-  const expected = ARTICLE_EXPECTATIONS.find(item => item.test.test(String(text || '')));
+  const expected = contractSkillData().articleExpectations.find(item => item.test.test(String(text || '')));
   if (!expected) return true;
   return entry?.lawName === expected.law && String(entry.articleNo || '') === expected.article;
 }

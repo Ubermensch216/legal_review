@@ -24,6 +24,8 @@ import { ENV } from '../env.js';
 import { createManualLearningRouter } from './manualLearningApi.js';
 import { localLearningEndpoint } from './manualLearningLocal.js';
 import { getLearningStore } from './manualLearningStore.js';
+import { getSkillCatalog, skillMode, SKILL_MODES } from '../skills/skillLoader.js';
+import { catalogSummary, skillRevisionCandidates } from '../skills/skillCandidates.js';
 import { inquiryCoverage } from './manualLearning.js';
 import { createProgressReporter, NOOP_PROGRESS } from './progressReporter.js';
 
@@ -32,6 +34,25 @@ router.use('/learning', createManualLearningRouter());
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 } // 25MB
+});
+
+/**
+ * GET /api/law/skills - 분석 스킬 카탈로그(상태·버전·검수·점검 목록). 스킬 내용 전체는 내보내지 않는다.
+ */
+router.get('/skills', (req, res) => {
+  const catalog = getSkillCatalog();
+  res.json({ ok: true, defaultMode: skillMode({}), modes: SKILL_MODES, ...catalogSummary(catalog) });
+});
+
+/**
+ * GET /api/law/skills/candidates - 승인된 외부 전문가 지식 카드에서 뽑은 스킬 개정 후보. 스킬을 고치지 않는다.
+ */
+router.get('/skills/candidates', (req, res) => {
+  try {
+    res.json({ ok: true, ...skillRevisionCandidates({ skills: getSkillCatalog().skills, cards: getLearningStore().list('knowledge') }) });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 /**
@@ -448,7 +469,9 @@ router.post('/workbench', upload.single('file'), async (req, res) => {
       // 외부 질의 루프의 최초 검토에는 재사용할 쟁점·요건·공백 구조가 필요하다.
       // EXAONE 검토도 같은 구조를 남겨야 외부 전문가 질의 탭을 그대로 쓸 수 있다.
       ...(manualLearning || resolvedProvider === 'exaone' || depth ? { pipeline: 'staged' } : {}),
-      ...(depth ? { analysisDepth: depth.depth, screenBoundary: depth.screenBoundary } : {})
+      ...(depth ? { analysisDepth: depth.depth, screenBoundary: depth.screenBoundary } : {}),
+      // 분석 스킬 적용 방식. 심화분석 이어가기는 기본분석과 같은 방식을 써야 쟁점 구조가 맞는다.
+      ...((deepen?.skillMode || SKILL_MODES.includes(req.body.skillMode)) ? { skillMode: deepen?.skillMode || req.body.skillMode } : {})
     };
     // 외부 LLM만 쓰는 모드: 검토 입력 전체를 비식별화하고, 사용자가 미리보기에서 승인한 해시와 같을 때만 시작한다.
     // 승인 없이는 문서가 이 PC 밖으로 나가지 않게, 호출이 시작되기 전에 거절한다(호출 직전에도 다시 막는다).

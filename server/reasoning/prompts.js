@@ -37,9 +37,10 @@ const PRESET_FOCUS = {
  * @param {object} args
  * @param {ReturnType<import('./evidenceRegistry.js').buildEvidenceRegistry>} args.registry
  * @param {{ document: number, index: number }} args.budgets 섹션별 문자 예산
+ * @param {string|null} [args.skillFocus] 적용한 분석 스킬의 쟁점 설정 방향
  * @returns {{ text: string, documentIncluded: string[], documentOmitted: string[], indexOmitted: number }}
  */
-export function buildCommonPrefix({ registry, query, preset, budgets, documentIds = null }) {
+export function buildCommonPrefix({ registry, query, preset, budgets, documentIds = null, skillFocus = null }) {
   documentIds ||= registry.ids(e => e.kind === 'DOCUMENT');
   const document = registry.renderFull(documentIds, { maxChars: budgets.document });
   const index = registry.renderIndex({ kinds: ['ARTICLE', 'ORDINANCE_ARTICLE', 'ADMIN_RULE', 'PRECEDENT', 'INTERPRETATION', 'KNOWLEDGE'],
@@ -48,7 +49,8 @@ export function buildCommonPrefix({ registry, query, preset, budgets, documentId
     documentText: registry.list(e => e.kind === 'DOCUMENT').map(e => e.text).join('\n') });
   const text = [
     `[검토 유형] ${PRESET_LABEL[preset] || preset}`,
-    PRESET_FOCUS[preset] ? `[쟁점 설정 방향] ${PRESET_FOCUS[preset]}` : '',
+    // 적용한 분석 스킬이 있으면 그 쟁점 설정 방향이 검토 유형 기본 문구를 대신한다(skills/<id>/SKILL.md의 'S1 지침').
+    (skillFocus || PRESET_FOCUS[preset]) ? `[쟁점 설정 방향] ${skillFocus || PRESET_FOCUS[preset]}` : '',
     profilePromptLines(profile),
     `[검토 기준일] ${registry.asOf}`,
     `[질의]\n${query || '(질의 없음 — 첨부문서 검토)'}`,

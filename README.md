@@ -87,6 +87,10 @@
 
 전체 검토를 실행하지 않고도 법령 검색(`searchLaw`, `searchAiLaw`), 조문·시점별 조문 조회(`articleDetail`, `articleAt`), 신·구 조문 비교(`articleDiff`), 인용 적합성 대조(`impactMap`), 판례·해석례·재결례·행정규칙·조례·별표 조회 등 17종의 실행 도구를 개별 호출할 수 있습니다.
 
+### 분석 스킬 (⚙ 설정 → 분석 스킬)
+
+검토 유형별 도메인 지식(조문 씨앗·쟁점 점검표·문서 점검·검수 요건 트리)을 `skills/<id>/` 패키지로 관리합니다. 코드가 첨부문서에서 점검 대상 문장을 먼저 찾고 숫자로 판정하거나 로컬 모델에게 예/아니오만 물어, 원문 인용으로 확인된 위반 소지를 찾습니다. 스킬은 법적 근거가 아니며, 공식 조문 본문과 근거 검증을 그대로 거칩니다. 법률 전문가 검수 전 스킬은 기본값에서 진단만 하고, `검수 전 스킬도 적용`을 고르면 결과에 반영하며 의견서에 표시합니다. 자세한 내용은 [skills/skills.md](skills/skills.md)를 참고하세요.
+
 ### 주요 환경변수 요약 (`.env`)
 
 전체 항목은 [`.env.example`](.env.example)을 참고하세요.
@@ -100,6 +104,7 @@
 | `OLLAMA_MODEL` | `gemma4:e2b` | 기본 추론 모델 |
 | `OLLAMA_EMBED_MODEL` | `bge-m3` | 판례·해석례 선별용 로컬 임베딩 모델 |
 | `REVIEW_PIPELINE` | *(자동)* | `staged` 지정 시 토큰 분할 단계형(S0~S7) 경로 우선 사용 |
+| `REVIEW_SKILLS` | `auto` | 분석 스킬 적용 방식(`auto` 검수된 스킬만 / `apply` 검수 전 스킬도 / `off`). 화면 설정(⚙ → 분석 스킬)이 우선 |
 
 ---
 
@@ -112,5 +117,6 @@
 더 깊은 아키텍처, 파이프라인 단계(S0~S7), 분석 품질 개선 내역 및 실측 자료는 아래 문서를 참고하세요.
 
 - [현재 구현·검증 상태 통합 문서](docs/current-status.md)
+- [법령 분석 스킬 색인·작성 규칙](skills/skills.md) · [스킬 도입 분석·구현·측정 보고](docs/skills-implementation-plan-2026-11-28.md)
 - [단일 호출 vs 단계형 파이프라인 실측 비교](docs/audit/pipeline-comparison-2026-09-23.md)
 - [검토 테스트용 샘플 문서 5종 안내](test/docs/review-samples/README.md)

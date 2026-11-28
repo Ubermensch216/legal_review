@@ -298,6 +298,7 @@
       <!-- 2. 워크벤치 결과 4단계 탭 섹션 -->
       <section class="workbench-section card hidden" id="workbench-section">
         <div class="depth-banner hidden" id="analysis-depth-banner"></div>
+        <div class="depth-banner skill-banner hidden" id="analysis-skill-banner"></div>
         <div class="escalation-panel hidden" id="escalation-panel" aria-live="polite"></div>
         <!-- 탭 네비게이션 (4대 탭) -->
         <div class="workbench-tabs">
@@ -706,6 +707,20 @@
               <input type="text" id="setting-model-name" class="hidden" placeholder="직접 모델명 입력 (예: gemma4:e4b)" style="margin-top: 6px;">
               <small id="setting-model-hint" class="input-hint" style="margin-top: 4px; display: block;"></small>
             </div>
+            <fieldset class="form-group llm-mode-group" id="skill-settings">
+              <legend>분석 스킬</legend>
+              <label class="llm-mode-option"><input type="radio" name="skill-mode" value="auto">
+                <span><strong>검수된 스킬만 적용 (기본)</strong><small>법률 전문가 검수 기록이 있거나 기존 규칙을 옮긴 스킬만 결과에 반영합니다. 검수 전 스킬은 문서 점검 결과를 진단으로만 남깁니다.</small></span></label>
+              <label class="llm-mode-option"><input type="radio" name="skill-mode" value="apply">
+                <span><strong>검수 전 스킬도 적용</strong><small>검수 전 스킬의 조문 씨앗·쟁점 지침·문서 점검을 결과에 반영합니다. 의견서에 '전문가 검수 전'으로 표시됩니다.</small></span></label>
+              <label class="llm-mode-option"><input type="radio" name="skill-mode" value="off">
+                <span><strong>사용 안 함</strong><small>분석 스킬 없이 검토합니다(계약서 검토의 기존 규칙은 그대로 씁니다).</small></span></label>
+              <div id="skills-catalog" class="skills-catalog"></div>
+              <details class="skills-candidates-box">
+                <summary>외부 전문가 지식 카드에서 나온 스킬 개정 후보</summary>
+                <div id="skills-candidates"></div>
+              </details>
+            </fieldset>
             <div style="font-size: 12px; color: var(--text-muted); margin-top: 8px; line-height: 1.5;">
               ※ Ollama URL, 클라우드 API Key, 법제처 인증키(LAW_OC)는 환경설정 파일(<code>.env</code>)에서 안전하게 관리됩니다.
             </div>

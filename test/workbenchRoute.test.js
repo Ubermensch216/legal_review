@@ -62,3 +62,36 @@ test('워크벤치 HTTP 응답·이력·다운로드가 제한 상태를 유지�
     assert.ok(openaiPayload.models.some(m => m.name === 'gpt-4o'));
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+
+test('분석 스킬 API는 카탈로그 요약과 개정 후보를 내고, 워크벤치 응답의 수집 정보에 스킬 선택을 남긴다', async () => {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/law', router);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const request = (route, body) => new Promise((resolve, reject) => {
+    const req = http.request({ hostname: '127.0.0.1', port: server.address().port, path: `/api/law${route}`, method: body ? 'POST' : 'GET',
+      headers: { 'Content-Type': 'application/json' } }, res => {
+      let text = ''; res.setEncoding('utf8'); res.on('data', part => { text += part; });
+      res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(text) }));
+    });
+    req.on('error', reject); req.end(body ? JSON.stringify(body) : undefined);
+  });
+  try {
+    const catalog = await request('/skills');
+    assert.equal(catalog.status, 200);
+    assert.deepEqual(catalog.json.modes, ['auto', 'apply', 'off']);
+    assert.deepEqual(catalog.json.errors, []);
+    assert.ok(catalog.json.skills.some(s => s.id === 'labor-work-rules' && s.status === 'shadow'));
+    assert.equal(JSON.stringify(catalog.json).includes('closedQuestion":"'), false, '점검 문구 전체를 내보내지 않는다');
+    const candidates = await request('/skills/candidates');
+    assert.equal(candidates.status, 200);
+    assert.ok(Array.isArray(candidates.json.candidates));
+    const review = await request('/workbench', { query: '취업규칙 연장근로 검토', preset: 'labor_hr', targetLaw: '근로기준법', llmProvider: 'rule_based', skillMode: 'apply' });
+    assert.equal(review.status, 200);
+    assert.equal(review.json.meta.skills.mode, 'apply');
+    assert.ok(review.json.meta.skills.skills.some(s => s.id === 'labor-work-rules' && s.applied));
+  } finally {
+    server.close();
+  }
+});

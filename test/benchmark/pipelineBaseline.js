@@ -37,7 +37,10 @@ const CASES = [
     query: '개인정보 처리현황과 수탁사 관리의 개인정보 보호법 위반 여부를 검토해 주십시오.',
     expected: ['제15조', '제17조', '제22조', '제23조', '제24조의2', '제25조', '제26조', '제28조의2', '제28조의8'] },
   { id: '05', files: ['05_사전컨설팅감사_신청서.txt'], preset: 'pre_consulting_audit', targetLaw: '', targetDate: '20210302',
-    query: '사전 컨설팅감사 신청서의 갑설·을설 중 타당한 견해와 처리 의견(수용/반려)을 검토해 주십시오.', expected: [] }
+    query: '사전 컨설팅감사 신청서의 갑설·을설 중 타당한 견해와 처리 의견(수용/반려)을 검토해 주십시오.', expected: [] },
+  // 06은 01과 같은 구조로 법정 기준을 지킨 대조 문서다. 위반 소지가 나오면 오탐이다.
+  { id: '06', files: ['06_취업규칙_준수본.txt'], preset: 'labor_hr', targetLaw: '근로기준법',
+    query: '취업규칙 전부개정안의 근로기준법 위반 여부와 불이익 변경 절차를 검토해 주십시오.', expected: [] }
 ];
 
 const wanted = (process.env.BASELINE_CASES || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -63,12 +66,16 @@ async function runCase(item, run) {
   try { documentText = await loadDocument(item.files); }
   catch (err) { return { ...row, stage: 'PARSE', error: err.message, wallMs: Date.now() - started }; }
 
+  const benchSkillMode = process.env.BASELINE_SKILLS || process.env.REVIEW_SKILLS || undefined;
   const ctx = await buildWorkbenchContext({ query: item.query, preset: item.preset, documentText,
     targetLaw: item.targetLaw, targetDate: item.targetDate || '',
-    llmConfig: process.env.BASELINE_DEPTH === 'BASIC' ? { provider, screenBoundary: 'KEEP' } : {} });
+    llmConfig: { ...(process.env.BASELINE_DEPTH === 'BASIC' ? { provider, screenBoundary: 'KEEP' } : {}),
+      ...(benchSkillMode ? { skillMode: benchSkillMode } : {}) } });
   const collectedMs = Date.now() - started;
+  const skillMode = process.env.BASELINE_SKILLS || process.env.REVIEW_SKILLS || undefined;
   const review = await generateLegalReview({ query: item.query, preset: item.preset, documentText,
-    workbenchContext: ctx, llmConfig: { provider, pipeline, ...(process.env.BASELINE_DEPTH ? { analysisDepth: process.env.BASELINE_DEPTH } : {}) } });
+    workbenchContext: ctx, llmConfig: { provider, pipeline, ...(skillMode ? { skillMode } : {}),
+      ...(process.env.BASELINE_DEPTH ? { analysisDepth: process.env.BASELINE_DEPTH } : {}) } });
   const verification = review.factualityVerification || {};
   if (process.env.BASELINE_SAVE_DIR) {
     fs.mkdirSync(process.env.BASELINE_SAVE_DIR, { recursive: true });
@@ -104,7 +111,16 @@ async function runCase(item, run) {
       escalationCandidates: review.escalation?.candidates?.length ?? 0,
       conditionalIssues: review.reasoning.issues.filter(i => i.conclusion?.legal === 'CONDITIONAL').length,
       rejectedIds: review.reasoning.diagnostics?.s1?.rejectedIds?.length ?? 0,
-      warrants: review.reasoning.warrants.map(w => w.overall) } : null,
+      warrants: review.reasoning.warrants.map(w => w.overall),
+      skills: review.reasoning.skills ? { mode: review.reasoning.skills.mode, digest: review.reasoning.skills.digest,
+        applied: review.reasoning.skills.skills.filter(s => s.applied).map(s => `${s.id}@${s.version}`),
+        shadow: review.reasoning.skills.skills.filter(s => !s.applied).map(s => s.id),
+        checkCalls: review.reasoning.skills.checkCalls,
+        findings: review.reasoning.skills.findings.map(f => `${f.checkId}@${f.documentId}:${f.outcome}${f.numeric ? '(숫자)' : ''}`),
+        shadowFindings: review.reasoning.skills.shadowFindings.map(f => `${f.checkId}@${f.documentId}:${f.outcome}`),
+        addedIssues: review.reasoning.skills.coverage?.added?.length ?? 0, linkedIssues: review.reasoning.skills.coverage?.linked?.length ?? 0,
+        elementTrees: review.reasoning.skills.elementTrees.length, injected: review.reasoning.skills.injected.length,
+        staleArticles: review.reasoning.skills.staleArticles.length, verifiedArticles: review.reasoning.skills.verifiedArticles } : null } : null,
     ledger: review.llmLedger || null };
 }
 
@@ -120,7 +136,8 @@ const summarize = rows => {
     llmCalls: done.reduce((n, r) => n + (r.ledger?.totals?.calls || 0), 0) };
 };
 
-const selected = CASES.filter(c => !wanted.length || wanted.includes(c.id));
+// 06(대조 문서)은 분석 스킬 오탐 측정용이므로 명시했을 때만 돈다.
+const selected = CASES.filter(c => (wanted.length ? wanted.includes(c.id) : c.id !== '06'));
 console.log(`기준선 측정(${pipeline}): ${selected.map(c => c.id).join(', ')} × ${repeat}회 · provider=${provider} · model=${provider === 'ollama' ? ENV.OLLAMA_MODEL : '(요청 설정)'}`);
 console.log(`LAW_OC ${ENV.LAW_OC ? '설정됨' : '미설정 — 공식 근거 없이 측정되므로 기준선으로 쓰지 마십시오'}`);
 

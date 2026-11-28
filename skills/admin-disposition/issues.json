@@ -1,0 +1,19 @@
+{
+  "issues": [
+    { "id": "AD-I1", "question": "의견제출 기한을 10일 이상의 상당한 기간으로 정하였는가?", "type": "PROCEDURAL", "priority": "HIGH",
+      "articles": [{ "lawName": "행정절차법", "articleNo": "제21조", "unit": "제3항" }], "searchTerms": ["의견제출 기간", "사전통지 하자"],
+      "keywords": [["의견제출", "의견 제출"], ["기간", "기한"]], "triggers": { "checks": ["AD-01"] } },
+    { "id": "AD-I2", "question": "처분 근거 법률이 청문을 요구하는 처분인데 청문 없이 처분하려 하는가?", "type": "PROCEDURAL", "priority": "HIGH",
+      "articles": [{ "lawName": "행정절차법", "articleNo": "제22조", "unit": "제1항" }], "searchTerms": ["청문 생략 처분 위법"],
+      "keywords": [["청문"]], "triggers": { "checks": ["AD-02"] } },
+    { "id": "AD-I3", "question": "처분의 근거와 이유를 제시하였는가?", "type": "PROCEDURAL", "priority": "MEDIUM",
+      "articles": [{ "lawName": "행정절차법", "articleNo": "제23조", "unit": "제1항" }], "searchTerms": ["이유제시 하자"],
+      "keywords": [["이유"], ["제시", "기재"]], "triggers": { "checks": ["AD-03"] } },
+    { "id": "AD-I4", "question": "처분 시 행정심판 등 불복 방법과 기간을 고지하였는가?", "type": "PROCEDURAL", "priority": "MEDIUM",
+      "articles": [{ "lawName": "행정절차법", "articleNo": "제26조" }], "searchTerms": ["불복 고지 의무"],
+      "keywords": [["고지"], ["불복", "행정심판"]], "triggers": { "checks": ["AD-04"] } },
+    { "id": "AD-I5", "question": "처분 전에 사전통지를 하였는가(생략 사유 해당 여부)?", "type": "PROCEDURAL", "priority": "HIGH",
+      "articles": [{ "lawName": "행정절차법", "articleNo": "제21조", "unit": "제1항" }], "searchTerms": ["사전통지 생략"],
+      "keywords": [["사전통지", "사전 통지"]], "triggers": { "checks": ["AD-05"] } }
+  ]
+}

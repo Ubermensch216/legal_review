@@ -1,0 +1,31 @@
+{
+  "articles": [
+    {
+      "lawName": "근로기준법", "articleNo": "제53조", "textHash": "8834848ae5577878",
+      "burden": "연장근로 합의와 한도 준수는 사용자가 근로시간 기록으로 소명한다.",
+      "elements": [
+        { "text": "연장근로는 사용자와 근로자 사이의 합의가 있어야 한다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제1항", "checks": ["LB-01"] },
+        { "text": "연장근로는 1주 12시간을 넘지 않아야 한다(1주 총 근로시간 52시간)", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제1항" },
+        { "text": "특별한 사정이 있으면 고용노동부장관의 인가와 근로자의 동의를 받아 연장할 수 있다", "mandatory": false, "isException": true, "operator": "EXCEPTION", "unit": "제4항" }
+      ]
+    },
+    {
+      "lawName": "근로기준법", "articleNo": "제94조", "textHash": "e008671954109e9e",
+      "burden": "불이익 변경에 대한 집단적 동의는 사용자가 입증한다.",
+      "elements": [
+        { "text": "취업규칙을 작성·변경할 때 근로자 과반수 노동조합(없으면 근로자 과반수)의 의견을 들어야 한다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제1항" },
+        { "text": "취업규칙을 근로자에게 불리하게 변경할 때는 근로자 과반수 노동조합(없으면 근로자 과반수)의 동의를 받아야 한다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제1항 단서", "checks": ["LB-09"] },
+        { "text": "취업규칙을 신고할 때 제1항의 의견을 적은 서면을 첨부해야 한다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제2항" }
+      ]
+    },
+    {
+      "lawName": "근로기준법", "articleNo": "제27조", "textHash": "ebabeabd14196f30",
+      "burden": "",
+      "elements": [
+        { "text": "해고하려면 해고사유와 해고시기를 서면으로 통지해야 한다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제1항", "checks": ["LB-02"] },
+        { "text": "서면으로 통지하지 않은 해고는 효력이 없다", "mandatory": true, "isException": false, "operator": "ALL_OF", "unit": "제2항" },
+        { "text": "해고사유와 해고시기를 적은 서면 해고예고는 서면통지로 본다", "mandatory": false, "isException": false, "operator": "ANY_OF", "logicGroup": "서면통지 간주", "unit": "제3항" }
+      ]
+    }
+  ]
+}

@@ -341,10 +341,10 @@ function toLegalBasis(entry, registry, relevance) {
  * 필드 이름과 형태를 유지한다.
  */
 export function renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines = [],
-  contractFindings = [], missingClauseAdditions = [], missingClauseAudit = [], contractRegime = null, analysisNote = '' }) {
+  contractFindings = [], missingClauseAdditions = [], missingClauseAudit = [], contractRegime = null, analysisNote = '', skillNote = '' }) {
   const { issues, facts } = caseIssues;
   const titleSuffix = analysisNote ? ' (기본분석)' : '';
-  const depthLines = analysisNote ? [`[분석 수준] ${analysisNote}`] : [];
+  const depthLines = [...(analysisNote ? [`[분석 수준] ${analysisNote}`] : []), ...(skillNote ? [`[적용 분석 스킬] ${skillNote}`] : [])];
   const byIssue = id => issueResults.find(r => r.issueId === id);
   const clean = value => preset === 'contract_risk' ? stripFalseDocumentAbsence(value, registry).text : value;
   const summary = clean(synthesis.summary);

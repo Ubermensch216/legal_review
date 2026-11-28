@@ -32,6 +32,14 @@ import { attachContractInventory, buildContractInventory, contractAssessments, s
 import { assessPrivacyRowCoverage } from './privacyCoverage.js';
 import { applyStatuteLinks, linkDocumentClauses, linkStatutes } from './stages/statuteLinking.js';
 import { ANALYSIS_DEPTH, depthProfile } from './analysisDepth.js';
+import { describeSelection, selectionLabel, selectSkills, skillPromptFragment, skillsFor } from '../skills/skillRouter.js';
+import { actionableFindings, coverSkillIssues, evaluateCheckHits, findCheckHits, skillAssessmentsFor, skillGaps } from '../skills/skillChecks.js';
+import { checkSkillStaleness, skillElementTrees } from '../skills/skillElements.js';
+
+/** 결과에 남길 스킬 판정 요약. 문서 문장은 이미 첨부문서 원문에 있는 것이다. */
+const summarizeFinding = f => ({ skillId: f.skillId, checkId: f.checkId, label: f.label, documentId: f.documentId,
+  quote: f.quote, articleLabel: f.articleLabel, evidenceId: f.evidenceId, numeric: f.numeric || null, answer: f.answer,
+  outcome: f.outcome, ceiling: f.ceiling, derivedBy: f.derivedBy, issueId: f.issueId || null });
 
 export class PipelineError extends Error {
   constructor(message, cause) { super(message); this.name = 'PipelineError'; this.cause = cause; }
@@ -140,9 +148,12 @@ function patchIssue(prior, fresh, predecessors, registry) {
  * @param {object} [args.cache] 요건 분해 캐시 주입(시험용)
  * @param {string} [args.analysisDepth] 'BASIC' | 'DEEP'. 지정하지 않으면 심화분석이다.
  * @param {object} [args.resume] 기본분석의 보관된 산출물. 주면 사실·쟁점·조사(S1·S2)를 재사용하고 판단부터 심화분석으로 다시 한다.
+ * @param {string} [args.skillMode] 'auto' | 'apply' | 'off'. 지정하지 않으면 REVIEW_SKILLS → auto.
+ * @param {object} [args.skillCatalog] 스킬 카탈로그 주입(시험용)
  */
 export async function runReasoningPipeline({ query, preset, documentText = '', workbenchContext, provider, model, apiKey,
-  session, progress = NOOP_PROGRESS, previous = null, clients, embed, cache, analysisDepth = null, resume = null }) {
+  session, progress = NOOP_PROGRESS, previous = null, clients, embed, cache, analysisDepth = null, resume = null,
+  skillMode = null, skillCatalog = undefined }) {
   const depth = depthProfile(analysisDepth);
   const basic = depth.depth === ANALYSIS_DEPTH.BASIC;
   const base = resolveBudget(provider, { model });
@@ -167,17 +178,52 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   progress.start('s0', '근거 등록부 구성', '조문·판례·해석례·첨부문서에 ID 부여', '분석');
   const registry0 = buildEvidenceRegistry(workbenchContext, { documentText });
   const contractInventory = preset === 'contract_risk' && documentText ? buildContractInventory(registry0, query) : null;
+  // 분석 스킬(skills/<id>/). 코드가 검토 유형·문서 성격·키워드로 고른다. 적용(applied) 스킬만 결과를 바꾸고,
+  // auto 방식의 검수 전(shadow) 스킬은 코드 점검만 돌려 진단에 남긴다.
+  const skillSelection = selectSkills({ preset, query, documentText, llmConfig: { skillMode },
+    ...(skillCatalog ? { catalog: skillCatalog } : {}) });
+  const appliedSkills = skillSelection.applied;
+  const skillFocus = skillPromptFragment(appliedSkills, 's1');
   const s1Limit = budgetFor(stageTokens('s1')).inputLimit;
   let budgets = { document: 14000, index: 6000 };
-  let common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
+  let common = buildCommonPrefix({ registry: registry0, query, preset, budgets, skillFocus });
   for (let i = 0; i < 12 && counter.estimate(REASONING_SYSTEM, common.text + 'x'.repeat(S1_TASK_RESERVE_CHARS)).tokens > s1Limit; i++) {
     budgets = { document: Math.floor(budgets.document * 0.75), index: Math.floor(budgets.index * 0.75) };
-    common = buildCommonPrefix({ registry: registry0, query, preset, budgets });
+    common = buildCommonPrefix({ registry: registry0, query, preset, budgets, skillFocus });
   }
   progress.done('s0', `근거 ${countLabel(registry0.size, '개')} 등록 · 문서 조항 ${countLabel(common.documentIncluded.length, '개')}`);
 
+  // ── 분석 스킬 점검: 문서 문장 탐색 → 숫자 판정 → 닫힌 질문 (조문 개정 시 해당 점검은 끈다) ──
+  const skillRun = { findings: [], shadowFindings: [], staleness: null, calls: 0, coverage: { added: [], linked: [] } };
+  if (appliedSkills.length || skillSelection.shadow.length) {
+    skillRun.staleness = checkSkillStaleness({ skills: [...appliedSkills, ...skillSelection.shadow], registry: registry0 });
+    warnings.push(...skillRun.staleness.warnings);
+    if (skillsFor(appliedSkills, 's4-checks').length && documentText) {
+      progress.start('skills', '분석 스킬 점검', selectionLabel(skillSelection), '분석');
+      const hits = findCheckHits(appliedSkills, registry0, { disabledChecks: skillRun.staleness.disabledChecks });
+      const evaluated = await evaluateCheckHits({ hits, skills: appliedSkills, registry: registry0, provider,
+        config: configFor('s6'), session, askModel: true });
+      skillRun.findings = evaluated.findings;
+      skillRun.calls = evaluated.calls;
+      warnings.push(...evaluated.warnings);
+      const actionable = actionableFindings(evaluated.findings);
+      progress.done('skills', `문서 문장 ${countLabel(hits.length, '건')} 적중 · 위반 소지 ${actionable.filter(f => f.outcome === 'VIOLATION_RISK').length}`
+        + ` · 검토 필요 ${actionable.filter(f => f.outcome === 'REVIEW_POINT').length} · 해소 ${evaluated.findings.filter(f => f.outcome === 'CLEARED').length}`
+        + ` · 판정 호출 ${evaluated.calls}`);
+    }
+    if (skillSelection.shadow.length && documentText) {
+      const shadowHits = findCheckHits(skillSelection.shadow, registry0, { disabledChecks: skillRun.staleness.disabledChecks });
+      skillRun.shadowFindings = (await evaluateCheckHits({ hits: shadowHits, skills: skillSelection.shadow, registry: registry0,
+        provider, config: configFor('s6'), session, askModel: false })).findings;
+    }
+  }
+
   // ── 재검토: 이전 검토와 공식 근거가 같은지 ──
   let reuse = null;
+  // 스킬이 바뀌면 쟁점·요건 구조가 달라질 수 있으므로 저장된 구조에 끼워 넣지 않는다.
+  if (previous?.reasoning?.version && (previous.reasoning.skillSet?.digest || 'none') !== skillSelection.digest) {
+    throw new PipelineError('원 검토 이후 적용 분석 스킬이 바뀌었습니다(스킬 버전 또는 적용 방식). 저장된 쟁점 구조에 외부 답변을 끼워 넣을 수 없으므로 최종 재검토를 중단했습니다.');
+  }
   if (previous?.reasoning?.version && previous.reasoning.promptVersion === PROMPT_VERSION) {
     const addedItems = previous.reasoning.diagnostics?.research?.addedItems || {};
     const candidate = buildEvidenceRegistry(reapplyResearch(workbenchContext, addedItems), { documentText });
@@ -224,7 +270,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     try {
       caseIssues = await planCaseAndIssues({ registry: registry0, query, preset, prefix: common.text, provider,
         config: configFor('s1'), session, maxIssues: maxIssues(preset), preserveIssues: preset === 'contract_risk',
-        forceSplit: common.documentOmitted.length > 0 });
+        forceSplit: common.documentOmitted.length > 0, skillFocus });
     } catch (err) {
       progress.fail('s1', `쟁점 정리 실패: ${err.message}`);
       throw new PipelineError(`쟁점 정리(S1) 실패: ${err.message}`, err);
@@ -245,6 +291,12 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
       caseIssues.diagnostics.statuteLinking = applyStatuteLinks(caseIssues.issues, links);
       // 쟁점이 문서의 해당 조항을 보도록 연결한다. 이 연결이 없으면 포섭 단계가 본문을 못 보고 판단을 유보한다.
       if (documentText) caseIssues.diagnostics.documentLinking = linkDocumentClauses({ issues: caseIssues.issues, registry: registry0 });
+      // 스킬 점검이 위반 소지·검토 필요로 판정한 문장의 쟁점이 빠졌으면 코드가 보충하고, 있으면 그 문장·조문을 잇는다.
+      if (skillsFor(appliedSkills, 's1-coverage').length && skillRun.findings.length) {
+        skillRun.coverage = coverSkillIssues({ caseIssues, skills: appliedSkills, findings: skillRun.findings, registry: registry0 });
+        caseIssues.diagnostics.skillCoverage = skillRun.coverage;
+        if (skillRun.coverage.added.length) progress.note('skills', `스킬 쟁점 보충 ${skillRun.coverage.added.map(a => `${a.issueId} ${a.question}`).join(' / ').slice(0, 300)}`);
+      }
     }
     if (!caseIssues.issues.length) {
       progress.fail('s1', '쟁점을 세우지 못했습니다');
@@ -299,11 +351,13 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     progress.start('s3', '조문 요건 분해', '조문에서 요건 추출', '분석');
     const articleIds = [...new Set(caseIssues.issues.filter(i => rerun.has(i.id)).flatMap(i => perIssue.get(i.id).evidenceIds)
       .map(id => registry.get(id)).filter(Boolean).map(e => e.parentId || e.id).filter(id => /^[AO]\d+$/.test(id)))];
-    decomposed = await decomposeArticles({ articleIds, registry, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}) });
+    decomposed = await decomposeArticles({ articleIds, registry, provider, config: configFor('s3'), session, ...(cache !== undefined ? { cache } : {}),
+      skillTrees: skillElementTrees({ skills: appliedSkills, registry }) });
     warnings.push(...decomposed.warnings);
     for (const warning of decomposed.warnings) progress.warn('s3', warning);
     const sources = [...decomposed.byArticle.values()].map(v => v.source);
     progress.done('s3', `조문 ${countLabel(articleIds.length, '개')} · 재사용 ${sources.filter(s => s === 'CACHE').length} · 새로 분해 ${sources.filter(s => s === 'LLM').length}`
+      + `${sources.some(s => s === 'SKILL') ? ` · 스킬 요건 트리 ${sources.filter(s => s === 'SKILL').length}` : ''}`
       + `${sources.some(s => s === 'SKELETON' || s === 'PARTIAL') ? ` · 미검증 요건 ${sources.filter(s => s === 'SKELETON' || s === 'PARTIAL').length}` : ''}`);
   }
 
@@ -341,9 +395,11 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     const elements = prior ? (narrow ? prior.elements.filter(e => targetedIds.has(e.id)) : prior.elements)
       : selectIssueElements({ ...issue, evidenceIds: selected.evidenceIds }, decomposed.byArticle, registry);
     const issueFacts = caseIssues.facts.filter(f => issue.factIds.includes(f.id));
+    const skillAssessments = skillRun.findings.length && preset !== 'contract_risk'
+      ? skillAssessmentsFor({ issue, elements, findings: skillRun.findings, registry, documentIds: selected.documentIds || [] }) : null;
     const freshResult = await applyIssue({ issue, elements, research, registry, facts: issueFacts,
       runPrefix: buildIssuePrefix(registry, issue, issueFacts), predecessors,
-      provider, config: configFor('s4', think), session, contractMode: preset === 'contract_risk', depth });
+      provider, config: configFor('s4', think), session, contractMode: preset === 'contract_risk', depth, skillAssessments });
     const result = narrow ? patchIssue(prior, freshResult, predecessors, registry) : freshResult;
     directlyUpdated.add(issue.id);
     issueResults.push(result);
@@ -427,7 +483,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
 
   // ── S7 공백 ──
   const gaps = deriveGaps({ issues: caseIssues.issues, issueResults, warrants: ledger, unknownFacts: caseIssues.unknownFacts,
-    collectionWarnings: research.warnings, contractMode: preset === 'contract_risk', registry });
+    collectionWarnings: research.warnings, contractMode: preset === 'contract_risk', registry,
+    skillGaps: skillsFor(appliedSkills, 's7').length ? skillGaps(skillRun.findings, issueResults) : [] });
   // 이전 공백이 이번 판단에서 사라졌으면 해소, 남았으면 미해결로 표시한다. 답을 받았다는 것과 판단이 확정됐다는 것은 다르다.
   const transitions = [];
   if (reuse) {
@@ -474,7 +531,8 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
   const review = renderReview({ caseIssues, issueResults, synthesis, gaps, registry, preset, redlines: redline.redlines,
     contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
     missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null,
-    analysisNote: depth.note });
+    analysisNote: depth.note, skillNote: selectionLabel(skillSelection)
+      ? `${selectionLabel(skillSelection)}. 스킬은 검색·점검 목록이며 법적 근거가 아닙니다. 스킬이 찾은 문서 문장은 첨부문서 원문과 공식 조문으로 다시 확인했습니다.` : '' });
   if (noJudgment) Object.assign(review, noJudgmentFields({ issues: caseIssues.issues, issueResults, gaps }));
   progress.done('s5', noJudgment ? '판단이 실행된 쟁점이 없어 의견서 대신 실패 원인을 안내'
     : synthesis.source === 'LLM' ? '요약 생성' : '요약 생성 실패 — 결론 표로 대체', synthesis.source === 'LLM' ? 'DONE' : 'FAILED');
@@ -537,6 +595,13 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     }),
     warrants: ledger, documentWarrants, gaps,
     gate: gateReasons.length ? 'HUMAN_REVIEW_REQUIRED' : 'OK', gateReasons,
+    skillSet: { digest: skillSelection.digest, mode: skillSelection.mode },
+    skills: { ...describeSelection(skillSelection), checkCalls: skillRun.calls,
+      findings: skillRun.findings.map(summarizeFinding), shadowFindings: skillRun.shadowFindings.map(summarizeFinding),
+      coverage: skillRun.coverage, staleArticles: skillRun.staleness?.staleArticles || [],
+      verifiedArticles: skillRun.staleness?.verifiedArticles ?? 0,
+      elementTrees: [...decomposed.byArticle].filter(([, v]) => v.source === 'SKILL').map(([id, v]) => ({ articleId: id, skillId: v.skillId })),
+      injected: issueResults.flatMap(r => (r.skillAssessed || []).map(elementId => ({ issueId: r.issueId, elementId }))) },
     reuse: reuse ? { fromHistoryId: previous.historyId || null, evidenceMatched: true, rerunIssueIds: [...rerun], reusedStages: ['S1', 'S2', 'S3'],
       gapTransitions: transitions } : null,
     diagnostics: { s1: caseIssues.diagnostics,
@@ -601,6 +666,7 @@ export async function runReasoningPipeline({ query, preset, documentText = '', w
     const candidates = noJudgment ? [] : selectEscalationCandidates({ issues: caseIssues.issues, issueResults, ledger });
     if (candidates.length || basic) {
       const reviewId = rememberReview({ query, documentText, workbenchContext, plan, researchRun: research, perIssue: new Map(perIssue),
+        skillMode: skillSelection.mode,
         analysisNote: depth.note, caseIssues, issueResults, registry, preset, gaps, synthesis, redlines: redline.redlines, ledger,
         contractFindings: findings, missingClauseAdditions: contractInventory?.missingClauseAdditions || [],
         missingClauseAudit: contractInventory?.missingClauseAudit || [], contractRegime: contractInventory?.regime || null,

@@ -39,7 +39,9 @@ export const state = {
     // 외부로 보낼 때 추가로 가릴 단어(기관명 등). 이 브라우저에만 저장된다.
     privateTerms: read('lr_privateTerms'),
     // 기본은 빠른 기본분석이다. 필요할 때 결과 화면에서 심화분석으로 이어 간다.
-    analysisDepth: read('lr_depth') === 'DEEP' ? 'DEEP' : 'BASIC'
+    analysisDepth: read('lr_depth') === 'DEEP' ? 'DEEP' : 'BASIC',
+    // 분석 스킬 적용 방식: auto(검수된 스킬만) / apply(검수 전 스킬도) / off
+    skillMode: ['auto', 'apply', 'off'].includes(read('lr_skillMode')) ? read('lr_skillMode') : 'auto'
   })
 };
 
@@ -51,6 +53,7 @@ export function saveSettings(newSettings) {
   write('lr_extModel', state.settings.externalModel);
   write('lr_privateTerms', state.settings.privateTerms);
   write('lr_depth', state.settings.analysisDepth);
+  write('lr_skillMode', state.settings.skillMode);
   // 이전 버전과의 호환: 주 제공자·모델도 함께 남긴다.
   write('lr_provider', state.settings.provider);
   write('lr_modelName', state.settings.modelName);

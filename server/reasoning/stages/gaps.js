@@ -27,7 +27,7 @@ const LEGAL_QUESTION = /해석|법리|법적|법률상|판례|조문|법령|효�
  * @param {string[]} args.collectionWarnings S2 조회 실패 경고
  */
 export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts = [], collectionWarnings = [],
-  contractMode = false, registry = null }) {
+  contractMode = false, registry = null, skillGaps = [] }) {
   const gaps = [];
   const seen = new Set();
   const add = gap => {
@@ -96,6 +96,14 @@ export function deriveGaps({ issues, issueResults, warrants = [], unknownFacts =
     if (!result?.conclusion?.decidingElementIds?.includes(w.elementId)) continue;
     add({ issueId: w.issueId, elementId: w.elementId, changesOutcome: true, priority: 3, type: 'MISSING_AUTHORITY',
       question: clip(`인용 근거가 다음 판단을 뒷받침하지 않습니다. 이를 뒷받침하거나 반박하는 근거는 무엇인가? — ${w.text}`, 300) });
+  }
+  // 분석 스킬 점검이 남긴 확인 항목. 사실 질문은 사용자에게, 판례 판단이 필요한 법리 질문은 외부 전문가 질의로 간다.
+  // 같은 요건에 대한 일반 공백보다 구체적이므로 요건 단위 중복 제거를 거치지 않고 질문마다 남긴다.
+  for (const gap of skillGaps) {
+    const key = `skill|${gap.issueId}|${gap.elementId}|${gap.type}|${gap.question}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    gaps.push({ ...gap, route: GAP_ROUTE[gap.type], state: 'OPEN' });
   }
   for (const fact of unknownFacts) {
     if (contractMode && /D\d+/.test(fact) && [...fact.matchAll(/D\d+(?:\.\d+)?/g)].some(m => registry?.get(m[0]))) continue;

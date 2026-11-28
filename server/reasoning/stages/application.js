@@ -186,9 +186,13 @@ function validateContractCounter(counter, registry) {
  * 한 쟁점의 실패가 다른 쟁점 결과를 버리게 하지 않기 위함이다.
  */
 export async function applyIssue({ issue, elements: requestedElements, research, registry, facts, runPrefix, predecessors = [], provider, config, session,
-  contractMode = false, depth = null }) {
+  contractMode = false, depth = null, skillAssessments = null }) {
   const compact = depth?.application?.compact ? depth.application : null;
-  const elements = compact ? selectJudgedElements(requestedElements, compact.elementsPerCall) : requestedElements;
+  // 분석 스킬이 이미 판정한 요건(코드가 찾은 문서 문장 + 숫자 판정 또는 닫힌 질문)은 모델에게 다시 묻지 않는다.
+  const injected = skillAssessments instanceof Map ? skillAssessments : new Map();
+  const judgedPool = compact ? selectJudgedElements(requestedElements, compact.elementsPerCall) : requestedElements;
+  const elements = [...judgedPool, ...requestedElements.filter(e => injected.has(e.id) && !judgedPool.includes(e))];
+  const modelElements = elements.filter(e => !injected.has(e.id));
   const evidenceLimit = compact?.evidenceChars || ISSUE_EVIDENCE_CHARS;
   const factsById = new Map(facts.map(f => [f.id, f]));
   const evidenceIds = [...new Set([...research.evidenceIds, ...research.adverseCandidateIds])];
@@ -213,7 +217,7 @@ export async function applyIssue({ issue, elements: requestedElements, research,
   let lastError = null;
   const elementGroups = [];
   const elementBatch = compact?.elementsPerCall || ELEMENT_BATCH;
-  for (let i = 0; i < elements.length; i += elementBatch) elementGroups.push(elements.slice(i, i + elementBatch));
+  for (let i = 0; i < modelElements.length; i += elementBatch) elementGroups.push(modelElements.slice(i, i + elementBatch));
   for (const [groupIndex, groupElements] of elementGroups.entries()) {
   // 기본분석: 이 요건들의 출처 조문과 첨부문서 조항을 먼저 싣고, 남는 분량에 판례·해석례를 싣는다.
   // 출처 조문은 반드시 처리하고, 분량을 넘는 판례·해석례는 심화분석으로 미룬다(요건 묶음마다 반복하지 않는다).
@@ -303,15 +307,16 @@ export async function applyIssue({ issue, elements: requestedElements, research,
   }
   base.evidenceIds = [...new Set(included)];
   base.omittedEvidence = [...new Set([...base.omittedEvidence, ...failedIds])];
+  if (!values.length && injected.size) values.push({ assessments: [], precedents: [], counter: null, narrative: '' });
   if (!values.length) {
     const assessments = elements.map(e => ({ elementId: e.id, status: 'UNKNOWN', proof: 'NO_EVIDENCE', factIds: [], contraryFactIds: [],
       evidenceIds: [], analysis: '모델 판단 실패', openQuestion: '' }));
     return { ...base, stageStatus: 'FAILED', error: lastError?.message || '근거 묶음 처리 실패', assessments, precedents: [], counter: null, narrative: '',
       openQuestions: [], conclusion: { ...computeIssueConclusion(elements, assessments, predecessors), reasons: ['포섭 단계 실패'] }, warnings };
   }
-  const value = mergeApplications(values, elements);
+  const value = mergeApplications(values, modelElements);
   // 요건별 판단: 빠진 요건은 UNKNOWN, 원문 미확인 사실만으로는 입증 충분으로 보지 않는다.
-  const given = new Map(value.assessments.map(a => [a.elementId, a]));
+  const given = new Map([...value.assessments.map(a => [a.elementId, a]), ...injected]);
   const assessments = elements.map(e => {
     const raw = given.get(e.id);
     if (!raw) { warnings.push(`요건 ${e.id} 판단 누락 — UNKNOWN으로 처리`); return { elementId: e.id, status: 'UNKNOWN', proof: 'NO_EVIDENCE', factIds: [], contraryFactIds: [], evidenceIds: [], analysis: '판단 누락', openQuestion: '' }; }
@@ -388,6 +393,7 @@ export async function applyIssue({ issue, elements: requestedElements, research,
     precedents: value.precedents || [], counter: validCounter ?? null, narrative: narrative.text,
     openQuestions: assessments.filter(a => a.openQuestion).map(a => ({ elementId: a.elementId, question: a.openQuestion })),
     conclusion, gateReasons, warnings,
+    ...(injected.size ? { skillAssessed: [...injected.keys()] } : {}),
     ...(compact ? { depthCoverage: { judgedElements: elements.length, skippedSkeletons: requestedElements.length - elements.length,
       deferredEvidence: [...new Set(deferredEvidence)].filter(id => !included.includes(id)) } } : {}) };
 }

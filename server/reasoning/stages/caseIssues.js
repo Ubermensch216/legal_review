@@ -171,7 +171,7 @@ export function normalizeCaseIssues(raw, { registry, query, maxIssues = 5, prese
  * @param {object} args.config 게이트웨이 설정(budget, model). think는 여기서 false로 고정한다.
  */
 export async function planCaseAndIssues({ registry, query, preset, prefix, provider, config, session, maxIssues = 5,
-  preserveIssues = false, forceSplit = false }) {
+  preserveIssues = false, forceSplit = false, skillFocus = null }) {
   const schema = caseIssuesSchema({ maxIssues: maxIssues + 2 }); // 병합·상한 정리 여지를 조금 둔다
   const run = (text, stage) => runStage({ stage, provider, system: REASONING_SYSTEM,
     prefix: text, task: TASK({ maxIssues }), schema, config: { ...config, think: false }, session });
@@ -214,7 +214,7 @@ export async function planCaseAndIssues({ registry, query, preset, prefix, provi
     let partNo = 0;
     const processTask = async task => {
       const compact = buildCommonPrefix({ registry, query: task.queryText, preset,
-        budgets: { document: 3000, index: 1200 }, documentIds: task.ids });
+        budgets: { document: 3000, index: 1200 }, documentIds: task.ids, skillFocus });
       indexOmitted = Math.max(indexOmitted, compact.indexOmitted);
       try {
         if (compact.documentOmitted.length) throw new StageError('s1', '문서 조각이 입력에서 제외되었습니다.', { budgetExceeded: true });

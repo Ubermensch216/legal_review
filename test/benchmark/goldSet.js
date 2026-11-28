@@ -13,6 +13,11 @@ export const loadGoldSet = (file = path.join(dir, 'gold/cases.json')) => JSON.pa
 
 const issueText = issue => `${issue.question || ''} ${issue.research?.queries?.join(' ') || ''}`;
 
+/** 문서 원문 인용으로 확인된 위반 소지(VIOLATES + 인용 검증) 요건 판단. */
+export const violationQuotes = review => (review.reasoning?.issues || []).flatMap(issue => (issue.assessments || [])
+  .filter(a => a.verdict === 'VIOLATES' && a.quoteVerified)
+  .map(a => ({ issueId: issue.id, elementId: a.elementId, quote: a.quote || '', derivedBy: a.derivedBy || 'MODEL' })));
+
 /** 쟁점이 기대 쟁점을 다뤘는가: 키워드 묶음 중 하나라도 모든 단어가 쟁점 문장에 있으면 다룬 것이다. */
 export const coversIssue = (expected, issues) =>
   issues.some(issue => expected.keywords.some(group => group.every(word => issueText(issue).includes(word))));
@@ -32,7 +37,15 @@ export function scoreAgainstGold(review, gold) {
     .filter(issue => rule.issueKeywords.every(word => issueText(issue).includes(word)) && rule.legal.includes(issue.conclusion?.legal))
     .map(issue => ({ issueId: issue.id, legal: issue.conclusion.legal, reason: rule.reason })));
   const judged = issues.filter(i => ['OK', 'OK_WITH_WARNINGS', 'PARTIAL'].includes(i.stageStatus) && (i.assessments || []).length > 0).length;
+  const violations = violationQuotes(review);
+  const expectedViolations = gold.expectedViolations || [];
+  const foundViolations = expectedViolations.filter(v => violations.some(q => v.quoteAny.some(word => q.quote.includes(word))));
   return {
+    violations: { found: violations.length, quotes: violations.map(v => `${v.issueId}/${v.elementId}: ${v.quote}`),
+      expected: expectedViolations.length, matched: foundViolations.length,
+      missing: expectedViolations.filter(v => !foundViolations.includes(v)).map(v => v.label),
+      // 대조 문서(control)에서는 위반 소지가 하나라도 나오면 오탐이다.
+      falsePositives: gold.control ? violations.length : null },
     citation: { recall: citation.recall, precision: citation.precision, mustCited: `${citedMust.length}/${gold.mustCite.length}`, missed: citation.missed },
     issueCoverage: { covered: covered.length, expected: gold.expectedIssues.length,
       missing: gold.expectedIssues.filter(e => !covered.includes(e)).map(e => e.label) },

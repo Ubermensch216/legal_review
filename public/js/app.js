@@ -2,6 +2,7 @@
 import { state, saveSettings, LLM_MODES } from './state.js';
 import { confirmReviewTransmission } from './externalLlm.js';
 import './analysisDepthView.js';
+import { loadSkillsPanel } from './skillsView.js';
 import { initWorkbenchTabs, renderWorkbench, resetWorkbenchTabs, resetWorkbench } from './lawWorkbench.js';
 import { initDocumentViewer } from './documentViewer.js';
 import { initDocumentStudio, resetStudio } from './documentStudio.js';
@@ -426,6 +427,7 @@ function initReviewForm() {
     // 외부 답변을 반영하는 최종 재검토는 항상 전체 검증으로 실행한다(서버 기본값).
     else formData.append('analysisDepth', runDepth);
     if (resumeId) formData.append('deepenReviewId', resumeId);
+    formData.append('skillMode', state.settings.skillMode || 'auto');
 
     if (state.selectedFile && !resumeId) {
       formData.append('file', state.selectedFile);
@@ -821,6 +823,8 @@ function initSettingsModal() {
     externalProviderSelect.value = state.settings.externalProvider;
     externalModelInput.value = state.settings.externalModel;
     privateTermsInput.value = state.settings.privateTerms;
+    document.querySelectorAll('input[name="skill-mode"]').forEach(radio => { radio.checked = radio.value === state.settings.skillMode; });
+    loadSkillsPanel();
     applyModeUi();
     if (btnRefreshModels) btnRefreshModels.style.display = 'inline-flex';
     loadAvailableModels('ollama', state.settings.localModel);
@@ -840,8 +844,9 @@ function initSettingsModal() {
       alert(`${externalProvider.toUpperCase()}_API_KEY가 서버에 설정되어 있지 않아 이 방식을 사용할 수 없습니다. .env에 키를 넣고 서버를 다시 시작하십시오.`);
       return;
     }
+    const skillMode = document.querySelector('input[name="skill-mode"]:checked')?.value || 'auto';
     saveSettings({ mode, localModel, externalProvider, externalModel: externalModelInput.value.trim(),
-      privateTerms: privateTermsInput.value.trim() });
+      privateTerms: privateTermsInput.value.trim(), skillMode });
 
     updateLlmDisplay();
     modal.classList.add('hidden');

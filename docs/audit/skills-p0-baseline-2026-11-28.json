@@ -1,0 +1,760 @@
+{
+  "measuredAt": "2026-11-28T07:28:06.795Z",
+  "pipeline": "staged",
+  "provider": "ollama",
+  "model": "gemma4:e2b",
+  "lawOc": true,
+  "modelBudgets": "{\"ollama:gemma4:e2b\":{\"contextTokens\":40960,\"outputTokens\":8192,\"tokensPerChar\":{\"hangul\":0.75}}}",
+  "sectionBudgets": "{\"precedents\":12000,\"interpretations\":9000}",
+  "note": "효율·안정성 기준선. 법리 정확도 평가가 아니다.",
+  "summary": {
+    "runs": 1,
+    "completed": 1,
+    "parseFailures": 0,
+    "fallbacks": 0,
+    "medianWallMs": 491531,
+    "medianLlmWallMs": 438325,
+    "medianOutputTokens": 8838,
+    "medianInputTokens": 52824,
+    "llmCalls": 23
+  },
+  "rows": [
+    {
+      "id": "01",
+      "run": 1,
+      "preset": "labor_hr",
+      "stage": "DONE",
+      "wallMs": 491531,
+      "collectMs": 7274,
+      "primaryLaw": "근로기준법",
+      "analysisDepth": "BASIC",
+      "analysisCoverage": {
+        "depth": "BASIC",
+        "label": "기본분석",
+        "claims": 45,
+        "assertedClaims": 0,
+        "supportedClaims": 0,
+        "pairs": 45,
+        "checkedPairs": 0,
+        "judgedElements": 45,
+        "skippedSkeletons": 18,
+        "deferredEvidence": 9
+      },
+      "reviewEngine": "LLM_STAGED",
+      "reviewStatus": "PARTIAL",
+      "isFallback": false,
+      "fallbackReason": null,
+      "counts": {
+        "issues": 5,
+        "legalBasis": 26,
+        "risks": 5,
+        "redlines": 0,
+        "opinionChars": 14619,
+        "draftChars": 27396
+      },
+      "gold": {
+        "citation": {
+          "recall": 67,
+          "precision": 86,
+          "mustCited": "2/2",
+          "missed": [
+            "근로기준법:23",
+            "근로기준법:54",
+            "근로기준법:60"
+          ]
+        },
+        "issueCoverage": {
+          "covered": 4,
+          "expected": 4,
+          "missing": []
+        },
+        "forbidden": [],
+        "judged": {
+          "issues": 5,
+          "judged": 5,
+          "rate": 1
+        },
+        "expertReviewed": null
+      },
+      "citationExistence": 62,
+      "citations": {
+        "measurable": true,
+        "precision": 86,
+        "recall": 67,
+        "cited": [
+          "근로기준법:56",
+          "근로기준법:53",
+          "근로기준법:50",
+          "근로기준법:27",
+          "근로기준법:94",
+          "근로기준법:93",
+          "근로기준법:20"
+        ],
+        "hit": [
+          "근로기준법:56",
+          "근로기준법:53",
+          "근로기준법:50",
+          "근로기준법:27",
+          "근로기준법:94",
+          "근로기준법:20"
+        ],
+        "missed": [
+          "근로기준법:23",
+          "근로기준법:54",
+          "근로기준법:60"
+        ]
+      },
+      "inputBudget": null,
+      "omittedEvidence": null,
+      "reasoning": {
+        "issues": [
+          {
+            "id": "I1",
+            "question": "제18조 포괄임금제 조항은 근로기준법 제56조 위반인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I2",
+            "question": "제23조 연장근로 조항은 근로기준법 제53조 위반인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I3",
+            "question": "제31조 징계해고 절차는 근로기준법 제27조 위반인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I4",
+            "question": "제41조 불이익 변경 절차는 근로기준법 제94조 위반인가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          },
+          {
+            "id": "I5",
+            "question": "제34조 경업금지 및 위약벌 조항은 근로기준법 제20조(위약 예정 금지)에 저촉되는가?",
+            "conclusion": "CONDITIONAL",
+            "stageStatus": "OK"
+          }
+        ],
+        "gaps": [
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "FACT_UNKNOWN",
+            "route": "USER"
+          },
+          {
+            "type": "COLLECTION_FAILURE",
+            "route": "RECOLLECT"
+          }
+        ],
+        "gate": "HUMAN_REVIEW_REQUIRED",
+        "reviewedIssues": 5,
+        "skippedIssues": 0,
+        "privacyRows": 0,
+        "privacyRowsReviewed": 0,
+        "judgedIssues": 5,
+        "linkedIssues": 5,
+        "facts": 1,
+        "factTopUp": null,
+        "statuteLinking": {
+          "linkedIssues": 5,
+          "addedArticles": 5,
+          "unlinkedIssues": []
+        },
+        "documentProfile": "REGULATION",
+        "escalationCandidates": 3,
+        "conditionalIssues": 5,
+        "rejectedIds": 0,
+        "warrants": [
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED",
+          "NOT_CHECKED"
+        ]
+      },
+      "ledger": {
+        "calls": [
+          {
+            "stage": "s1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 7476,
+            "outputTokens": 582,
+            "prefillMs": 21144,
+            "decodeMs": 25212,
+            "loadMs": 16278,
+            "thinkingChars": 0,
+            "outputChars": 1244,
+            "wallMs": 62843,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 108,
+            "prefillMs": 1695,
+            "decodeMs": 3047,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 228,
+            "wallMs": 4891,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 571,
+            "outputTokens": 134,
+            "prefillMs": 1387,
+            "decodeMs": 3862,
+            "loadMs": 26,
+            "thinkingChars": 0,
+            "outputChars": 272,
+            "wallMs": 5297,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 807,
+            "outputTokens": 337,
+            "prefillMs": 1940,
+            "decodeMs": 8662,
+            "loadMs": 41,
+            "thinkingChars": 0,
+            "outputChars": 699,
+            "wallMs": 10663,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 733,
+            "outputTokens": 140,
+            "prefillMs": 1658,
+            "decodeMs": 3972,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 327,
+            "wallMs": 5696,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 617,
+            "outputTokens": 119,
+            "prefillMs": 1279,
+            "decodeMs": 3374,
+            "loadMs": 31,
+            "thinkingChars": 0,
+            "outputChars": 264,
+            "wallMs": 4704,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 632,
+            "outputTokens": 155,
+            "prefillMs": 1419,
+            "decodeMs": 3998,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 390,
+            "wallMs": 5467,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 624,
+            "outputTokens": 171,
+            "prefillMs": 1298,
+            "decodeMs": 4829,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 423,
+            "wallMs": 6169,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 656,
+            "outputTokens": 153,
+            "prefillMs": 1392,
+            "decodeMs": 4091,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 370,
+            "wallMs": 5536,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 739,
+            "outputTokens": 149,
+            "prefillMs": 1602,
+            "decodeMs": 4392,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 368,
+            "wallMs": 6044,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 634,
+            "outputTokens": 195,
+            "prefillMs": 1400,
+            "decodeMs": 5429,
+            "loadMs": 26,
+            "thinkingChars": 0,
+            "outputChars": 498,
+            "wallMs": 6872,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 668,
+            "outputTokens": 119,
+            "prefillMs": 1536,
+            "decodeMs": 3701,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 297,
+            "wallMs": 5288,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 600,
+            "outputTokens": 154,
+            "prefillMs": 1273,
+            "decodeMs": 4439,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 399,
+            "wallMs": 5761,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 526,
+            "outputTokens": 70,
+            "prefillMs": 1287,
+            "decodeMs": 2766,
+            "loadMs": 34,
+            "thinkingChars": 0,
+            "outputChars": 179,
+            "wallMs": 4102,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4982,
+            "outputTokens": 1009,
+            "prefillMs": 12080,
+            "decodeMs": 33913,
+            "loadMs": 30,
+            "thinkingChars": 0,
+            "outputChars": 2057,
+            "wallMs": 46138,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I1:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4427,
+            "outputTokens": 130,
+            "prefillMs": 11174,
+            "decodeMs": 5610,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 267,
+            "wallMs": 16839,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 5161,
+            "outputTokens": 1006,
+            "prefillMs": 12696,
+            "decodeMs": 35272,
+            "loadMs": 33,
+            "thinkingChars": 0,
+            "outputChars": 2085,
+            "wallMs": 48075,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I2:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4722,
+            "outputTokens": 258,
+            "prefillMs": 11233,
+            "decodeMs": 9538,
+            "loadMs": 27,
+            "thinkingChars": 0,
+            "outputChars": 546,
+            "wallMs": 20825,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I3",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4235,
+            "outputTokens": 567,
+            "prefillMs": 10086,
+            "decodeMs": 18787,
+            "loadMs": 33,
+            "thinkingChars": 0,
+            "outputChars": 1221,
+            "wallMs": 29010,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4262,
+            "outputTokens": 873,
+            "prefillMs": 9707,
+            "decodeMs": 27084,
+            "loadMs": 29,
+            "thinkingChars": 0,
+            "outputChars": 1920,
+            "wallMs": 36867,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I4:part:2:1",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 4100,
+            "outputTokens": 501,
+            "prefillMs": 9448,
+            "decodeMs": 16630,
+            "loadMs": 32,
+            "thinkingChars": 0,
+            "outputChars": 1144,
+            "wallMs": 26135,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s4:I5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 3457,
+            "outputTokens": 1010,
+            "prefillMs": 8515,
+            "decodeMs": 34202,
+            "loadMs": 35,
+            "thinkingChars": 0,
+            "outputChars": 1954,
+            "wallMs": 42792,
+            "prefixCacheLikely": false
+          },
+          {
+            "stage": "s5",
+            "provider": "ollama",
+            "model": "gemma4:e2b",
+            "think": false,
+            "schema": true,
+            "ok": true,
+            "truncated": false,
+            "inputTokens": 1456,
+            "outputTokens": 898,
+            "prefillMs": 3410,
+            "decodeMs": 28823,
+            "loadMs": 28,
+            "thinkingChars": 0,
+            "outputChars": 1642,
+            "wallMs": 32311,
+            "prefixCacheLikely": false
+          }
+        ],
+        "totals": {
+          "calls": 23,
+          "failed": 0,
+          "inputTokens": 52824,
+          "outputTokens": 8838,
+          "prefillMs": 128659,
+          "decodeMs": 291633,
+          "wallMs": 438325,
+          "prefixCacheHits": 0
+        }
+      }
+    }
+  ]
+}

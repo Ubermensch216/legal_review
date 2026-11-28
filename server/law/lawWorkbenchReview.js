@@ -367,7 +367,8 @@ ${resolvedProvisionsText}` : ''}
           rerunIssueIds: anchors.rerunIssueIds, knowledgeIssues: anchors.knowledgeIssues,
           knowledgeTargets: anchors.knowledgeTargets } : null;
         const staged = await runReasoningPipeline({ query, preset, documentText, workbenchContext: stagedContext, provider, model,
-          apiKey: llmConfig.apiKey, session, progress, previous, analysisDepth: llmConfig.analysisDepth, resume: resumeContext });
+          apiKey: llmConfig.apiKey, session, progress, previous, analysisDepth: llmConfig.analysisDepth, resume: resumeContext,
+          skillMode: llmConfig.skillMode });
         staged.warnings = [...input.contextWarnings, ...staged.warnings];
         staged.learningReferences = input.learningReferences;
         staged.learningExcluded = input.learningExcluded;

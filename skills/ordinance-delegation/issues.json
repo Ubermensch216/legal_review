@@ -1,0 +1,10 @@
+{
+  "issues": [
+    { "id": "OR-I1", "question": "조례가 법률의 위임 없이 주민의 권리를 제한하거나 의무를 부과하는가?", "type": "PRIMARY", "priority": "CRITICAL",
+      "articles": [{ "lawName": "지방자치법", "articleNo": "제28조", "unit": "제1항 단서" }], "searchTerms": ["조례 법률유보", "조례 위임 한계"],
+      "keywords": [["위임", "법률유보"]], "triggers": { "checks": ["OR-01", "OR-03"] } },
+    { "id": "OR-I2", "question": "조례가 정한 과태료가 지방자치법상 상한과 부과 근거를 지키는가?", "type": "PRIMARY", "priority": "HIGH",
+      "articles": [{ "lawName": "지방자치법", "articleNo": "제34조", "unit": "제1항" }], "searchTerms": ["조례 과태료 상한"],
+      "keywords": [["과태료"]], "triggers": { "checks": ["OR-02"] } }
+  ]
+}

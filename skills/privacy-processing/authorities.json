@@ -1,0 +1,80 @@
+{
+  "laws": [
+    {
+      "lawName": "개인정보 보호법",
+      "role": "CORE",
+      "snapshotPolicy": "HASH",
+      "articles": [
+        "제15조",
+        "제17조",
+        "제21조",
+        "제22조",
+        "제23조",
+        "제24조의2",
+        "제25조",
+        "제26조",
+        "제28조의2",
+        "제28조의8",
+        "제29조"
+      ],
+      "snapshot": {
+        "제15조": {
+          "title": "개인정보의 수집ㆍ이용",
+          "enforceDate": "20260911",
+          "textHash": "2eaafcf6b693081b"
+        },
+        "제17조": {
+          "title": "개인정보의 제공",
+          "enforceDate": "20260911",
+          "textHash": "6671894be94780ee"
+        },
+        "제21조": {
+          "title": "개인정보의 파기",
+          "enforceDate": "20260911",
+          "textHash": "4aacb449c0f55d3d"
+        },
+        "제22조": {
+          "title": "동의를 받는 방법",
+          "enforceDate": "20260911",
+          "textHash": "9326b3fee86776d5"
+        },
+        "제23조": {
+          "title": "민감정보의 처리 제한",
+          "enforceDate": "20260911",
+          "textHash": "70280ad91827f4f0"
+        },
+        "제24조의2": {
+          "title": "주민등록번호 처리의 제한",
+          "enforceDate": "20260911",
+          "textHash": "6a8a0e66dabe39e2"
+        },
+        "제25조": {
+          "title": "고정형 영상정보처리기기의 설치ㆍ운영 제한",
+          "enforceDate": "20260911",
+          "textHash": "f905560f72615fe7"
+        },
+        "제26조": {
+          "title": "업무위탁에 따른 개인정보의 처리 제한",
+          "enforceDate": "20260911",
+          "textHash": "a83d7cf423606620"
+        },
+        "제28조의2": {
+          "title": "가명정보의 처리 등",
+          "enforceDate": "20260911",
+          "textHash": "846dfc169198bb3e"
+        },
+        "제28조의8": {
+          "title": "개인정보의 국외 이전",
+          "enforceDate": "20260911",
+          "textHash": "a7cf06bd49968627"
+        },
+        "제29조": {
+          "title": "안전조치의무",
+          "enforceDate": "20260911",
+          "textHash": "595318c793585a37"
+        }
+      }
+    }
+  ],
+  "snapshotAt": "2026-11-28"
+}
